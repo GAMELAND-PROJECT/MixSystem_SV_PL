@@ -42,7 +42,7 @@
 #define PLUGIN  "Mix System ~ Fastcup Mode"
 #endif
 
-#define VERSION "2.19.9"
+#define VERSION "2.19.10"
 #define AUTHOR  "Shadows Adi"
 
 #define IsPlayer(%1)				((1 <= %1 <= MAX_PLAYERS) && is_user_connected(%1))
@@ -1309,6 +1309,12 @@ public RG_CSGameRules_CanHavePlayerItem_Pre(id, item)
 			return
 
 		SetHookChainReturn(ATYPE_INTEGER, 0)
+	}
+
+	if(g_eBooleans[bIsWarm])
+	{
+		if(get_member(item, m_iId) == WEAPON_C4)
+			SetHookChainReturn(ATYPE_INTEGER, 0)
 	}
 }
 
