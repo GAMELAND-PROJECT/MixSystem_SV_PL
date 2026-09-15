@@ -120,12 +120,14 @@ public task_check_time(id)
 
 	new iData[PlayerData]
 
-	for(new i; i < ArraySize(g_aDroppedPlayers); i++)
+	// Fix #7: iterate in reverse — forward deletion shifts indices causing next element to be skipped
+	for(new i = ArraySize(g_aDroppedPlayers) - 1; i >= 0; i--)
 	{
 		ArrayGetArray(g_aDroppedPlayers, i, iData)
 
 		if(find_player_ex(FindPlayer_MatchAuthId, iData[szSteamID]))
 		{
+			// Player reconnected — remove from list, no punishment
 			ArrayDeleteItem(g_aDroppedPlayers, i)
 		}
 		else

@@ -7,7 +7,7 @@
 
 #pragma reqlib mix_system
 #if !defined AMXMODX_NOAUTOLOAD
-    #pragma loadlib LIBRARY_NAME
+    #pragma loadlib mix_system  // Fix #9: was LIBRARY_NAME (literal placeholder, caused compiler warning)
 #endif
 
 /**

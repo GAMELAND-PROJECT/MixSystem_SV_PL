@@ -383,8 +383,7 @@ new g_szSqlError[512]
 new Handle:g_iSqlConnection
 new g_iBombPlanter
 new bool:g_bConnected
-new g_iTry
-new g_iIndex
+new g_iTry[MAX_PLAYERS + 1]  // Fix #2: per-player retry counter (was global — race condition)
 new g_szBuffer[2500]
 new bool:g_bLoadedPlayer[MAX_PLAYERS + 1]
 #endif
@@ -403,6 +402,9 @@ new Array:g_aTCmds
 new Array:g_aSpecCmds
 new Array:g_aStartDemoCmds
 new Array:g_aStopDemoCmds
+#if defined POINTS_SYS
+new Array:g_aRankCmds  // Fix #1: dedicated array for rank commands (was wrongly using g_aStopDemoCmds)
+#endif
 
 new g_ePluginSettings[Settings]
 new g_eHudSettings[HudSettings]
@@ -550,6 +552,7 @@ public plugin_natives()
 
 	#if defined POINTS_SYS
 	g_aRanks = ArrayCreate(Ranking)
+	g_aRankCmds = ArrayCreate(32)  // Fix #1
 	#endif
 
 	register_library("mix_system")
@@ -588,6 +591,9 @@ public plugin_end()
 	ArrayDestroy(g_aStartDemoCmds)
 	ArrayDestroy(g_aStopDemoCmds)
 	ArrayDestroy(g_aPlayerData)
+	#if defined POINTS_SYS
+	ArrayDestroy(g_aRankCmds)  // Fix #1
+	#endif
 
 	for(new i; i < MaxFwds; i++)
 	{
@@ -596,6 +602,7 @@ public plugin_end()
 
 	#if defined POINTS_SYS
 	ArrayDestroy(g_aRanks)
+	// g_aRankCmds already destroyed above
 
 	if(g_bConnected)
 	{
@@ -1607,6 +1614,21 @@ public RG_Player_Spawn_Post(id)
 }
 #endif
 
+// Fix #3: Helper to print all elements of a command array
+stock PrintCmdArray(id, Array:array, ML[])
+{
+	new iSize = ArraySize(array)
+	if(iSize <= 0)
+		return
+
+	static szCmd[64]
+	for(new i = 0; i < iSize; i++)
+	{
+		ArrayGetString(array, i, szCmd, charsmax(szCmd))
+		console_print(id, "  [%L] %s", LANG_SERVER, ML, szCmd)
+	}
+}
+
 public clcmd_showcmds(id)
 {
 	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
@@ -1615,40 +1637,30 @@ public clcmd_showcmds(id)
 		return PLUGIN_HANDLED
 	}
 
-	for(new i; i < sizeof(g_aStartCmds); i++)
-	{
-		console_print(id, "=-=-==-=-=---=-=-==-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-")
+	// Fix #3: was using sizeof(g_aStartCmds) which always returns 1 (handle size)
+	// Rewritten to iterate each array fully, one by one
+	console_print(id, "=-=-==-=-=---=-=-==-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-")
 
-		GetArrayCmd(id, g_aStartCmds, i, "MIX_START_COMMANDS_ARE")
+	PrintCmdArray(id, g_aStartCmds,    "MIX_START_COMMANDS_ARE")
+	PrintCmdArray(id, g_aStopCmds,     "MIX_STOP_COMMANDS_ARE")
+	PrintCmdArray(id, g_aWarmCmds,     "MIX_WARM_COMMANDS_ARE")
+	PrintCmdArray(id, g_aKnifeCmds,    "MIX_KNIFE_COMMANDS_ARE")
+	PrintCmdArray(id, g_aChatOnCmds,   "MIX_CHAT_ON_COMMANDS_ARE")
+	PrintCmdArray(id, g_aChatOffCmds,  "MIX_CHAT_OFF_COMMANDS_ARE")
+	PrintCmdArray(id, g_aOvertimeCmds, "MIX_OVERTIME_COMMANDS_ARE")
+	PrintCmdArray(id, g_aPassOnCmds,   "MIX_PASSON_COMMANDS_ARE")
+	PrintCmdArray(id, g_aPassOffCmds,  "MIX_PASSOFF_COMMANDS_ARE")
+	PrintCmdArray(id, g_aSpecAllCmds,  "MIX_SPEC_ALL_COMMANDS_ARE")
+	PrintCmdArray(id, g_aCTCmds,       "MIX_CT_MOVE_COMMANDS_ARE")
+	PrintCmdArray(id, g_aTCmds,        "MIX_T_MOVE_COMMANDS_ARE")
+	PrintCmdArray(id, g_aSpecCmds,     "MIX_SPEC_MOVE_COMMANDS_ARE")
+	PrintCmdArray(id, g_aStartDemoCmds,"MIX_START_DEMO_COMMANDS_ARE")
+	PrintCmdArray(id, g_aStopDemoCmds, "MIX_STOP_DEMO_COMMANDS_ARE")
+	#if defined POINTS_SYS
+	PrintCmdArray(id, g_aRankCmds,     "MIX_RANK_COMMANDS_ARE")
+	#endif
 
-		GetArrayCmd(id, g_aStopCmds, i, "MIX_STOP_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aWarmCmds, i, "MIX_WARM_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aChatOnCmds, i, "MIX_CHAT_ON_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aChatOffCmds, i, "MIX_CHAT_OFF_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aOvertimeCmds, i, "MIX_OVERTIME_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aPassOnCmds, i, "MIX_PASSON_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aPassOffCmds, i, "MIX_PASSOFF_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aSpecAllCmds, i, "MIX_SPEC_ALL_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aCTCmds, i, "MIX_CT_MOVE_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aTCmds, i, "MIX_T_MOVE_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aSpecCmds, i, "MIX_SPEC_MOVE_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aStartDemoCmds, i, "MIX_START_DEMO_COMMANDS_ARE")
-
-		GetArrayCmd(id, g_aStopDemoCmds, i, "MIX_STOP_DEMO_COMMANDS_ARE")
-
-		console_print(id, "=-=-==-=-=---=-=-==-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-")
-	}
+	console_print(id, "=-=-==-=-=---=-=-==-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-")
 
 	client_print_color(id, id, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_SERVER, "OPEN_CONSOLE_FOR_CMDS")
 	client_cmd(id, "toggleconsole")
@@ -3636,23 +3648,31 @@ public clcmd_say_rank(id)
 
 	new szTemp[512]
 	formatex(szTemp, charsmax(szTemp), "SELECT * FROM `%s` ORDER BY `%s`.`Points` DESC LIMIT 0,15", g_ePluginSettings[szTable], g_ePluginSettings[szTable])
-	g_iIndex = id
-	SQL_ThreadQuery(g_hSqlTuple, "format_top15", szTemp)
+	// Fix #4: was using global g_iIndex — race condition if 2 players call /top simultaneously
+	// Now pass id directly as thread data so each callback knows its caller
+	new iData[2]
+	iData[0] = id
+	SQL_ThreadQuery(g_hSqlTuple, "format_top15", szTemp, iData, sizeof(iData))
 
 	return PLUGIN_HANDLED
 }
 
 public format_top15(iFailState, Handle:szQuery, Error[], Errcode, Data[], DataSize)
 {
+	// Fix #4: read player id from callback data (no more global g_iIndex)
+	new id = Data[0]
+
 	switch(iFailState)
 	{
 		case TQUERY_CONNECT_FAILED: 
 		{
-			log_amx("[SQL Error] Connection failed (%i): %s", Errcode, Error);
+			log_amx("[SQL Error Top15] Connection failed (%i): %s", Errcode, Error);
+			return PLUGIN_HANDLED
 		}
 		case TQUERY_QUERY_FAILED:
 		{
-			log_amx("[SQL Error] Query failed (%i): %s", Errcode, Error);
+			log_amx("[SQL Error Top15] Query failed (%i): %s", Errcode, Error);
+			return PLUGIN_HANDLED
 		}
 	}
 
@@ -3666,30 +3686,35 @@ public format_top15(iFailState, Handle:szQuery, Error[], Errcode, Data[], DataSi
 	new iRows = SQL_NumResults(szQuery)
 	new iInfos[15][PlayerData]
 
-	if( SQL_MoreResults(szQuery) ) 
+	if(SQL_MoreResults(szQuery))
 	{
-		for(new i = 0 ; i < iRows ; i++)
+		for(new i = 0; i < iRows; i++)
 		{
 			SQL_ReadResult(szQuery, SQL_FieldNameToNum(szQuery, "SteamID"), iInfos[i][szSteamID], charsmax(iInfos[][szSteamID]))
 			SQL_ReadResult(szQuery, SQL_FieldNameToNum(szQuery, "Name"), iInfos[i][szName], charsmax(iInfos[][szName]))
-			iInfos[i][iPoints]	= SQL_ReadResult(szQuery, SQL_FieldNameToNum(szQuery, "Points"))
-            
+			iInfos[i][iPoints] = SQL_ReadResult(szQuery, SQL_FieldNameToNum(szQuery, "Points"))
+
 			SQL_NextRow(szQuery)
 		}
 	}
 
-	if(iRows > 0) 
-    {
+	if(iRows > 0)
+	{
 		new iLen = 0;
-		iLen = formatex( g_szBuffer[iLen], charsmax(g_szBuffer), "<meta charset=UTF-8><style>body{background:#000}tr{text-align:left} table{font-size:25px;color:#fff;padding:15px; min-width:600px} h2{color:#FFF;font-family:Arial} td{border:2px solid #27bcfe} th{border:2px solid #27bcfe; color: #27bcfe;}</style><body>")
-		iLen += formatex( g_szBuffer[iLen], charsmax(g_szBuffer) - iLen, "<body bgcolor=#000000><table align=center><tr><th class=p>#<td class=p><th>Name<th>SteamID<th>Points^n" )     
-        
-		for(new i = 0 ; i < iRows ; i++) 
+		iLen = formatex(g_szBuffer[iLen], charsmax(g_szBuffer), "<meta charset=UTF-8><style>body{background:#000}tr{text-align:left} table{font-size:25px;color:#fff;padding:15px; min-width:600px} h2{color:#FFF;font-family:Arial} td{border:2px solid #27bcfe} th{border:2px solid #27bcfe; color: #27bcfe;}</style><body>")
+		iLen += formatex(g_szBuffer[iLen], charsmax(g_szBuffer) - iLen, "<body bgcolor=#000000><table align=center><tr><th class=p>#<td class=p><th>Name<th>SteamID<th>Points^n")
+
+		for(new i = 0; i < iRows; i++)
 		{
-			iLen += formatex( g_szBuffer[iLen], charsmax(g_szBuffer) - iLen, "<tr><td class=p>%d<td class=p><td>%s<td>%s<td>%i", i + 1, iInfos[i][szName], iInfos[i][szSteamID], iInfos[i][iPoints])
+			iLen += formatex(g_szBuffer[iLen], charsmax(g_szBuffer) - iLen, "<tr><td class=p>%d<td class=p><td>%s<td>%s<td>%i", i + 1, iInfos[i][szName], iInfos[i][szSteamID], iInfos[i][iPoints])
 		}
 	}
-	show_motd(g_iIndex, g_szBuffer, "Top15 Points")
+
+	// Fix #4: use local id (from Data[]) instead of global g_iIndex
+	if(is_user_connected(id))
+	{
+		show_motd(id, g_szBuffer, "Top15 Points")
+	}
 
 	return PLUGIN_HANDLED
 }
@@ -3778,17 +3803,19 @@ public QueryLoadData(iFailState, Handle:iQuery, szError[], iErrorCode, szData[])
 	{
 		case TQUERY_CONNECT_FAILED, TQUERY_QUERY_FAILED:
 		{
-			log_amx("[SQL Error Load] Query failed (%i): %s", iErrorCode, szError) < 3
-			if(g_iTry < 3)
+			// Fix #6: removed "< 3" which was a stray comparison making log_amx result meaningless
+			log_amx("[SQL Error Load] Query failed (%i): %s", iErrorCode, szError)
+			// Fix #2: g_iTry is now per-player — no race condition between simultaneous connects
+			if(g_iTry[id] < 3)
 			{
 				LoadData(id)
-				g_iTry++
+				g_iTry[id]++
 			}
 			return 
 		}
 	}
 
-	g_iTry = 0
+	g_iTry[id] = 0  // Fix #2: reset only this player's counter
 
 	if(SQL_NumResults(iQuery) > 0)
 	{
@@ -3831,15 +3858,17 @@ public LoadPData(iFailState, Handle:iQuery, szError[], iErrorCode, szData[])
 	{
 		case TQUERY_CONNECT_FAILED, TQUERY_QUERY_FAILED:
 		{
-			log_amx("[SQL Error Load] Query failed (%i): %s", iErrorCode, szError)
-			if(g_iTry < 3)
+			log_amx("[SQL Error Insert] Query failed (%i): %s", iErrorCode, szError)
+			// Fix #2: use per-player retry counter
+			if(g_iTry[id] < 3)
 			{
 				LoadData(id)
-				g_iTry++
+				g_iTry[id]++
 			}
 			return 
 		}
 	}
+	g_iTry[id] = 0  // Fix #2: reset on success
 	g_bLoadedPlayer[id] = true
 }
 
@@ -3895,9 +3924,8 @@ ResetScore()
 		g_eBooleans[bCanChat][i] = true
 	}
 	g_eBooleans[bIsMixOn] = false
-	g_eBooleans[bOvertime] = false
+	g_eBooleans[bOvertime] = false  // Fix #5: removed duplicate reset that was on next line
 	g_eBooleans[bTeamSwap] = false
-	g_eBooleans[bOvertime] = false
 	g_eBooleans[bIsWarm] = false
 	g_eOvertime[FirstOvertime] = false
 	g_eOvertime[SecondOvertime] = false

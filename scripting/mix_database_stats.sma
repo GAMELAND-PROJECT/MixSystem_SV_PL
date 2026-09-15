@@ -1,6 +1,7 @@
 /* Sublime AMXX Editor v4.2 */
 
-#define MAX_HOSTNAME_LEN 5
+// Fix #8: was 5 — far too small for a server hostname (e.g. "My Gaming Server" truncates)
+#define MAX_HOSTNAME_LEN 128
 
 #include <amxmodx>
 #include <sqlx>
