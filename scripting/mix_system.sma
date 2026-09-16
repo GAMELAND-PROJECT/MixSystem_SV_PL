@@ -2309,16 +2309,12 @@ public task_end_round(index)
 					#if defined POINTS_SYS
 					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_SCORED_ACE_POINTS", g_ePointSystem[PointsAce])
 					g_iPoints[iPlayer] += g_ePointSystem[PointsAce]
-					#else
-					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_SCORED_ACE")
 					#endif
 				}
 				else
 				{
 					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "X_SCORED_ACE", g_szName[g_eInformations[ACE]])
 				}
-
-				client_cmd(iPlayer, "spk vox/buzwarn")
 			}
 
 			if(g_eInformations[SEMI_ACE] != -1)
@@ -2328,15 +2324,12 @@ public task_end_round(index)
 					#if defined POINTS_SYS
 					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_SCORED_SEMIACE_POINTS", g_ePointSystem[PointsAce])
 					g_iPoints[iPlayer] += g_ePointSystem[PointsSemiAce]
-					#else
-					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_SCORED_SEMIACE")
 					#endif
 				}
 				else
 				{
 					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "X_SCORED_SEMIACE", g_szName[g_eInformations[SEMI_ACE]])
 				}
-				client_cmd(iPlayer, "spk vox/buzwarn")
 			}
 
 			#if defined POINTS_SYS
@@ -3096,7 +3089,7 @@ public task_give_equipment(iPlayer)
 		return 
 
 	rg_remove_all_items(iPlayer, false)
-	rg_set_user_armor(iPlayer, 0, ARMOR_NONE)
+	rg_set_user_armor(iPlayer, 100, ARMOR_VEST)
 	rg_give_item(iPlayer, "weapon_knife")
 
 	switch(iTeam)
