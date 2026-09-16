@@ -1564,8 +1564,15 @@ public RG_BombDefused(id2, id, bool:bDefused)
 
 public RG_Player_Spawn_Post(id)
 {
-	if(is_user_alive(id) && g_eBooleans[bIsMixOn])
+	if(is_user_alive(id))
 	{
+		if(g_eBooleans[bIsKnife])
+		{
+			rg_set_user_armor(id, 100, ARMOR_VESTHELM)
+		}
+
+		if(g_eBooleans[bIsMixOn])
+		{
 		if(g_iPoints[id] < 0)
 		{
 			g_iPoints[id] = 0
@@ -1610,6 +1617,7 @@ public RG_Player_Spawn_Post(id)
 			format(tmpName, charsmax(tmpName), "%s <%s>", tmpName, aRank[szRank])
 		}
 		set_user_info(id, name, tmpName)
+		}
 	}
 }
 #endif
@@ -1904,11 +1912,7 @@ public clcmd_warm(id)
 
 	if(g_eBooleans[bIsMixOn] || g_eBooleans[bIsKnife] || task_exists(TASK_CHECKVOTES))
 	{
-		if(is_user_connected(id))
-		{
-			client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NEED_STOPPED")
-		}
-		return PLUGIN_HANDLED
+		clcmd_stopmix(id)
 	}
 	
 
@@ -3232,7 +3236,7 @@ public clcmd_restart(id)
 		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
 		return PLUGIN_HANDLED
 	}
-	if(!g_eBooleans[bIsMixOn])
+	if(!g_eBooleans[bIsMixOn] && !g_eBooleans[bIsWarm] && !g_eBooleans[bIsKnife])
 	{
 		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
 		return PLUGIN_HANDLED
