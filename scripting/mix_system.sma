@@ -354,7 +354,6 @@ new g_iDuration
 
 new g_iRet
 
-new Regex:g_rePattern
 
 new g_szConfigsDir[48]
 new g_iGaveC4
@@ -405,7 +404,6 @@ public plugin_init()
 		hook_cvar_change(pcvar, "OnCvarChange")
 	}
 
-	g_rePattern = regex_compile_ex("<.*?>",PCRE_CASELESS|PCRE_DOTALL|PCRE_EXTENDED|PCRE_UTF8)
 
 	set_task(0.1, "task_read_config")
 }
@@ -1232,7 +1230,7 @@ public clcmd_startmix(id, bool:bKnife)
 
 	g_eInformations[MIX_STARTER] = id
 
-	new CsTeams:iTeam, bool:bFinished
+	new CsTeams:iTeam
 
 	for(new i; i < iNum ; i++)
 	{
@@ -1273,10 +1271,6 @@ public clcmd_startmix(id, bool:bKnife)
 
 			if(iTeam == CS_TEAM_CT || iTeam == CS_TEAM_T)
 			{
-				if(i == iNum - 1)
-				{
-					bFinished = true
-				}
 
 							}
 		#if defined FASTCUP_MODE
@@ -1994,7 +1988,7 @@ public CS_OnBuyAttempt(id, item)
 
 	if(g_eBooleans[bIsKnife])
 	{
-		if(item != CSI_KEVLAR && item != CSI_ASSAULTSUIT)
+		if(item != CSI_VEST && item != CSI_VESTHELM)
 		{
 			return PLUGIN_HANDLED
 		}
