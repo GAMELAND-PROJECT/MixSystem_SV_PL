@@ -1739,7 +1739,7 @@ public task_end_round(index)
 		{
 			iPlayer = iPlayers[i]
 
-			if(g_eBooleans[bCanShowStats])
+			if(false /* g_eBooleans[bCanShowStats] disabled by user */)
 			{
 				for(new j; j < iNum; j++)
 				{
@@ -2712,7 +2712,17 @@ public clcmd_restart(id)
 		return PLUGIN_HANDLED
 	}
 
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
+		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
+	}
+
 	server_cmd("sv_restart 1")
+	set_task(1.2, "task_delayed_members")
 	client_print_color(0, print_team_default, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_HAS_BEEN_RESTARTED")
 
 	return PLUGIN_HANDLED
