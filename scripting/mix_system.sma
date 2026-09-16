@@ -358,6 +358,8 @@ new g_iRet
 new g_szConfigsDir[48]
 new g_iGaveC4
 
+new g_iMsgScreenFade
+
 public plugin_init()
 {
 	register_plugin(PLUGIN, VERSION, AUTHOR)
@@ -365,6 +367,8 @@ public plugin_init()
 	register_cvar("mix_sys", VERSION, FCVAR_SERVER|FCVAR_EXTDLL|FCVAR_UNLOGGED|FCVAR_SPONLY)
 
 	register_dictionary("mix_system.txt")
+
+	g_iMsgScreenFade = get_user_msgid("ScreenFade")
 
 	register_clcmd("say", "hook_say")
 
@@ -2454,6 +2458,7 @@ public task_show_score()
 	{
 		set_task(1.0, "task_swap_score")
 		set_task(1.1, "task_delayed_swap")
+		set_task(1.2, "task_show_halftime")
 		set_task(12.0, "task_halftime_restart1")
 		set_task(17.0, "task_halftime_restart2")
 		set_task(22.0, "task_halftime_live")
@@ -2461,7 +2466,7 @@ public task_show_score()
 
 	if(IsLastRound() || OvertimeFinished())
 	{
-		set_task(5.0, "task_stop_mix")
+		set_task(5.0, "task_start_warm")
 	}
 
 	g_eBooleans[bIsStoppingMix] = false
@@ -2585,7 +2590,7 @@ public task_halftime_live()
 {
 	server_cmd("sv_restart 1")
 	set_task(1.5, "task_delayed_members")
-	client_print_color(0, print_team_default, "^4%s ^3*** LIVE LIVE LIVE ***", g_ePluginSettings[szPrefix])
+	set_task(1.0, "task_show_live")
 }
 
 public task_mix_restart1()
@@ -2603,7 +2608,7 @@ public task_mix_restart2()
 public task_mix_live()
 {
 	server_cmd("sv_restart 1")
-	client_print_color(0, print_team_default, "^4%s ^3*** LIVE LIVE LIVE ***", g_ePluginSettings[szPrefix])
+	set_task(1.0, "task_show_live")
 }
 
 public task_give_equipment(iPlayer)
@@ -3610,5 +3615,46 @@ public native_get_username(iPluginID, iParamNum)
 
 public native_has_points_sys(iPluginID, iParamNum)
 {
+	return false
+}
+
+public task_start_warm()
+{
+	clcmd_warm(0)
+}
+
+public task_show_live()
+{
+	fnScreenFade(0, 1, 1, {0, 255, 0}, 75, 0x0000)
+	set_dhudmessage(0, 255, 0, -1.0, 0.3, 2, 0.1, 4.0, 0.1, 0.1)
+	show_dhudmessage(0, "=== LIVE LIVE LIVE ===")
+}
+
+public task_show_halftime()
+{
+	fnScreenFade(0, 1, 1, {0, 150, 255}, 75, 0x0000)
+	set_dhudmessage(0, 150, 255, -1.0, 0.3, 2, 0.1, 4.0, 0.1, 0.1)
+	show_dhudmessage(0, "=== HALF TIME ===")
+}
+
+stock fnScreenFade(id, Timer, FadeTime, Colors[3], Alpha, Type)
+{
+	if(id == 0)
+	{
+		message_begin(MSG_BROADCAST, g_iMsgScreenFade)
 	}
+	else
+	{
+		if(!is_user_connected(id)) return
+		message_begin(MSG_ONE_UNRELIABLE, g_iMsgScreenFade, _, id)
+	}
+	write_short((1<<12) * Timer)
+	write_short((1<<12) * FadeTime)
+	write_short(Type)
+	write_byte(Colors[0])
+	write_byte(Colors[1])
+	write_byte(Colors[2])
+	write_byte(Alpha)
+	message_end()
+}
 
