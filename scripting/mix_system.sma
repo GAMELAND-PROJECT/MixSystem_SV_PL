@@ -1289,7 +1289,6 @@ public clcmd_startmix(id, bool:bKnife)
 	{
 		g_eBooleans[bWasKnife] = true
 		clcmd_knife(id)
-		StartConfig()
 		return PLUGIN_HANDLED
 	}
 
@@ -1424,6 +1423,8 @@ public clcmd_warm(id)
 	#endif
 
 	StopConfig()
+
+	server_cmd("mp_freezetime 0")
 
 	server_cmd("mp_buytime 99999")
 
@@ -1562,6 +1563,8 @@ public clcmd_knife(id)
 	g_iKnifes += 1
 
 	StopConfig()
+	
+	server_cmd("mp_freezetime 3")
 
 	server_cmd("sv_restart 1")
 
@@ -1645,7 +1648,7 @@ public task_end_round(index)
 		clcmd_warm(0)
 	}
 
-	if(g_iKnifes == 2)
+	if(g_iKnifes >= 1 && (status == WINSTATUS_CTS || status == WINSTATUS_TERRORISTS))
 	{
 		if(g_eBooleans[bIsKnife] && !g_eBooleans[bIsStoppingMix])
 		{
