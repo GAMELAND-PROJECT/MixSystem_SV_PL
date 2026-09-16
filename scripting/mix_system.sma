@@ -2532,6 +2532,15 @@ public task_delayed_members()
 	set_member_game(m_bCTCantBuy, false)
 	set_member_game(m_bTCantBuy, false)
 	g_iGaveC4 = false
+	
+	if(g_eBooleans[bOvertime])
+	{
+		rg_update_teamscores(g_iOvertimeScore[CT_OVER_SCORE], g_iOvertimeScore[TERO_OVER_SCORE], false)
+	}
+	else
+	{
+		rg_update_teamscores(g_iScore[CT_SCORE], g_iScore[TERO_SCORE], false)
+	}
 
 	new iPlayer, iPlayers[MAX_PLAYERS], iNum
 	get_players(iPlayers, iNum, "ch")
@@ -2642,13 +2651,6 @@ public task_swap_score()
 	{
 		ArrayDeleteItem(g_aPlayerData, i)
 	}
-
-	set_task(2.0, "task_change_score")
-}
-
-public task_change_score()
-{
-	rg_update_teamscores(g_iScore[CT_SCORE], g_iScore[TERO_SCORE], false)
 }
 
 public clcmd_specall(id)
