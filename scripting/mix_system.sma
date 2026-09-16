@@ -2451,6 +2451,9 @@ public task_show_score()
 	{
 		set_task(1.0, "task_swap_score")
 		set_task(1.1, "task_delayed_swap")
+		set_task(12.0, "task_halftime_restart1")
+		set_task(17.0, "task_halftime_restart2")
+		set_task(19.0, "task_halftime_live")
 	}
 
 	if(IsLastRound() || OvertimeFinished())
@@ -2553,11 +2556,56 @@ public task_delayed_members()
 		{
 			set_user_frags(iPlayer, g_ePlayerScore[iPlayer][iKILLS])
 			cs_set_user_deaths(iPlayer, g_ePlayerScore[iPlayer][iDEATHS])
-
-			g_ePlayerScore[iPlayer][iKILLS] = 0
-			g_ePlayerScore[iPlayer][iDEATHS] = 0
 		}
 	}
+}
+
+public task_halftime_restart1()
+{
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
+		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
+	}
+
+	server_cmd("sv_restart 1")
+	set_task(1.2, "task_delayed_members")
+	client_print_color(0, print_team_default, "^4%s ^1Restart ^4[1/3]", g_ePluginSettings[szPrefix])
+}
+
+public task_halftime_restart2()
+{
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
+		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
+	}
+
+	server_cmd("sv_restart 1")
+	set_task(1.2, "task_delayed_members")
+	client_print_color(0, print_team_default, "^4%s ^1Restart ^4[2/3]", g_ePluginSettings[szPrefix])
+}
+
+public task_halftime_live()
+{
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
+		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
+	}
+
+	server_cmd("sv_restart 1")
+	set_task(1.2, "task_delayed_members")
+	client_print_color(0, print_team_default, "^4%s ^3*** LIVE LIVE LIVE ***", g_ePluginSettings[szPrefix])
 }
 
 public task_give_equipment(iPlayer)
