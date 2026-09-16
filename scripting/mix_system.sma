@@ -30,9 +30,6 @@
 #include <cstrike>
 #include <fun>
 #include <reapi>
-#if defined POINTS_SYS
-#include <sqlx>
-#endif
 #include <regex>
 #include <mix_system>
 
@@ -121,38 +118,7 @@ new const HUD_POSITION[]		=		"HUD_POSITION"
 new const DEMO_AUTO[]			=		"AUTO_DEMO"
 new const DEMO_TYPE[]			= 		"DEMO_TYPE"
 new const DEMO_NAME[]			=		"DEMO_NAME"
-#if defined POINTS_SYS
-new const RESET_COMMANDS[]		=		"RESET_COMMANDS"
-new const TOP_COMMANDS[]		=		"RANK_COMMANDS"
-new const DBASE_HOST[]			=		"DATABASE_HOST"
-new const DBASE_USER[]			=		"DATABASE_USERNAME"
-new const DBASE_PASS[]			=		"DATABASE_PASSWORD"
-new const DBASE_NAME[]			=		"DATABASE_NAME"
-new const DBASE_TABLE[]			=		"DATABASE_TABLE"
-new const POINTS_ADD[]			=		"POINTS_ADD"
-new const POINTS_ADD_HS[]		=		"POINTS_ADD_HS"
-new const POINTS_ADD_KNIFE[]	=		"POINTS_ADD_KNIFE"
-new const POINTS_ADD_KNIFE_HS[]	=		"POINTS_ADD_KNIFE_HS"
-new const POINTS_ADD_GRENADE[]	=		"POINTS_ADD_HE_GRENADE"
-new const POINTS_SUB[]			=		"POINTS_SUB"
-new const POINTS_SUB_HS[]		=		"POINTS_SUB_HS"
-new const POINTS_SUB_KNIFE[]	=		"POINTS_SUB_KNIFE"
-new const POINTS_SUB_KNIFE_HS[]	=		"POINTS_SUB_KNIFE_HS"
-new const POINTS_SUB_GRENADE[]	=		"POINTS_SUB_HE_GRENADE"
-new const POINTS_SUB_SUICIDE[]	=		"POINTS_SUB_SUICIDE"
-new const POINTS_SUB_TK[]		=		"POINTS_SUB_TK"
-new const POINTS_EXPLODED[]		=		"POINTS_EXPLODED"
-new const POINTS_DEFUSED[]		=		"POINTS_DEFUSED"
-new const POINTS_PLANTED[]		=		"POINTS_PLANTED"
-new const POINTS_ACE[]			=		"POINTS_ACE"
-new const POINTS_SEMIACE[]		=		"POINTS_SEMIACE"
-new const POINTS_TWIN[]			=		"POINTS_TEAM_WIN"
-new const POINTS_SHOW_NAME[]	=		"POINTS_SHOW_NAME"
-#endif
 
-#if defined POINTS_SYS
-new const name[] = "name"
-#endif
 
 enum
 {
@@ -183,14 +149,7 @@ enum _:Settings
 	iStartPoints,
 	bool:bForceWarmup,
 	szStopCfg[32],
-	#if defined POINTS_SYS
-	szHostname[48],
-	szUsername[48],
-	szPassword[48],
-	szDatabaseName[32],
-	szTable[32],
-	#endif
-}
+	}
 
 enum _:WarmSettings
 {
@@ -334,59 +293,6 @@ enum _:Forwards
 	MaxFwds
 }
 
-#if defined POINTS_SYS
-enum _:PointsSystem 
-{
-	PointsAdd,
-	PointsAddHS,
-	PointsAddKnife,
-	PointsAddKnifeHS,
-	PointsAddGrenade,
-	PointsSub,
-	PointsSubHS,
-	PointsSubKnife,
-	PointsSubKnifeHS,
-	PointsSubGrenade,
-	PointsSubSuicide,
-	PointsSubTK,
-	PointsExploded,
-	PointsDefused,
-	PointsPlanted,
-	PointsAce,
-	PointsSemiAce,
-	PointsTeamWin,
-	PointsShowName
-}
-
-enum
-{
-	UPDATE_ROUND = 0,
-	UPDATE_TEAMCHANGE
-}
-
-enum _:Ranking
-{
-	szRank[6],
-	iRankPoints
-}
-
-new Array:g_aRanks
-
-new g_ePointSystem[PointsSystem]
-new g_iPoints[MAX_PLAYERS + 1]
-new g_iKills[MAX_PLAYERS + 1]
-new g_iDeaths[MAX_PLAYERS + 1]
-new g_iWins[MAX_PLAYERS + 1]
-new g_iLose[MAX_PLAYERS + 1]
-new Handle:g_hSqlTuple
-new g_szSqlError[512]
-new Handle:g_iSqlConnection
-new g_iBombPlanter
-new bool:g_bConnected
-new g_iTry[MAX_PLAYERS + 1]  // Fix #2: per-player retry counter (was global — race condition)
-new g_szBuffer[2500]
-new bool:g_bLoadedPlayer[MAX_PLAYERS + 1]
-#endif
 new Array:g_aStartCmds
 new Array:g_aStopCmds
 new Array:g_aWarmCmds
@@ -402,9 +308,6 @@ new Array:g_aTCmds
 new Array:g_aSpecCmds
 new Array:g_aStartDemoCmds
 new Array:g_aStopDemoCmds
-#if defined POINTS_SYS
-new Array:g_aRankCmds  // Fix #1: dedicated array for rank commands (was wrongly using g_aStopDemoCmds)
-#endif
 
 new g_ePluginSettings[Settings]
 new g_eHudSettings[HudSettings]
@@ -475,14 +378,7 @@ public plugin_init()
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_ChooseTeam_Post", 1)
 	RegisterHookChain(RG_CSGameRules_CanHavePlayerItem, "RG_CSGameRules_CanHavePlayerItem_Pre")
 
-	#if defined POINTS_SYS
-	RegisterHookChain(RG_PlantBomb, "RG_BombPlanted")
-	RegisterHookChain(RG_CGrenade_ExplodeBomb, "RG_BombExploded")
-	RegisterHookChain(RG_CGrenade_DefuseBombEnd, "RG_BombDefused")
-	RegisterHookChain(RG_CBasePlayer_Spawn, "RG_Player_Spawn_Post", 1)
-	register_event("DeathMsg", "ev_DeathMsg", "ae", "1>0")
-	#endif
-	RegisterHookChain(RG_CBasePlayer_TakeDamage, "RG_PlayerTakeDamage_Pre")
+		RegisterHookChain(RG_CBasePlayer_TakeDamage, "RG_PlayerTakeDamage_Pre")
 	RegisterHookChain(RG_CBasePlayer_TakeDamage, "RG_PlayerTakeDamage_Post", 1)
 	#if defined PUNCH_ANGLE
 	RegisterHookChain(RG_CBasePlayerWeapon_KickBack, "RG_KickBack_Pre")
@@ -501,19 +397,7 @@ public plugin_init()
 
 	g_eForwards[Kill] = CreateMultiForward("mix_player_killed", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_STRING, FP_STRING)
 	g_eForwards[GameBeginPre] = CreateMultiForward("mix_game_begin_pre", ET_IGNORE)
-	#if defined POINTS_SYS
-	g_eForwards[GameOver] = CreateMultiForward("mix_game_over", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_CELL)
-	g_eForwards[GameBeginPost] = CreateMultiForward("mix_game_begin_post", ET_IGNORE, FP_CELL, FP_CELL, FP_STRING, FP_STRING, FP_CELL)
-	g_eForwards[GameStopped] = CreateMultiForward("mix_game_stopped", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL)
-	g_eForwards[DatabaseConnected] = CreateMultiForward("mix_database_connected", ET_IGNORE, FP_CELL, FP_CELL)
-	g_eForwards[Winners] = CreateMultiForward("mix_match_winner", ET_IGNORE, FP_CELL)
-	g_eForwards[Save] = CreateMultiForward("mix_user_save", ET_IGNORE, FP_CELL)
-	#else
-	g_eForwards[GameOver] = CreateMultiForward("mix_game_over", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL)
-	g_eForwards[GameBeginPost] = CreateMultiForward("mix_game_begin_post", ET_IGNORE, FP_CELL, FP_CELL, FP_STRING, FP_STRING)
-	g_eForwards[GameStopped] = CreateMultiForward("mix_game_stopped", ET_IGNORE, FP_CELL, FP_CELL)
-	#endif
-	g_eForwards[NewRound] = CreateMultiForward("mix_game_new_round", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL)
+		g_eForwards[NewRound] = CreateMultiForward("mix_game_new_round", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL)
 	
 	new pcvar = get_cvar_pointer("amx_mode")
 	if(pcvar != 0)
@@ -550,11 +434,7 @@ public plugin_natives()
 	g_aStopDemoCmds = ArrayCreate(32)
 	g_aPlayerData = ArrayCreate(Pdata)
 
-	#if defined POINTS_SYS
-	g_aRanks = ArrayCreate(Ranking)
-	g_aRankCmds = ArrayCreate(32)  // Fix #1
-	#endif
-
+	
 	register_library("mix_system")
 
 	register_native("Mix_IsHalf", "native_is_half")
@@ -565,12 +445,7 @@ public plugin_natives()
 	register_native("Mix_IsWarm", "native_is_warm")
 	register_native("Mix_GetPrefix", "native_get_prefix")
 	register_native("Mix_GetUserName", "native_get_username")
-	#if defined POINTS_SYS
-	register_native("Mix_SearchForUser", "native_search_for_user")
-	register_native("Mix_UserPoints", "native_user_points")
-	register_native("Mix_GetPointsTable", "native_get_points_table")
-	#endif
-	register_native("Mix_HasPointsSys", "native_has_points_sys")
+		register_native("Mix_HasPointsSys", "native_has_points_sys")
 }
 
 public plugin_end()
@@ -591,27 +466,13 @@ public plugin_end()
 	ArrayDestroy(g_aStartDemoCmds)
 	ArrayDestroy(g_aStopDemoCmds)
 	ArrayDestroy(g_aPlayerData)
-	#if defined POINTS_SYS
-	ArrayDestroy(g_aRankCmds)  // Fix #1
-	#endif
-
+	
 	for(new i; i < MaxFwds; i++)
 	{
 		DestroyForward(g_eForwards[i])
 	}
 
-	#if defined POINTS_SYS
-	ArrayDestroy(g_aRanks)
-	// g_aRankCmds already destroyed above
-
-	if(g_bConnected)
-	{
-		SQL_FreeHandle(g_hSqlTuple)
-		SQL_FreeHandle(g_iSqlConnection)
 	}
-	
-	#endif
-}
 
 public OnCvarChange(pcvar, const old_value[], const new_value[])
 {
@@ -658,14 +519,7 @@ public clcmd_say_test(id)
 	console_print(id, "Warmup Type: %s", g_eWarmSettings[bWarmType] ? "True" : "False")
 	console_print(id, "Weapon Tero: %s", g_eWarmSettings[szWeaponT])
 	console_print(id, "Weapon CT: %s", g_eWarmSettings[szWeaponCT])
-	#if defined POINTS_SYS
-	console_print(id, "Database host: %s", g_ePluginSettings[szHostname])
-	console_print(id, "Database username: %s", g_ePluginSettings[szUsername])
-	console_print(id, "Database password: %s", g_ePluginSettings[szPassword])
-	console_print(id, "Database name: %s", g_ePluginSettings[szDatabaseName])
-	console_print(id, "Database table: %s", g_ePluginSettings[szTable])
-	#endif
-}
+	}
 #endif
 
 ReadConfig()
@@ -681,10 +535,7 @@ ReadConfig()
 	{
 		new szData[128], iSection, szString[64], szValue[64]
 
-		#if defined POINTS_SYS
-		new aRank[Ranking]
-		#endif
-
+		
 		while(!feof(iFile))
 		{
 			fgets(iFile, szData, charsmax(szData))
@@ -928,24 +779,7 @@ ReadConfig()
 								ArrayPushString(g_aStopDemoCmds, szString)
 							}
 						}
-						#if defined POINTS_SYS
-						else if(equal(szString, TOP_COMMANDS))
-						{
-							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
-							{
-								register_clcmd(szString, "clcmd_say_rank")
-								ArrayPushString(g_aStopDemoCmds, szString)
-							}
-						}
-						else if(equal(szString, RESET_COMMANDS))
-						{
-							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
-							{
-								register_clcmd(szString, "concmd_reset_db")
-							}
-						}
-						#endif
-						else if(equal(szString, PAUSE_COMMANDS))
+												else if(equal(szString, PAUSE_COMMANDS))
 						{
 							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
 							{
@@ -1040,205 +874,21 @@ ReadConfig()
 						copy(g_eDemoSettings[szDemoName], charsmax(g_eDemoSettings[szDemoName]), szValue)
 					}
 				}
-				#if defined POINTS_SYS
-				case POINTS_SYSTEM:
-				{
-					if(szData[0] == '[')
-						continue
-
-					strtok2(szData, szString, charsmax(szString), szValue, charsmax(szValue), '=', TRIM_INNER)
-					if(equal(szString, DBASE_HOST))
-					{
-						copy(g_ePluginSettings[szHostname], charsmax(g_ePluginSettings[szHostname]), szValue)
-					}
-					else if(equal(szString, DBASE_USER))
-					{
-						copy(g_ePluginSettings[szUsername], charsmax(g_ePluginSettings[szUsername]), szValue)
-					}
-					else if(equal(szString, DBASE_PASS))
-					{
-						copy(g_ePluginSettings[szPassword], charsmax(g_ePluginSettings[szPassword]), szValue)
-					}
-					else if(equal(szString, DBASE_NAME))
-					{
-						copy(g_ePluginSettings[szDatabaseName], charsmax(g_ePluginSettings[szDatabaseName]), szValue)
-					}
-					else if(equal(szString, DBASE_TABLE))
-					{
-						copy(g_ePluginSettings[szTable], charsmax(g_ePluginSettings[szTable]), szValue)
-					}
-					else if(equal(szString, POINTS_ADD))
-					{
-						g_ePointSystem[PointsAdd] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_ADD_HS))
-					{
-						g_ePointSystem[PointsAddHS] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_ADD_KNIFE))
-					{
-						g_ePointSystem[PointsAddKnife] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_ADD_KNIFE_HS))
-					{
-						g_ePointSystem[PointsAddKnifeHS] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_ADD_GRENADE))
-					{
-						g_ePointSystem[PointsAddGrenade] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_SUB))
-					{
-						g_ePointSystem[PointsSub] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_SUB_HS))
-					{
-						g_ePointSystem[PointsSubHS] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_SUB_KNIFE))
-					{
-						g_ePointSystem[PointsSubKnife] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_SUB_KNIFE_HS))
-					{
-						g_ePointSystem[PointsSubKnifeHS] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_SUB_GRENADE))
-					{
-						g_ePointSystem[PointsSubGrenade] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_SUB_SUICIDE))
-					{
-						g_ePointSystem[PointsSubSuicide] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_SUB_TK))
-					{
-						g_ePointSystem[PointsSubTK] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_EXPLODED))
-					{
-						g_ePointSystem[PointsExploded] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_DEFUSED))
-					{
-						g_ePointSystem[PointsDefused] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_PLANTED))
-					{
-						g_ePointSystem[PointsPlanted] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_ACE))
-					{
-						g_ePointSystem[PointsAce] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_SEMIACE))
-					{
-						g_ePointSystem[PointsSemiAce] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_TWIN))
-					{
-						g_ePointSystem[PointsTeamWin] = str_to_num(szValue)
-					}
-					else if(equal(szString, POINTS_SHOW_NAME))
-					{
-						g_ePointSystem[PointsShowName] = str_to_num(szValue)
-					}
-				}
-				case RANK_SYSTEM:
-				{
-					if(szData[0] == '[')
-						continue
-						
-					strtok2(szData, szString, charsmax(szString), szValue, charsmax(szValue), '=', TRIM_INNER)
-					copy(aRank[szRank], charsmax(aRank[szRank]), szString)
-					aRank[iRankPoints] = str_to_num(szValue)
-
-					ArrayPushArray(g_aRanks, aRank)
-				}
-				#endif
-			}
+							}
 		}
 	}
 
-	#if defined POINTS_SYS
-	DatabaseConnect()
-	#endif
-
+	
 	g_iTimer = g_ePluginSettings[iPauseTime] - 1
 }
 
-#if defined POINTS_SYS
-public DatabaseConnect()
-{
-	SQL_SetAffinity("mysql")
-	g_hSqlTuple = SQL_MakeDbTuple(g_ePluginSettings[szHostname], g_ePluginSettings[szUsername], g_ePluginSettings[szPassword], g_ePluginSettings[szDatabaseName], 10)
-
-	new iError
-	g_iSqlConnection = SQL_Connect(g_hSqlTuple, iError, g_szSqlError, charsmax(g_szSqlError))
-
-	if(g_iSqlConnection == Empty_Handle)
-	{
-		log_to_file("mix_system.log", "%s Failed to connect to database. Make sure databse settings are right! Error: %s", g_ePluginSettings[szPrefix], g_szSqlError)
-		return 
-	}
-
-	g_bConnected = true
-
-	ExecuteForward(g_eForwards[DatabaseConnected], g_iRet, g_hSqlTuple, g_iSqlConnection)
-
-	new szQueryData[450];
-	formatex(szQueryData, charsmax(szQueryData), "CREATE TABLE IF NOT EXISTS `%s` \
-		(`ID` INT NOT NULL AUTO_INCREMENT,\
-		`SteamID` VARCHAR(32),\
-		`Name` VARCHAR(32),\
-		`Points` INT NOT NULL,\
-		`Kills` INT NOT NULL,\
-		`Deaths` INT NOT NULL,\
-		`Wins` INT NOT NULL, \
-		`Lose` INT NOT NULL, \
-		`Online` TINYINT(1) NOT NULL DEFAULT ^"0^", \
-		`updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(), \
-		PRIMARY KEY(ID, SteamID));", g_ePluginSettings[szTable])
-
-	SQL_ThreadQuery(g_hSqlTuple, "QueryHandlerTable", szQueryData, szQueryData, charsmax(szQueryData))
-}
-
-public QueryHandlerTable(iFailState, Handle:iQuery, szError[], iErrorCode, szQuery[])
-{
-	switch(iFailState)
-	{
-		case TQUERY_CONNECT_FAILED: 
-		{
-			log_amx("[SQL Error Table] Connection failed (%i): %s", iErrorCode, szError);
-		}
-		case TQUERY_QUERY_FAILED:
-		{
-			log_amx("[SQL Error Table] Query failed (%i): %s", iErrorCode, szError);
-			log_amx("Query: %s", szQuery)
-		}
-	}
-}
-#endif
 
 public client_putinserver(id)
 {
 	get_user_authid(id, g_szAuthID[id], charsmax(g_szAuthID[]))
 	get_user_name(id, g_szName[id], charsmax(g_szName[]))
 
-	#if defined POINTS_SYS
-	g_bLoadedPlayer[id] = false
-	g_iPoints[id] = g_ePluginSettings[iStartPoints]
-	g_iKills[id] = 0
-	g_iDeaths[id] = 0
-	g_iWins[id] = 0
-	g_iLose[id] = 0
-
-	if(!is_bot(id) && g_bConnected)
-	{
-		set_task(0.2, "task_load", id + TASK_LOAD)
-	}
-	#endif
-	g_iPlayerKills[id] = 0
+		g_iPlayerKills[id] = 0
 
 	g_eBooleans[bCanChat][id] = true
 
@@ -1273,15 +923,7 @@ public client_disconnected(id)
 		g_ePlayerScore[id][iDEATHS] = 0
 	}
 
-	#if defined POINTS_SYS
-	if(g_bConnected)
-	{
-		SaveData(id, true)
 	}
-
-	set_user_info(id, name, g_szName[id])
-	#endif
-}
 
 #if defined PUNCH_ANGLE
 public RG_KickBack_Pre(const index, Float:up_base, Float:lateral_base, Float:up_modifier, Float:lateral_modifier, Float:up_max, Float:lateral_max, direction_change)
@@ -1434,62 +1076,12 @@ public RG_Player_Killed_Post(iVictim, iKiller, iInflictor)
 
 		if(iKiller == iVictim)
 		{
-			#if defined POINTS_SYS
-			g_iPoints[iKiller] -= g_ePointSystem[PointsSubSuicide]
-			client_print_color(iVictim, iVictim, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_PLAYER, "KILLER_KILLED_SUICIDE", g_ePointSystem[ PointsSubSuicide ])
-			#endif
-			goto _return
+						goto _return
 		}
 
 		new bool:bHeadshot = get_member(iVictim, m_bHeadshotKilled)
 
-		#if defined POINTS_SYS
-		if(containi(g_szWeapon[iKiller], "grenade") != -1)
-		{
-			format(g_szWeapon[iKiller], charsmax(g_szWeapon[]), "weapon_he%s", g_szWeapon[iKiller])
-		}
-		else
-		{
-			format(g_szWeapon[iKiller], charsmax(g_szWeapon[]), "weapon_%s", g_szWeapon[iKiller])
-		}
-		
-		new WeaponIdType:wid = rg_get_weapon_info(g_szWeapon[iKiller], WI_ID)
-		
-		if(get_user_team(iKiller) == get_user_team(iVictim))
-		{
-			g_iPoints[ iKiller ] -= g_ePointSystem[PointsSubTK]
-			client_print_color(iKiller, iKiller, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_PLAYER, bHeadshot ? ((wid == WEAPON_KNIFE) ? "VICTIM_KILLED_SUB_TK_KNIFE_HS" : "VICTIM_KILLED_SUB_TK_HS") : ((wid == WEAPON_KNIFE) ? "VICTIM_KILLED_SUB_TK_KNIFE" : "VICTIM_KILLED_SUB_TK"), g_ePointSystem[PointsSubTK], g_szName[iVictim])
-			goto _return
-		}
-
-		if(wid == WEAPON_HEGRENADE)
-		{
-			g_iPoints[iKiller] += g_ePointSystem[PointsAddGrenade]
-			client_print_color(iKiller, iKiller, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_PLAYER, "KILLER_KILLED_ADD_GRENADE", g_ePointSystem[PointsAddGrenade], g_szName[iVictim])
-			
-			g_iPoints[iVictim] -= g_ePointSystem[PointsSubGrenade]
-			client_print_color(iVictim, iVictim, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_PLAYER, "KILLER_KILLED_SUB_GRENADE", g_ePointSystem[PointsAddGrenade], g_szName[iKiller])
-		}
-		else if(wid == WEAPON_KNIFE)
-		{
-			g_iPoints[iKiller] += bHeadshot ? g_ePointSystem[PointsAddKnifeHS] : g_ePointSystem[PointsAddKnife]
-			client_print_color(iKiller, iKiller, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_PLAYER, bHeadshot ? "KILLER_KILLED_ADD_KNIFE_HS" : "KILLER_KILLED_ADD_KNIFE", bHeadshot ? g_ePointSystem[PointsAddKnifeHS] : g_ePointSystem[PointsAddKnife], g_szName[iVictim])
-
-			g_iPoints[iVictim] -= bHeadshot ? g_ePointSystem[PointsSubKnifeHS] : g_ePointSystem[PointsSubKnife]
-			client_print_color(iVictim, iVictim, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_PLAYER, bHeadshot ? "VICTIM_KILLED_SUB_KNIFE_HS" : "VICTIM_KILLED_SUB_KNIFE", bHeadshot ? g_ePointSystem[PointsSubKnifeHS] : g_ePointSystem[PointsSubKnife], g_szName[iKiller])
-		}
-		else
-		{
-			g_iPoints[iKiller] += bHeadshot ? g_ePointSystem[PointsAddHS] : g_ePointSystem[PointsAdd]
-			client_print_color(iKiller, iKiller, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_PLAYER, bHeadshot ? "KILLER_KILLED_ADD_HS" : "KILLER_KILLED_ADD", bHeadshot ? g_ePointSystem[PointsAddHS] : g_ePointSystem[PointsAdd], g_szName[iVictim])
-			
-			g_iPoints[iVictim] -= bHeadshot ? g_ePointSystem[PointsSubHS] : g_ePointSystem[PointsSub]
-			client_print_color(iVictim, iVictim, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_PLAYER, bHeadshot ? "VICTIM_KILLED_SUB_HS" : "VICTIM_KILLED_SUB", bHeadshot ? g_ePointSystem[PointsSubHS] : g_ePointSystem[PointsSub], g_szName[iKiller])
-		}
-		g_iKills[iKiller] += 1
-		g_iDeaths[iVictim] += 1
-		#endif
-		g_iPlayerKills[iKiller] += 1
+				g_iPlayerKills[iKiller] += 1
 
 		ExecuteForward(g_eForwards[Kill], g_iRet, iVictim, iKiller, bHeadshot ? 1 : 0, g_szName[iKiller], g_szAuthID[iKiller])
 	}
@@ -1530,97 +1122,6 @@ public task_revive(iPlayer)
 	return PLUGIN_HANDLED
 }
 
-#if defined POINTS_SYS
-public RG_BombPlanted(id)
-{
-	if(g_eBooleans[bIsMixOn])
-	{
-		g_iBombPlanter = id
-		g_iPoints[ id ] += g_ePointSystem[ PointsPlanted ]
-		client_print_color( id, id, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_PLAYER, "POINTS_FOR_PLANT_BOMB", g_ePointSystem[ PointsPlanted ] )
-	}
-}
-
-public RG_BombExploded()
-{
-	if(g_eBooleans[bIsMixOn])
-	{
-		g_iPoints[ g_iBombPlanter ] += g_ePointSystem[ PointsExploded ]
-		client_print_color(g_iBombPlanter, g_iBombPlanter, "^4%s^1 %L", g_ePluginSettings[szPrefix], LANG_SERVER, "BOMB_EXPLODED_BY_YOU", g_ePointSystem[PointsExploded])
-	}
-}
-
-public RG_BombDefused(id2, id, bool:bDefused)
-{
-	if(g_eBooleans[bIsMixOn])
-	{
-		if(bDefused)
-		{
-			g_iPoints[id] += g_ePointSystem[ PointsDefused ]
-			client_print_color(id, id, "^4%s^1 %L", g_ePluginSettings[szPrefix], LANG_SERVER, "BOMB_DEFUSED_BY_YOU", g_ePointSystem[PointsDefused])
-		}
-	}
-}
-
-public RG_Player_Spawn_Post(id)
-{
-	if(is_user_alive(id))
-	{
-		if(g_eBooleans[bIsKnife])
-		{
-			rg_set_user_armor(id, 100, ARMOR_KEVLAR)
-		}
-
-		if(g_eBooleans[bIsMixOn])
-		{
-		if(g_iPoints[id] < 0)
-		{
-			g_iPoints[id] = 0
-		}
-
-		if(g_ePointSystem[PointsShowName] < 0)
-			return
-
-		new aRank[Ranking]
-
-		for(new i; i < ArraySize(g_aRanks); i++)
-		{
-			ArrayGetArray(g_aRanks, i, aRank)
-
-			if(g_iPoints[id] <= aRank[iRankPoints])
-			{
-				if(i > 1)
-				{
-					ArrayGetArray(g_aRanks, i-1, aRank)
-				}
-				break
-			}
-		}
-		
-		new iError
-		regex_replace(g_rePattern, g_szName[id], charsmax(g_szName[]), "", .errcode=iError)
-
-		if(iError != 0)
-		{
-			log_to_file("mix_system.log", "Regex Error. Code %d", iError)
-		}
-
-		new tmpName[32]
-		formatex(tmpName, charsmax(tmpName), "%s", g_szName[id])
-
-		if(g_ePointSystem[PointsShowName])
-		{
-			format(tmpName, charsmax(tmpName), "%s <%d>", tmpName, g_iPoints[id])
-		}
-		else
-		{
-			format(tmpName, charsmax(tmpName), "%s <%s>", tmpName, aRank[szRank])
-		}
-		set_user_info(id, name, tmpName)
-		}
-	}
-}
-#endif
 
 // Fix #3: Helper to print all elements of a command array
 stock PrintCmdArray(id, Array:array, ML[])
@@ -1664,10 +1165,7 @@ public clcmd_showcmds(id)
 	PrintCmdArray(id, g_aSpecCmds,     "MIX_SPEC_MOVE_COMMANDS_ARE")
 	PrintCmdArray(id, g_aStartDemoCmds,"MIX_START_DEMO_COMMANDS_ARE")
 	PrintCmdArray(id, g_aStopDemoCmds, "MIX_STOP_DEMO_COMMANDS_ARE")
-	#if defined POINTS_SYS
-	PrintCmdArray(id, g_aRankCmds,     "MIX_RANK_COMMANDS_ARE")
-	#endif
-
+	
 	console_print(id, "=-=-==-=-=---=-=-==-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-")
 
 	client_print_color(id, id, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_SERVER, "OPEN_CONSOLE_FOR_CMDS")
@@ -1780,12 +1278,7 @@ public clcmd_startmix(id, bool:bKnife)
 					bFinished = true
 				}
 
-				#if defined POINTS_SYS
-				ExecuteForward(g_eForwards[GameBeginPost], g_iRet, iPlayer, bFinished ? 1 : 0, g_szAuthID[iPlayer], g_szName[iPlayer], g_iPoints[iPlayer])
-				#else
-				ExecuteForward(g_eForwards[GameBeginPost], g_iRet, iPlayer, bFinished ? 1 : 0, g_szAuthID[iPlayer], g_szName[iPlayer])
-				#endif
-			}
+							}
 		#if defined FASTCUP_MODE
 		}
 		#endif
@@ -1873,19 +1366,11 @@ public clcmd_stopmix(id)
 
 		if(iTeam == CS_TEAM_CT || iTeam == CS_TEAM_T)
 		{
-			#if defined POINTS_SYS
-			ExecuteForward(g_eForwards[GameStopped], g_iRet, iPlayer, g_iDuration, g_iPoints[iPlayer])
-			#else
-			ExecuteForward(g_eForwards[GameStopped], g_iRet, iPlayer, g_iDuration)
-			#endif
-		}
+					}
 
 		client_cmd(iPlayer, "stop")
 
-		#if defined POINTS_SYS
-		set_user_info(iPlayer, name, g_szName[iPlayer])
-		#endif
-	}
+			}
 
 	#if defined FASTCUP_MODE
 	g_eBooleans[bWasKnife] = false
@@ -2315,11 +1800,7 @@ public task_end_round(index)
 			{
 				if(g_eInformations[ACE] == iPlayer)
 				{
-					#if defined POINTS_SYS
-					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_SCORED_ACE_POINTS", g_ePointSystem[PointsAce])
-					g_iPoints[iPlayer] += g_ePointSystem[PointsAce]
-					#endif
-				}
+									}
 				else
 				{
 					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "X_SCORED_ACE", g_szName[g_eInformations[ACE]])
@@ -2330,21 +1811,14 @@ public task_end_round(index)
 			{
 				if(g_eInformations[SEMI_ACE] == iPlayer)
 				{
-					#if defined POINTS_SYS
-					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_SCORED_SEMIACE_POINTS", g_ePointSystem[PointsAce])
-					g_iPoints[iPlayer] += g_ePointSystem[PointsSemiAce]
-					#endif
-				}
+									}
 				else
 				{
 					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "X_SCORED_SEMIACE", g_szName[g_eInformations[SEMI_ACE]])
 				}
 			}
 
-			#if defined POINTS_SYS
-			SaveData(iPlayer, false)
-			#endif
-		}
+					}
 
 		for(new i = 1; i <= MAX_PLAYERS; i++)
 		{
@@ -2513,9 +1987,17 @@ public task_change_bool(taskid)
 
 public CS_OnBuyAttempt(id, item)
 {
-	if(g_eBooleans[bIsWarm] && g_eWarmSettings[bWarmType] || g_eBooleans[bIsKnife])
+	if(g_eBooleans[bIsWarm] && g_eWarmSettings[bWarmType])
 	{
 		return PLUGIN_HANDLED
+	}
+
+	if(g_eBooleans[bIsKnife])
+	{
+		if(item != CSI_KEVLAR && item != CSI_ASSAULTSUIT)
+		{
+			return PLUGIN_HANDLED
+		}
 	}
 	
 	if(item == CSI_SHIELDGUN || item == CSI_NVGS || item == CSI_SG550 || item == CSI_G3SG1 || item == CSI_SHIELD)
@@ -2924,25 +2406,7 @@ public task_show_score()
 			new szTemp[16]
 			WinnerTeam(szTemp, charsmax(szTemp))
 
-			#if defined POINTS_SYS
-			new CsTeams:iTeam = cs_get_user_team(iPlayer)
-			if(iTeam == CS_TEAM_CT && szTemp[0] == 'C' || iTeam == CS_TEAM_T && szTemp[0] == 'T')
-			{
-				GiveTeamReward(iPlayer, g_ePointSystem[PointsTeamWin])
-				g_iWins[iPlayer] += 1
-
-				ExecuteForward(g_eForwards[Winners], g_iRet, iPlayer)
-			}
-			else if(iTeam == CS_TEAM_CT && szTemp[0] == 'T' || iTeam == CS_TEAM_T && szTemp[0] == 'C')
-			{
-				g_iLose[iPlayer] += 1
-			}
-
-			ExecuteForward(g_eForwards[GameOver], g_iRet, iPlayer, g_iDuration, szTemp[0], g_iPoints[iPlayer])
-			#else 
-			ExecuteForward(g_eForwards[GameOver], g_iRet, iPlayer, g_iDuration, szTemp[0])
-			#endif
-
+			
 			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_WON_BY_X_TEAM", szTemp)
 			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_PLAYER, "MIX_END_SCORE", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
 		
@@ -2974,17 +2438,7 @@ public task_show_score()
 			new szTemp[16]
 			WinnerTeam(szTemp, charsmax(szTemp))
 
-			#if defined POINTS_SYS
-			if(cs_get_user_team(iPlayer) == CS_TEAM_CT && szTemp[0] == 'C' || cs_get_user_team(iPlayer) == CS_TEAM_T && szTemp[0] == 'T')
-			{
-				GiveTeamReward(iPlayer, g_ePointSystem[PointsTeamWin])
-			}
-
-			ExecuteForward(g_eForwards[GameOver], g_iRet, iPlayer, g_iDuration, szTemp[0], g_iPoints[iPlayer])
-			#else 
-			ExecuteForward(g_eForwards[GameOver], g_iRet, iPlayer, g_iDuration, szTemp[0])
-			#endif
-
+			
 			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_WON_BY_X_TEAM_IN_OVERTIME", szTemp)
 			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_PLAYER, "MIX_OVERTIME_END_SCORE", LANG_SERVER, "CT_TEAM", g_iOvertimeScore[CT_OVER_SCORE], LANG_SERVER, "TERO_TEAM", g_iOvertimeScore[TERO_OVER_SCORE])
 		
@@ -3642,101 +3096,6 @@ public clcmd_stop_demo(id)
 	return PLUGIN_HANDLED
 }
 
-#if defined POINTS_SYS
-public clcmd_say_rank(id)
-{
-	if(!is_user_connected(id) || !g_bConnected)
-		return PLUGIN_HANDLED
-
-	new szTemp[512]
-	formatex(szTemp, charsmax(szTemp), "SELECT * FROM `%s` ORDER BY `%s`.`Points` DESC LIMIT 0,15", g_ePluginSettings[szTable], g_ePluginSettings[szTable])
-	// Fix #4: was using global g_iIndex — race condition if 2 players call /top simultaneously
-	// Now pass id directly as thread data so each callback knows its caller
-	new iData[2]
-	iData[0] = id
-	SQL_ThreadQuery(g_hSqlTuple, "format_top15", szTemp, iData, sizeof(iData))
-
-	return PLUGIN_HANDLED
-}
-
-public format_top15(iFailState, Handle:szQuery, Error[], Errcode, Data[], DataSize)
-{
-	// Fix #4: read player id from callback data (no more global g_iIndex)
-	new id = Data[0]
-
-	switch(iFailState)
-	{
-		case TQUERY_CONNECT_FAILED: 
-		{
-			log_amx("[SQL Error Top15] Connection failed (%i): %s", Errcode, Error);
-			return PLUGIN_HANDLED
-		}
-		case TQUERY_QUERY_FAILED:
-		{
-			log_amx("[SQL Error Top15] Query failed (%i): %s", Errcode, Error);
-			return PLUGIN_HANDLED
-		}
-	}
-
-	enum _:PlayerData
-	{
-		szSteamID[32],
-		szName[32],
-		iPoints
-	}
-
-	new iRows = SQL_NumResults(szQuery)
-	new iInfos[15][PlayerData]
-
-	if(SQL_MoreResults(szQuery))
-	{
-		for(new i = 0; i < iRows; i++)
-		{
-			SQL_ReadResult(szQuery, SQL_FieldNameToNum(szQuery, "SteamID"), iInfos[i][szSteamID], charsmax(iInfos[][szSteamID]))
-			SQL_ReadResult(szQuery, SQL_FieldNameToNum(szQuery, "Name"), iInfos[i][szName], charsmax(iInfos[][szName]))
-			iInfos[i][iPoints] = SQL_ReadResult(szQuery, SQL_FieldNameToNum(szQuery, "Points"))
-
-			SQL_NextRow(szQuery)
-		}
-	}
-
-	if(iRows > 0)
-	{
-		new iLen = 0;
-		iLen = formatex(g_szBuffer[iLen], charsmax(g_szBuffer), "<meta charset=UTF-8><style>body{background:#000}tr{text-align:left} table{font-size:25px;color:#fff;padding:15px; min-width:600px} h2{color:#FFF;font-family:Arial} td{border:2px solid #27bcfe} th{border:2px solid #27bcfe; color: #27bcfe;}</style><body>")
-		iLen += formatex(g_szBuffer[iLen], charsmax(g_szBuffer) - iLen, "<body bgcolor=#000000><table align=center><tr><th class=p>#<td class=p><th>Name<th>SteamID<th>Points^n")
-
-		for(new i = 0; i < iRows; i++)
-		{
-			iLen += formatex(g_szBuffer[iLen], charsmax(g_szBuffer) - iLen, "<tr><td class=p>%d<td class=p><td>%s<td>%s<td>%i", i + 1, iInfos[i][szName], iInfos[i][szSteamID], iInfos[i][iPoints])
-		}
-	}
-
-	// Fix #4: use local id (from Data[]) instead of global g_iIndex
-	if(is_user_connected(id))
-	{
-		show_motd(id, g_szBuffer, "Top15 Points")
-	}
-
-	return PLUGIN_HANDLED
-}
-
-public concmd_reset_db(id)
-{
-	if(!(get_user_flags(id) & ADMIN_IMMUNITY))
-	{
-		console_print(id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-		return PLUGIN_HANDLED
-	}
-
-	new szQuery[56]
-	formatex(szQuery, charsmax(szQuery), "TRUNCATE TABLE `%s`", g_ePluginSettings[szTable])
-	SQL_ThreadQuery(g_hSqlTuple, "QueryHandler", szQuery)
-	console_print(id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "DATABASE_WIPED")
-
-	return PLUGIN_HANDLED
-}
-#endif
 
 public clcmd_say_pause(id)
 {
@@ -3779,138 +3138,6 @@ public clcmd_say_pause(id)
 	return PLUGIN_CONTINUE
 }
 
-#if defined POINTS_SYS
-public task_load(id)
-{
-	id -= TASK_LOAD
-
-	LoadData(id)
-}
-
-public LoadData(id)
-{
-	new szQuery[100];
-	formatex(szQuery, charsmax(szQuery), "SELECT * FROM `%s` WHERE `SteamID` = ^"%s^";", g_ePluginSettings[szTable], g_szAuthID[id])
-
-	new index[2]
-	index[0] = id
-	SQL_ThreadQuery(g_hSqlTuple, "QueryLoadData", szQuery, index, charsmax(index));
-}
-
-public QueryLoadData(iFailState, Handle:iQuery, szError[], iErrorCode, szData[])
-{
-	new id = szData[0]
-
-	switch(iFailState)
-	{
-		case TQUERY_CONNECT_FAILED, TQUERY_QUERY_FAILED:
-		{
-			// Fix #6: removed "< 3" which was a stray comparison making log_amx result meaningless
-			log_amx("[SQL Error Load] Query failed (%i): %s", iErrorCode, szError)
-			// Fix #2: g_iTry is now per-player — no race condition between simultaneous connects
-			if(g_iTry[id] < 3)
-			{
-				LoadData(id)
-				g_iTry[id]++
-			}
-			return 
-		}
-	}
-
-	g_iTry[id] = 0  // Fix #2: reset only this player's counter
-
-	if(SQL_NumResults(iQuery) > 0)
-	{
-		g_iPoints[id] = SQL_ReadResult(iQuery, SQL_FieldNameToNum(iQuery, "Points"));
-		g_iDeaths[id] = SQL_ReadResult(iQuery, SQL_FieldNameToNum(iQuery, "Deaths"));
-		g_iKills[id] = SQL_ReadResult(iQuery, SQL_FieldNameToNum(iQuery, "Kills"));
-		g_iWins[id] = SQL_ReadResult(iQuery, SQL_FieldNameToNum(iQuery, "Wins"));
-		g_iLose[id] = SQL_ReadResult(iQuery, SQL_FieldNameToNum(iQuery, "Lose"));
-		g_bLoadedPlayer[id] = true
-
-		goto _markOnline
-	}
-
-	new szQuery[256]
-
-	formatex(szQuery, charsmax(szQuery), "INSERT INTO `%s`\
-		(`SteamID`,\
-		`Name`,\
-		`Points`,\
-		`Kills`,\
-		`Deaths`,\
-		`Wins`,\
-		`Lose`, \
-		`Online` \
-		) VALUES ('%s', ^"%s^", '%d', '0', '0', '0', '0', '1');", g_ePluginSettings[szTable], g_szAuthID[id], g_szName[id], g_ePluginSettings[iStartPoints]);
-
-	SQL_ThreadQuery(g_hSqlTuple, "LoadPData", szQuery, szData, strlen(szData));
-
-	_markOnline:
-	formatex(szQuery, charsmax(szQuery), "UPDATE `%s` SET `Online`='1' WHERE `SteamID`=^"%s^";", g_ePluginSettings[szTable], g_szAuthID[id]);
-
-	SQL_ThreadQuery(g_hSqlTuple, "QueryHandler", szQuery, szQuery, charsmax(szQuery));
-}
-
-public LoadPData(iFailState, Handle:iQuery, szError[], iErrorCode, szData[])
-{
-	new id = szData[0]
-
-	switch(iFailState)
-	{
-		case TQUERY_CONNECT_FAILED, TQUERY_QUERY_FAILED:
-		{
-			log_amx("[SQL Error Insert] Query failed (%i): %s", iErrorCode, szError)
-			// Fix #2: use per-player retry counter
-			if(g_iTry[id] < 3)
-			{
-				LoadData(id)
-				g_iTry[id]++
-			}
-			return 
-		}
-	}
-	g_iTry[id] = 0  // Fix #2: reset on success
-	g_bLoadedPlayer[id] = true
-}
-
-public SaveData(id, bool:bDisconnect)
-{
-	if(!g_bLoadedPlayer[id])
-		return
-
-	ExecuteForward(g_eForwards[Save], g_iRet, id)
-
-	new szQuery[300]
-	formatex(szQuery, charsmax(szQuery), "UPDATE `%s` \
-		SET `Points`='%d', \
-		`Name`=^"%s^", \
-		`Kills`='%d', \
-		`Deaths`='%d', \
-		`Wins`='%d', \
-		`Lose`='%d', \
-		`Online`='%d' \
-		WHERE `SteamID`=^"%s^";", g_ePluginSettings[szTable], g_iPoints[id], g_szName[id], g_iKills[id], g_iDeaths[id], g_iWins[id], g_iLose[id], bDisconnect ? 0 : 1, g_szAuthID[id])
-
-	SQL_ThreadQuery(g_hSqlTuple, "QueryHandler", szQuery, szQuery, charsmax(szQuery));
-}
-
-public QueryHandler(iFailState, Handle:iQuery, szError[], iErrorCode, szQuery[])
-{
-	switch(iFailState)
-	{
-		case TQUERY_CONNECT_FAILED: 
-		{
-			log_amx("[SQL Error Save] Connection failed (%i): %s", iErrorCode, szError);
-		}
-		case TQUERY_QUERY_FAILED:
-		{
-			log_amx("[SQL Error Save] Query failed (%i): %s", iErrorCode, szError);
-			log_amx("Query: %s", szQuery)
-		}
-	}
-}
-#endif
 
 ResetScore()
 {
@@ -4322,119 +3549,8 @@ public native_get_username(iPluginID, iParamNum)
 	return 1
 }
 
-#if defined POINTS_SYS
-public native_search_for_user(iPluginID, iParamNum)
-{
-	if(!g_bConnected)
-	{
-		log_error(AMX_ERR_NATIVE, "%s Database connection was not established", g_ePluginSettings[szPrefix])
-		return NATIVE_ERROR;
-	}
-
-	static szSteamID[MAX_NAME_LENGTH]
-	get_string(1, szSteamID, charsmax(szSteamID))
-
-	new Handle:iQuery = SQL_PrepareQuery(g_iSqlConnection, "SELECT * FROM `%s` WHERE `SteamID` = ^"%s^";", g_ePluginSettings[szTable], szSteamID)
-			
-	if(!SQL_Execute(iQuery))
-	{
-		SQL_QueryError(iQuery, g_szSqlError, charsmax(g_szSqlError))
-		log_to_file("mix_system.log", g_szSqlError)
-		SQL_FreeHandle(iQuery)
-	}
-
-	new bool:bFoundData = SQL_NumResults( iQuery ) > 0 ? true : false
-
-	if(!bFoundData)
-	{
-		return NATIVE_ERROR;
-	}
-
-	new szQuery[128], iUserPoints, iPoints = get_param(2), bool:bAdd = bool:get_param(3)
-
-	formatex(szQuery, charsmax(szQuery), "SELECT `Points` FROM `%s` WHERE `SteamID` = '%s';", g_ePluginSettings[szTable], szSteamID)
-
-	iQuery = SQL_PrepareQuery(g_iSqlConnection, szQuery);
-
-	if(!SQL_Execute(iQuery))
-	{
-		SQL_QueryError(iQuery, g_szSqlError, charsmax(g_szSqlError))
-		log_to_file("mix_system.log", g_szSqlError);
-	}
-
-	if(SQL_NumResults(iQuery) > 0)
-	{
-		iUserPoints = SQL_ReadResult(iQuery, SQL_FieldNameToNum(iQuery, "Points"))
-	}
-
-	if(bAdd)
-	{
-		iUserPoints += iPoints
-	}
-	else
-	{
-		iUserPoints -= iPoints
-	}
-
-	formatex(szQuery, charsmax(szQuery), "UPDATE `%s` SET `Points`='%d' WHERE `SteamID`=^"%s^";", g_ePluginSettings[szTable], iUserPoints, szSteamID)
-
-	iQuery = SQL_PrepareQuery(g_iSqlConnection, szQuery)
-
-	if(!SQL_Execute(iQuery))
-	{
-		SQL_QueryError(iQuery, g_szSqlError, charsmax(g_szSqlError))
-		log_to_file("mix_system.log", g_szSqlError)
-	}
-
-	SQL_FreeHandle(iQuery)
-
-	return 1
-}
-
-public native_user_points(iPluginID, iParamNum)
-{
-	if(!g_bConnected)
-	{
-		log_error(AMX_ERR_NATIVE, "%s Database connection was not established", g_ePluginSettings[szPrefix])
-		return NATIVE_ERROR;
-	}
-
-	if (iParamNum != 1)
-	{
-		log_error(AMX_ERR_NATIVE, "%s Invalid param num ! Valid: (PlayerID)", g_ePluginSettings[szPrefix])
-		return NATIVE_ERROR
-	}
-	new id = get_param(1)
-
-	if(!is_user_connected(id))
-	{
-		log_error(AMX_ERR_NATIVE, "%s Player is not connected (%d)", g_ePluginSettings[szPrefix], id)
-		return NATIVE_ERROR
-	}
-
-	return g_iPoints[id]
-}
-
-public native_get_points_table(iPluginID, iParamNum)
-{
-	if(!g_bConnected)
-	{
-		log_error(AMX_ERR_NATIVE, "%s Database connection was not established", g_ePluginSettings[szPrefix])
-		return NATIVE_ERROR
-	}
-
-	set_string(1, g_ePluginSettings[szTable], get_param(2))
-
-	return 1
-}
-
-#endif
 
 public native_has_points_sys(iPluginID, iParamNum)
 {
-	#if defined POINTS_SYS
-	return true
-	#else
-	return false
-	#endif
-}
+	}
+
