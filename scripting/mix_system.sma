@@ -2689,23 +2689,9 @@ public clcmd_restart(id)
 		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
 		return PLUGIN_HANDLED
 	}
-	if(!g_eBooleans[bIsMixOn] && !g_eBooleans[bIsWarm] && !g_eBooleans[bIsKnife])
-	{
-		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
-		return PLUGIN_HANDLED
-	}
-	
-	if(g_iRoundNum != 0)
-	{
-		rg_round_end(1.0, WINSTATUS_DRAW, ROUND_END_DRAW, "ROUND DRAW", "ROUND DRAW", true)
-		set_task(2.0, "task_set_score")
-	}
-	else
-	{ 
-		server_cmd("sv_restart 1")
-	}
 
-	g_eBooleans[bCanShowStats] = false
+	server_cmd("sv_restart 1")
+	client_print_color(0, print_team_default, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_HAS_BEEN_RESTARTED")
 
 	return PLUGIN_HANDLED
 }
