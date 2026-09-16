@@ -1568,7 +1568,7 @@ public RG_Player_Spawn_Post(id)
 	{
 		if(g_eBooleans[bIsKnife])
 		{
-			rg_set_user_armor(id, 100, ARMOR_VEST)
+			rg_set_user_armor(id, 100, ARMOR_KEVLAR)
 		}
 
 		if(g_eBooleans[bIsMixOn])
@@ -3093,7 +3093,7 @@ public task_give_equipment(iPlayer)
 		return 
 
 	rg_remove_all_items(iPlayer, false)
-	rg_set_user_armor(iPlayer, 100, ARMOR_VEST)
+	rg_set_user_armor(iPlayer, 100, ARMOR_KEVLAR)
 	rg_give_item(iPlayer, "weapon_knife")
 
 	switch(iTeam)
