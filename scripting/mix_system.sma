@@ -2099,6 +2099,11 @@ public clcmd_chat_off(id)
 	return PLUGIN_HANDLED
 }
 
+public plugin_cfg()
+{
+	set_task(3.0, "task_start_warm")
+}
+
 public hook_say(id)
 {
 	if(!is_user_connected(id))
@@ -3625,15 +3630,15 @@ public task_start_warm()
 
 public task_show_live()
 {
-	fnScreenFade(0, 1, 1, {0, 255, 0}, 75, 0x0000)
-	set_dhudmessage(0, 255, 0, -1.0, 0.3, 2, 0.1, 4.0, 0.1, 0.1)
+	fnScreenFade(0, 3, 2, {0, 255, 0}, 75, 0x0000)
+	set_dhudmessage(0, 255, 0, -1.0, 0.3, 2, 0.1, 8.0, 0.1, 0.1)
 	show_dhudmessage(0, "=== LIVE LIVE LIVE ===")
 }
 
 public task_show_halftime()
 {
-	fnScreenFade(0, 1, 1, {0, 150, 255}, 75, 0x0000)
-	set_dhudmessage(0, 150, 255, -1.0, 0.3, 2, 0.1, 4.0, 0.1, 0.1)
+	fnScreenFade(0, 3, 2, {0, 150, 255}, 75, 0x0000)
+	set_dhudmessage(0, 150, 255, -1.0, 0.3, 2, 0.1, 8.0, 0.1, 0.1)
 	show_dhudmessage(0, "=== HALF TIME ===")
 }
 
