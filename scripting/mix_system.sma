@@ -2532,6 +2532,23 @@ public task_delayed_members()
 	set_member_game(m_bCTCantBuy, false)
 	set_member_game(m_bTCantBuy, false)
 	g_iGaveC4 = false
+
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(g_ePlayerScore[iPlayer][iKILLS] > 0 || g_ePlayerScore[iPlayer][iDEATHS] > 0)
+		{
+			set_user_frags(iPlayer, g_ePlayerScore[iPlayer][iKILLS])
+			cs_set_user_deaths(iPlayer, g_ePlayerScore[iPlayer][iDEATHS])
+
+			g_ePlayerScore[iPlayer][iKILLS] = 0
+			g_ePlayerScore[iPlayer][iDEATHS] = 0
+		}
+	}
 }
 
 public task_give_equipment(iPlayer)
