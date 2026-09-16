@@ -3,7 +3,7 @@
 /* 	Activare sistem de puncte 
 	Activate Points system 
 */
-#define POINTS_SYS
+//#define POINTS_SYS
 
 /* 	Mod Fastcup ( /start, runda de cutite automata, alegere a echipei de catre echipa castigatoare ) 
 	Fastcup Mode ( /start, automatic knife round, choose start side by winning team )
