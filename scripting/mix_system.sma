@@ -2455,8 +2455,8 @@ public task_show_score()
 		set_task(1.0, "task_swap_score")
 		set_task(1.1, "task_delayed_swap")
 		set_task(12.0, "task_halftime_restart1")
-		set_task(18.0, "task_halftime_restart2")
-		set_task(24.0, "task_halftime_live")
+		set_task(17.0, "task_halftime_restart2")
+		set_task(22.0, "task_halftime_live")
 	}
 
 	if(IsLastRound() || OvertimeFinished())
@@ -2539,14 +2539,22 @@ public task_delayed_members()
 	set_member_game(m_bTCantBuy, false)
 	g_iGaveC4 = false
 	
+	new iCT, iT
 	if(g_eBooleans[bOvertime])
 	{
-		rg_update_teamscores(g_iOvertimeScore[CT_OVER_SCORE], g_iOvertimeScore[TERO_OVER_SCORE], false)
+		iCT = g_iOvertimeScore[CT_OVER_SCORE]
+		iT = g_iOvertimeScore[TERO_OVER_SCORE]
 	}
 	else
 	{
-		rg_update_teamscores(g_iScore[CT_SCORE], g_iScore[TERO_SCORE], false)
+		iCT = g_iScore[CT_SCORE]
+		iT = g_iScore[TERO_SCORE]
 	}
+
+	// Set engine internal counters so sv_restart reads correct values
+	set_member_game(m_iNumCTWins, iCT)
+	set_member_game(m_iNumTerroristWins, iT)
+	rg_update_teamscores(iCT, iT, false)
 
 	new iPlayer, iPlayers[MAX_PLAYERS], iNum
 	get_players(iPlayers, iNum, "ch")
@@ -2561,49 +2569,22 @@ public task_delayed_members()
 
 public task_halftime_restart1()
 {
-	new iPlayer, iPlayers[MAX_PLAYERS], iNum
-	get_players(iPlayers, iNum, "ch")
-	for(new i; i < iNum; i++)
-	{
-		iPlayer = iPlayers[i]
-		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
-		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
-	}
-
 	server_cmd("sv_restart 1")
-	set_task(1.2, "task_delayed_members")
+	set_task(1.5, "task_delayed_members")
 	client_print_color(0, print_team_default, "^4%s ^1Restart ^4[1/3]", g_ePluginSettings[szPrefix])
 }
 
 public task_halftime_restart2()
 {
-	new iPlayer, iPlayers[MAX_PLAYERS], iNum
-	get_players(iPlayers, iNum, "ch")
-	for(new i; i < iNum; i++)
-	{
-		iPlayer = iPlayers[i]
-		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
-		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
-	}
-
 	server_cmd("sv_restart 1")
-	set_task(1.2, "task_delayed_members")
+	set_task(1.5, "task_delayed_members")
 	client_print_color(0, print_team_default, "^4%s ^1Restart ^4[2/3]", g_ePluginSettings[szPrefix])
 }
 
 public task_halftime_live()
 {
-	new iPlayer, iPlayers[MAX_PLAYERS], iNum
-	get_players(iPlayers, iNum, "ch")
-	for(new i; i < iNum; i++)
-	{
-		iPlayer = iPlayers[i]
-		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
-		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
-	}
-
 	server_cmd("sv_restart 1")
-	set_task(1.2, "task_delayed_members")
+	set_task(1.5, "task_delayed_members")
 	client_print_color(0, print_team_default, "^4%s ^3*** LIVE LIVE LIVE ***", g_ePluginSettings[szPrefix])
 }
 
@@ -2787,7 +2768,7 @@ public clcmd_restart(id)
 	}
 
 	server_cmd("sv_restart 1")
-	set_task(1.2, "task_delayed_members")
+	set_task(1.5, "task_delayed_members")
 	client_print_color(0, print_team_default, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_HAS_BEEN_RESTARTED")
 
 	return PLUGIN_HANDLED
