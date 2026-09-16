@@ -1568,7 +1568,7 @@ public RG_Player_Spawn_Post(id)
 	{
 		if(g_eBooleans[bIsKnife])
 		{
-			rg_set_user_armor(id, 100, ARMOR_KEVLAR)
+			rg_set_user_armor(id, 100, ARMOR_VEST)
 		}
 
 		if(g_eBooleans[bIsMixOn])
