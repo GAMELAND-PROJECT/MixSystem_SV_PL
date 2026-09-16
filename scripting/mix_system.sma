@@ -1309,6 +1309,9 @@ public clcmd_startmix(id, bool:bKnife)
 	StartConfig()
 
 	server_cmd("sv_restart 1")
+	set_task(3.0, "task_mix_restart1")
+	set_task(8.0, "task_mix_restart2")
+	set_task(13.0, "task_mix_live")
 
 	set_task(1.0, "StartCount", TASK_COUNT_DURATION, .flags = "b")
 
@@ -2452,8 +2455,8 @@ public task_show_score()
 		set_task(1.0, "task_swap_score")
 		set_task(1.1, "task_delayed_swap")
 		set_task(12.0, "task_halftime_restart1")
-		set_task(17.0, "task_halftime_restart2")
-		set_task(19.0, "task_halftime_live")
+		set_task(18.0, "task_halftime_restart2")
+		set_task(24.0, "task_halftime_live")
 	}
 
 	if(IsLastRound() || OvertimeFinished())
@@ -2551,12 +2554,8 @@ public task_delayed_members()
 	for(new i; i < iNum; i++)
 	{
 		iPlayer = iPlayers[i]
-
-		if(g_ePlayerScore[iPlayer][iKILLS] > 0 || g_ePlayerScore[iPlayer][iDEATHS] > 0)
-		{
-			set_user_frags(iPlayer, g_ePlayerScore[iPlayer][iKILLS])
-			cs_set_user_deaths(iPlayer, g_ePlayerScore[iPlayer][iDEATHS])
-		}
+		set_user_frags(iPlayer, g_ePlayerScore[iPlayer][iKILLS])
+		cs_set_user_deaths(iPlayer, g_ePlayerScore[iPlayer][iDEATHS])
 	}
 }
 
@@ -2605,6 +2604,24 @@ public task_halftime_live()
 
 	server_cmd("sv_restart 1")
 	set_task(1.2, "task_delayed_members")
+	client_print_color(0, print_team_default, "^4%s ^3*** LIVE LIVE LIVE ***", g_ePluginSettings[szPrefix])
+}
+
+public task_mix_restart1()
+{
+	server_cmd("sv_restart 1")
+	client_print_color(0, print_team_default, "^4%s ^1Restart ^4[1/3]", g_ePluginSettings[szPrefix])
+}
+
+public task_mix_restart2()
+{
+	server_cmd("sv_restart 1")
+	client_print_color(0, print_team_default, "^4%s ^1Restart ^4[2/3]", g_ePluginSettings[szPrefix])
+}
+
+public task_mix_live()
+{
+	server_cmd("sv_restart 1")
 	client_print_color(0, print_team_default, "^4%s ^3*** LIVE LIVE LIVE ***", g_ePluginSettings[szPrefix])
 }
 
