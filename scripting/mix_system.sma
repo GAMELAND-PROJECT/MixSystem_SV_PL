@@ -2098,6 +2098,11 @@ public RG_EndRound(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
 		return
 	}
 
+	if(event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
+	{
+		return
+	}
+
 	set_task(1.0, "task_end_round", any:status)
 }
 
@@ -2156,7 +2161,7 @@ public task_end_round(index)
 
 	if(g_eBooleans[bIsMixOn])
 		SetGameDesc(g_eBooleans[bOvertime] ? MATCHSTATE_OVERTIME : MATCHSTATE_IN_MATCH)
-	else if(g_ePluginSettings[bForceWarmup] && !g_eBooleans[bIsWarm])
+	else if(g_ePluginSettings[bForceWarmup] && !g_eBooleans[bIsWarm] && !g_eBooleans[bIsKnife])
 	{
 		clcmd_warm(0)
 	}
