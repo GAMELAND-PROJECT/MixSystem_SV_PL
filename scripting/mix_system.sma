@@ -3645,14 +3645,14 @@ public task_start_warm()
 public task_show_live()
 {
 	fnScreenFade(0, 15, 10, {0, 255, 0}, 75, 0x0000)
-	set_dhudmessage(0, 255, 0, -1.0, 0.3, 2, 0.1, 40.0, 0.1, 0.1)
+	set_dhudmessage(0, 255, 0, -1.0, 0.3, 2, 0.1, 10.0, 0.1, 0.1)
 	show_dhudmessage(0, "=== LIVE LIVE LIVE ===")
 }
 
 public task_show_halftime()
 {
 	fnScreenFade(0, 15, 10, {0, 150, 255}, 75, 0x0000)
-	set_dhudmessage(0, 150, 255, -1.0, 0.3, 2, 0.1, 40.0, 0.1, 0.1)
+	set_dhudmessage(0, 150, 255, -1.0, 0.3, 2, 0.1, 10.0, 0.1, 0.1)
 	show_dhudmessage(0, "=== HALF TIME ===")
 }
 
