@@ -332,6 +332,9 @@ new g_eBooleans[Bools]
 new g_cFreezeTime
 new g_iFreezeTime
 
+new g_szHltvDemoName[64]
+
+
 new g_iPlayerKills[MAX_PLAYERS + 1]
 new g_szWeapon[MAX_PLAYERS + 1][32]
 
@@ -397,6 +400,21 @@ public plugin_init()
 	register_clcmd("say /test_score", "clcmd_say_test_score")
 	register_clcmd("say /test", "clcmd_say_test")
 	#endif 
+
+	register_clcmd("hs1", "clcmd_hs1")
+	register_clcmd("say hs1", "clcmd_hs1")
+	register_clcmd("say /hs1", "clcmd_hs1")
+	register_clcmd("say .hs1", "clcmd_hs1")
+	register_clcmd("say_team hs1", "clcmd_hs1")
+	register_clcmd("say_team /hs1", "clcmd_hs1")
+
+	register_clcmd("hs0", "clcmd_hs0")
+	register_clcmd("say hs0", "clcmd_hs0")
+	register_clcmd("say /hs0", "clcmd_hs0")
+	register_clcmd("say .hs0", "clcmd_hs0")
+	register_clcmd("say_team hs0", "clcmd_hs0")
+	register_clcmd("say_team /hs0", "clcmd_hs0")
+
 
 	g_eForwards[Kill] = CreateMultiForward("mix_player_killed", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_STRING, FP_STRING)
 	g_eForwards[GameBeginPre] = CreateMultiForward("mix_game_begin_pre", ET_IGNORE)
@@ -1224,10 +1242,15 @@ public clcmd_startmix(id, bool:bKnife)
 		ExecuteForward(g_eForwards[GameBeginPre], g_iRet)
 	}
 
-	new szMapName[32], iDate[3]
+	new szMapName[32], iDate[3], iTime[3]
 	enum { iYear = 0, iMonth, iDay }
+	enum { iHour = 0, iMin, iSec }
 	get_mapname(szMapName, charsmax(szMapName))
 	date(iDate[iYear], iDate[iMonth], iDate[iDay])
+	time(iTime[iHour], iTime[iMin], iTime[iSec])
+	
+	formatex(g_szHltvDemoName, charsmax(g_szHltvDemoName), "GL_Mix_%04d-%02d-%02d_%02d-%02d", iDate[iYear], iDate[iMonth], iDate[iDay], iTime[iHour], iTime[iMin])
+	server_cmd("rcon_address 127.0.0.1; rcon_port 27020; rcon_password gameland_hltv_secure; rcon record ^"%s^"", g_szHltvDemoName)
 
 	static iPlayer, iPlayers[MAX_PLAYERS], iNum
 	get_players(iPlayers, iNum, "ch")
@@ -1378,6 +1401,14 @@ public clcmd_stopmix(id)
 
 	ResetScore()
 	StopConfig()
+
+	server_cmd("rcon_address 127.0.0.1; rcon_port 27020; rcon_password gameland_hltv_secure; rcon stop")
+	if(g_szHltvDemoName[0])
+	{
+		write_file("ready_to_compress.txt", g_szHltvDemoName)
+		client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Mix recording ^3STOPPED^1: ^4%s.dem ^1-> Queued for Web Panel!", g_szHltvDemoName)
+		g_szHltvDemoName[0] = 0
+	}
 
 	server_cmd("sv_restart 1")
 
@@ -2144,6 +2175,17 @@ public hook_say(id)
 	read_args(szMessage, charsmax(szMessage))
 	remove_quotes(szMessage)
 
+	if(equal(szMessage, "hs1") || equal(szMessage, "/hs1") || equal(szMessage, ".hs1"))
+	{
+		clcmd_hs1(id)
+		return PLUGIN_HANDLED
+	}
+	if(equal(szMessage, "hs0") || equal(szMessage, "/hs0") || equal(szMessage, ".hs0"))
+	{
+		clcmd_hs0(id)
+		return PLUGIN_HANDLED
+	}
+
 	if(strlen(szMessage) != 0)
 	{
 		if(szMessage[0] == '/')
@@ -2485,6 +2527,13 @@ public task_show_score()
 	if(IsLastRound() || OvertimeFinished())
 	{
 		set_task(5.0, "task_start_warm")
+		
+		server_cmd("rcon_address 127.0.0.1; rcon_port 27020; rcon_password gameland_hltv_secure; rcon stop")
+		if(g_szHltvDemoName[0])
+		{
+			write_file("ready_to_compress.txt", g_szHltvDemoName)
+			g_szHltvDemoName[0] = 0
+		}
 	}
 
 	g_eBooleans[bIsStoppingMix] = false
@@ -3731,6 +3780,200 @@ public task_show_overtime_start()
 	fnScreenFade(0, 5, 5, {255, 100, 0}, 75, 0x0000)
 	set_dhudmessage(255, 100, 0, -1.0, 0.3, 2, 0.1, 5.0, 0.1, 5.0)
 	
+	return iResult
+}
+
+stock GetTeam(iNum, output[], len)
+{
+	switch(iNum)
+	{
+		case SPEC:
+		{
+			formatex(output, len, "%L", LANG_SERVER, "SPEC_TEAM")
+		}
+		case TERO:
+		{
+			formatex(output, len, "%L", LANG_SERVER, "TERO_TEAM")
+		}
+		case CT:
+		{
+			formatex(output, len, "%L", LANG_SERVER, "CT_TEAM")
+		}
+	}
+}
+
+stock _MenuExit(menu)
+{
+	menu_destroy(menu)
+	return PLUGIN_HANDLED
+}
+
+stock _MenuDisplay(id, menu)
+{
+	menu_display(id, menu)
+	set_member(id, m_iMenu, Menu_OFF)
+	return PLUGIN_HANDLED
+}
+
+stock mysql_escape_string(const source[], dest[], length)
+{
+	SQL_QuoteString(Empty_Handle, dest, length, source)
+}
+
+stock SetGameDesc(MatchState:matchState)
+{
+	new szTemp[30]
+	switch(matchState)
+	{
+		case MATCHSTATE_WARM:
+		{
+			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "MATCHSTATE_WARM")
+		}
+		case MATCHSTATE_IN_MATCH:
+		{
+			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "MATCHSTATE_IN_MATCH", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+		}
+		case MATCHSTATE_KNIFE_ROUND:
+		{
+			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "MATCHSTATE_KNIFE_ROUND")
+		}
+		case MATCHSTATE_OVERTIME:
+		{
+			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "MATCHSTATE_OVERTIME", g_iOvertimeScore[CT_OVER_SCORE], g_iOvertimeScore[TERO_OVER_SCORE])
+		}
+	}
+
+	set_member_game(m_GameDesc, szTemp)
+}
+
+public native_is_half(iPluginID, iParamNum)
+{
+	return IsHalf()
+}
+
+public native_is_last_round(iPluginID, iParamNum)
+{
+	return IsLastRound()
+}
+
+public native_is_prelast_round(iPluginID, iParamNum)
+{
+	return IsPreLastRound()
+}
+
+public native_can_overtime(iPluginID, iParamNum)
+{
+	return CanOvertime()
+}
+
+public native_is_started(iPluginID, iParamNum)
+{
+	return g_eBooleans[bIsMixOn]
+}
+
+public native_is_warm(iPluginID, iParamNum)
+{
+	return g_eBooleans[bIsWarm]
+}	
+
+public native_get_prefix(iPluginID, iParamNum)
+{
+	set_string(1, g_ePluginSettings[szPrefix], get_param(2))
+}
+
+public native_get_username(iPluginID, iParamNum)
+{
+	if (iParamNum != 3)
+	{
+		log_error(AMX_ERR_NATIVE, "%s Invalid param num ! Valid: (PlayerID, Name[], Len)", g_ePluginSettings[szPrefix])
+		return NATIVE_ERROR
+	}
+	new id = get_param(1)
+
+	if(!is_user_connected(id))
+	{
+		log_error(AMX_ERR_NATIVE, "%s Player is not connected (%d)", g_ePluginSettings[szPrefix], id)
+		return NATIVE_ERROR
+	}
+
+	set_string(2, g_szName[id], get_param(3))
+
+	return 1
+}
+
+
+public native_has_points_sys(iPluginID, iParamNum)
+{
+	return false
+}
+
+public task_start_warm()
+{
+	clcmd_warm(0)
+}
+
+public task_show_live()
+{
+	fnScreenFade(0, 5, 5, {0, 255, 0}, 75, 0x0000)
+	set_dhudmessage(0, 255, 0, -1.0, 0.3, 2, 0.1, 5.0, 0.1, 5.0)
+	show_dhudmessage(0, "=== LIVE LIVE LIVE ===")
+}
+
+public task_show_halftime()
+{
+	fnScreenFade(0, 5, 5, {0, 150, 255}, 75, 0x0000)
+	set_dhudmessage(0, 150, 255, -1.0, 0.3, 2, 0.1, 5.0, 0.1, 5.0)
+	show_dhudmessage(0, "=== HALF TIME ===")
+}
+
+public task_reapply_warm()
+{
+	server_cmd("mp_freezetime 0")
+	server_cmd("mp_buytime 99999")
+	server_cmd("mp_startmoney 16000")
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		if(is_user_connected(iPlayer))
+			rg_add_account(iPlayer, 16000, AS_SET)
+	}
+}
+
+stock fnScreenFade(id, Timer, FadeTime, Colors[3], Alpha, Type)
+{
+	if(id == 0)
+	{
+		message_begin(MSG_BROADCAST, g_iMsgScreenFade)
+	}
+	else
+	{
+		if(!is_user_connected(id)) return
+		message_begin(MSG_ONE_UNRELIABLE, g_iMsgScreenFade, _, id)
+	}
+	write_short((1<<12) * Timer)
+	write_short((1<<12) * FadeTime)
+	write_short(Type)
+	write_byte(Colors[0])
+	write_byte(Colors[1])
+	write_byte(Colors[2])
+	write_byte(Alpha)
+	message_end()
+}
+
+public task_overtime_live()
+{
+	server_cmd("sv_restart 1")
+	set_pcvar_num(g_cFreezeTime, 12)
+	set_task(2.5, "task_show_overtime_start")
+}
+
+public task_show_overtime_start()
+{
+	fnScreenFade(0, 5, 5, {255, 100, 0}, 75, 0x0000)
+	set_dhudmessage(255, 100, 0, -1.0, 0.3, 2, 0.1, 5.0, 0.1, 5.0)
+	
 	new szMsg[128]
 	formatex(szMsg, charsmax(szMsg), "=== OVERTIME STARTED ===^nWINNER GETS %d ROUNDS TOTAL", g_ePluginSettings[iRoundOvertime] + 1)
 	show_dhudmessage(0, szMsg)
@@ -3741,4 +3984,54 @@ public task_overtime_halftime_live()
 	server_cmd("sv_restart 1")
 	set_pcvar_num(g_cFreezeTime, 12)
 	set_task(2.5, "task_show_halftime")
+}
+
+public clcmd_hs1(id)
+{
+	if(id && !(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	new szMapName[32], iDate[3], iTime[3]
+	enum { iYear = 0, iMonth, iDay }
+	enum { iHour = 0, iMin, iSec }
+	get_mapname(szMapName, charsmax(szMapName))
+	date(iDate[iYear], iDate[iMonth], iDate[iDay])
+	time(iTime[iHour], iTime[iMin], iTime[iSec])
+
+	formatex(g_szHltvDemoName, charsmax(g_szHltvDemoName), "GL_Manual_%04d-%02d-%02d_%02d-%02d", iDate[iYear], iDate[iMonth], iDate[iDay], iTime[iHour], iTime[iMin])
+	server_cmd("rcon_address 127.0.0.1; rcon_port 27020; rcon_password gameland_hltv_secure; rcon record ^"%s^"", g_szHltvDemoName)
+
+	client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Manual recording ^3STARTED^1: ^4%s.dem", g_szHltvDemoName)
+	server_print("[GAMELAND HLTV] Manual recording STARTED: %s.dem", g_szHltvDemoName)
+
+	return PLUGIN_HANDLED
+}
+
+public clcmd_hs0(id)
+{
+	if(id && !(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	server_cmd("rcon_address 127.0.0.1; rcon_port 27020; rcon_password gameland_hltv_secure; rcon stop")
+
+	if(g_szHltvDemoName[0])
+	{
+		write_file("ready_to_compress.txt", g_szHltvDemoName)
+		client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Manual recording ^3STOPPED^1: ^4%s.dem ^1-> Queued for Web Panel!", g_szHltvDemoName)
+		server_print("[GAMELAND HLTV] Manual recording STOPPED: %s.dem -> Queued for Web Panel!", g_szHltvDemoName)
+		g_szHltvDemoName[0] = 0
+	}
+	else
+	{
+		client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Stop command sent to HLTV.")
+		server_print("[GAMELAND HLTV] Stop command sent to HLTV.")
+	}
+
+	return PLUGIN_HANDLED
 }
