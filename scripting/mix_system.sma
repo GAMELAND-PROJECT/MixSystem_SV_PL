@@ -1725,7 +1725,12 @@ public task_end_round(index)
 
 		OvertimeConfig()
 
-		set_task(1.0, "task_delayed_swap")
+		set_pcvar_num(g_cFreezeTime, 15)
+		set_task(0.2, "task_delayed_swap")
+		set_task(2.5, "task_show_overtime_start")
+		set_task(12.0, "task_halftime_restart1")
+		set_task(17.0, "task_halftime_restart2")
+		set_task(22.0, "task_overtime_live")
 	}
 
 	if(g_eBooleans[bOvertime])
@@ -2275,7 +2280,12 @@ public clcmd_overtime(id)
 
 	OvertimeConfig()
 
-	set_task(1.0, "task_delayed_swap")
+	set_pcvar_num(g_cFreezeTime, 15)
+	set_task(0.2, "task_delayed_swap")
+	set_task(2.5, "task_show_overtime_start")
+	set_task(12.0, "task_halftime_restart1")
+	set_task(17.0, "task_halftime_restart2")
+	set_task(22.0, "task_overtime_live")
 
 	g_eBooleans[bOvertime] = true
 
@@ -2781,6 +2791,17 @@ public clcmd_restart(id)
 	{
 		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
 		return PLUGIN_HANDLED
+	}
+
+	if(g_eBooleans[bIsKnife])
+	{
+		g_iKnifes = 0
+		
+		#if defined FASTCUP_MODE
+		g_bVoted = false
+		remove_task(TASK_CHECKVOTES)
+		arrayset(g_iAnswer, 0, sizeof(g_iAnswer))
+		#endif
 	}
 
 	new iPlayer, iPlayers[MAX_PLAYERS], iNum
@@ -3366,8 +3387,13 @@ stock CheckOvertimePhase()
 			g_eOvertime[FirstOvertime] = true
 			g_eOvertime[SecondOvertime] = true
 
-			set_task(1.0, "task_delayed_swap")
-			set_task(2.0, "task_swap_score")
+			set_pcvar_num(g_cFreezeTime, 15)
+			set_task(0.1, "task_swap_score")
+			set_task(0.2, "task_delayed_swap")
+			set_task(2.5, "task_show_halftime")
+			set_task(12.0, "task_halftime_restart1")
+			set_task(17.0, "task_halftime_restart2")
+			set_task(22.0, "task_overtime_halftime_live")
 		}
 	}
 
@@ -3693,3 +3719,26 @@ stock fnScreenFade(id, Timer, FadeTime, Colors[3], Alpha, Type)
 	message_end()
 }
 
+public task_overtime_live()
+{
+	server_cmd("sv_restart 1")
+	set_pcvar_num(g_cFreezeTime, 12)
+	set_task(2.5, "task_show_overtime_start")
+}
+
+public task_show_overtime_start()
+{
+	fnScreenFade(0, 5, 5, {255, 100, 0}, 75, 0x0000)
+	set_dhudmessage(255, 100, 0, -1.0, 0.3, 2, 0.1, 5.0, 0.1, 5.0)
+	
+	new szMsg[128]
+	formatex(szMsg, charsmax(szMsg), "=== OVERTIME STARTED ===^nWINNER GETS %d ROUNDS TOTAL", g_ePluginSettings[iRoundOvertime] + 1)
+	show_dhudmessage(0, szMsg)
+}
+
+public task_overtime_halftime_live()
+{
+	server_cmd("sv_restart 1")
+	set_pcvar_num(g_cFreezeTime, 12)
+	set_task(2.5, "task_show_halftime")
+}
