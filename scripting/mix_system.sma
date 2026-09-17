@@ -1572,6 +1572,7 @@ public clcmd_knife(id)
 	StopConfig()
 	
 	server_cmd("mp_freezetime 3")
+	server_cmd("mp_startmoney 800")
 
 	server_cmd("sv_restart 1")
 
@@ -1857,6 +1858,17 @@ public task_end_round(index)
 		{
 			set_pcvar_num(g_cFreezeTime, g_iFreezeTime)
 		}
+
+		if(IsHalf() && !g_eBooleans[bOvertime] && !g_eBooleans[bTeamSwap])
+		{
+			set_pcvar_num(g_cFreezeTime, g_ePluginSettings[iFreezetimeSwap])
+			set_task(0.1, "task_swap_score")
+			set_task(0.2, "task_delayed_swap")
+			set_task(2.5, "task_show_halftime")
+			set_task(12.0, "task_halftime_restart1")
+			set_task(17.0, "task_halftime_restart2")
+			set_task(22.0, "task_halftime_live")
+		}
 	}
 
 	return HC_CONTINUE
@@ -1967,10 +1979,6 @@ public ev_NewRound()
 	#endif
 	{
 		set_task(1.0, "task_show_score")
-		if(IsHalf() && !g_eBooleans[bOvertime] && !g_eBooleans[bTeamSwap])
-		{
-			set_pcvar_num(g_cFreezeTime, g_ePluginSettings[iFreezetimeSwap])
-		}
 
 		g_eBooleans[bCanShowStats] = true
 
@@ -2463,16 +2471,6 @@ public task_show_score()
 
 	ExecuteForward(g_eForwards[NewRound], g_iRet, g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iDuration)
 
-	if(IsHalf() && !g_eBooleans[bOvertime] && !g_eBooleans[bTeamSwap])
-	{
-		set_task(1.0, "task_swap_score")
-		set_task(1.1, "task_delayed_swap")
-		set_task(1.2, "task_show_halftime")
-		set_task(12.0, "task_halftime_restart1")
-		set_task(17.0, "task_halftime_restart2")
-		set_task(22.0, "task_halftime_live")
-	}
-
 	if(IsLastRound() || OvertimeFinished())
 	{
 		set_task(5.0, "task_start_warm")
@@ -2582,6 +2580,14 @@ public task_delayed_members()
 		iPlayer = iPlayers[i]
 		set_user_frags(iPlayer, g_ePlayerScore[iPlayer][iKILLS])
 		cs_set_user_deaths(iPlayer, g_ePlayerScore[iPlayer][iDEATHS])
+
+		message_begin(MSG_ALL, get_user_msgid("ScoreInfo"))
+		write_byte(iPlayer)
+		write_short(g_ePlayerScore[iPlayer][iKILLS])
+		write_short(g_ePlayerScore[iPlayer][iDEATHS])
+		write_short(0)
+		write_short(get_member(iPlayer, m_iTeam))
+		message_end()
 	}
 }
 
@@ -2603,7 +2609,7 @@ public task_halftime_live()
 {
 	server_cmd("sv_restart 1")
 	set_task(1.5, "task_delayed_members")
-	set_task(1.0, "task_show_live")
+	set_task(1.5, "task_show_live")
 }
 
 public task_mix_restart1()
@@ -2621,7 +2627,7 @@ public task_mix_restart2()
 public task_mix_live()
 {
 	server_cmd("sv_restart 1")
-	set_task(1.0, "task_show_live")
+	set_task(1.5, "task_show_live")
 }
 
 public task_give_equipment(iPlayer)
