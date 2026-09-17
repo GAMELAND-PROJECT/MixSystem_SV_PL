@@ -1206,6 +1206,76 @@ stock GetArrayCmd(id, Array:array, item, ML[])
 	console_print(id, szTemp)
 }
 
+stock HLTV_StartRecording(const szDemoPrefix[])
+{
+	new szMapName[32], iDate[3], iTime[3]
+	enum { iYear = 0, iMonth, iDay }
+	enum { iHour = 0, iMin, iSec }
+	get_mapname(szMapName, charsmax(szMapName))
+	date(iDate[iYear], iDate[iMonth], iDate[iDay])
+	time(iTime[iHour], iTime[iMin], iTime[iSec])
+
+	formatex(g_szHltvDemoName, charsmax(g_szHltvDemoName), "%s_%04d-%02d-%02d_%02d-%02d", szDemoPrefix, iDate[iYear], iDate[iMonth], iDate[iDay], iTime[iHour], iTime[iMin])
+
+	new fp = fopen("hltv_cmd.txt", "wt")
+	if(fp)
+	{
+		fprintf(fp, "record %s^n", g_szHltvDemoName)
+		fclose(fp)
+	}
+
+	new fp_rec = fopen("hltv_recording.txt", "wt")
+	if(fp_rec)
+	{
+		fprintf(fp_rec, "%s^n", g_szHltvDemoName)
+		fclose(fp_rec)
+	}
+
+	client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Demo recording ^3STARTED^1: ^4%s", g_szHltvDemoName)
+	server_print("[GAMELAND HLTV] Demo recording STARTED: %s", g_szHltvDemoName)
+}
+
+stock HLTV_StopRecording()
+{
+	new fp = fopen("hltv_cmd.txt", "wt")
+	if(fp)
+	{
+		fprintf(fp, "stoprecording^n")
+		fclose(fp)
+	}
+
+	if(file_exists("hltv_recording.txt"))
+	{
+		delete_file("hltv_recording.txt")
+	}
+
+	new fp_q = fopen("ready_to_compress.txt", "at")
+	if(fp_q)
+	{
+		if(g_szHltvDemoName[0])
+		{
+			fprintf(fp_q, "%s^n", g_szHltvDemoName)
+		}
+		else
+		{
+			fprintf(fp_q, "ALL^n")
+		}
+		fclose(fp_q)
+	}
+
+	if(g_szHltvDemoName[0])
+	{
+		client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Demo recording ^3STOPPED^1: ^4%s ^1-> Queued for Web Panel!", g_szHltvDemoName)
+		server_print("[GAMELAND HLTV] Demo recording STOPPED: %s -> Queued for Web Panel!", g_szHltvDemoName)
+		g_szHltvDemoName[0] = 0
+	}
+	else
+	{
+		client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Demo recording ^3STOPPED^1 -> Queued for Web Panel!")
+		server_print("[GAMELAND HLTV] Demo recording STOPPED -> Queued for Web Panel!")
+	}
+}
+
 public clcmd_startmix(id, bool:bKnife)
 {
 	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
@@ -1249,8 +1319,7 @@ public clcmd_startmix(id, bool:bKnife)
 	date(iDate[iYear], iDate[iMonth], iDate[iDay])
 	time(iTime[iHour], iTime[iMin], iTime[iSec])
 	
-	formatex(g_szHltvDemoName, charsmax(g_szHltvDemoName), "GL_Mix_%04d-%02d-%02d_%02d-%02d", iDate[iYear], iDate[iMonth], iDate[iDay], iTime[iHour], iTime[iMin])
-	server_cmd("rcon_address 127.0.0.1; rcon_port 27020; rcon_password gameland_hltv_secure; rcon record ^"%s^"", g_szHltvDemoName)
+	HLTV_StartRecording("GL_Mix")
 
 	static iPlayer, iPlayers[MAX_PLAYERS], iNum
 	get_players(iPlayers, iNum, "ch")
@@ -1402,13 +1471,7 @@ public clcmd_stopmix(id)
 	ResetScore()
 	StopConfig()
 
-	server_cmd("rcon_address 127.0.0.1; rcon_port 27020; rcon_password gameland_hltv_secure; rcon stop")
-	if(g_szHltvDemoName[0])
-	{
-		write_file("ready_to_compress.txt", g_szHltvDemoName)
-		client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Mix recording ^3STOPPED^1: ^4%s.dem ^1-> Queued for Web Panel!", g_szHltvDemoName)
-		g_szHltvDemoName[0] = 0
-	}
+	HLTV_StopRecording()
 
 	server_cmd("sv_restart 1")
 
@@ -2528,12 +2591,7 @@ public task_show_score()
 	{
 		set_task(5.0, "task_start_warm")
 		
-		server_cmd("rcon_address 127.0.0.1; rcon_port 27020; rcon_password gameland_hltv_secure; rcon stop")
-		if(g_szHltvDemoName[0])
-		{
-			write_file("ready_to_compress.txt", g_szHltvDemoName)
-			g_szHltvDemoName[0] = 0
-		}
+		HLTV_StopRecording()
 	}
 
 	g_eBooleans[bIsStoppingMix] = false
@@ -3800,19 +3858,7 @@ public clcmd_hs1(id)
 		return PLUGIN_HANDLED
 	}
 
-	new szMapName[32], iDate[3], iTime[3]
-	enum { iYear = 0, iMonth, iDay }
-	enum { iHour = 0, iMin, iSec }
-	get_mapname(szMapName, charsmax(szMapName))
-	date(iDate[iYear], iDate[iMonth], iDate[iDay])
-	time(iTime[iHour], iTime[iMin], iTime[iSec])
-
-	formatex(g_szHltvDemoName, charsmax(g_szHltvDemoName), "GL_Manual_%04d-%02d-%02d_%02d-%02d", iDate[iYear], iDate[iMonth], iDate[iDay], iTime[iHour], iTime[iMin])
-	server_cmd("rcon_address 127.0.0.1; rcon_port 27020; rcon_password gameland_hltv_secure; rcon record ^"%s^"", g_szHltvDemoName)
-
-	client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Manual recording ^3STARTED^1: ^4%s.dem", g_szHltvDemoName)
-	server_print("[GAMELAND HLTV] Manual recording STARTED: %s.dem", g_szHltvDemoName)
-
+	HLTV_StartRecording("GL_Manual")
 	return PLUGIN_HANDLED
 }
 
@@ -3824,21 +3870,6 @@ public clcmd_hs0(id)
 		return PLUGIN_HANDLED
 	}
 
-	server_cmd("rcon_address 127.0.0.1; rcon_port 27020; rcon_password gameland_hltv_secure; rcon stop")
-
-	if(g_szHltvDemoName[0])
-	{
-		write_file("ready_to_compress.txt", g_szHltvDemoName)
-		client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Manual recording ^3STOPPED^1: ^4%s.dem ^1-> Queued for Web Panel!", g_szHltvDemoName)
-		server_print("[GAMELAND HLTV] Manual recording STOPPED: %s.dem -> Queued for Web Panel!", g_szHltvDemoName)
-		g_szHltvDemoName[0] = 0
-	}
-	else
-	{
-		client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Stop command sent to HLTV.")
-		server_print("[GAMELAND HLTV] Stop command sent to HLTV.")
-	}
-
+	HLTV_StopRecording()
 	return PLUGIN_HANDLED
 }
-
