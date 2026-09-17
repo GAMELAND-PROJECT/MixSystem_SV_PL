@@ -375,6 +375,7 @@ public plugin_init()
 	register_clcmd("fullupdate", "clcmd_fullupdate")
 
 	RegisterHookChain(RG_RoundEnd, "RG_EndRound")
+	RegisterHookChain(RG_CSGameRules_RestartRound, "RG_RestartRound_Post", 1)
 	RegisterHookChain(RG_CSGameRules_PlayerKilled, "RG_Player_Killed_Post", 1)
 	RegisterHookChain(RG_CWeaponBox_SetModel, "RG_Weapon_Remove")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_ChooseTeam_Pre")
@@ -1589,6 +1590,10 @@ public RG_EndRound(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
 
 	if(event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
 	{
+		if(g_eBooleans[bIsWarm])
+		{
+			set_task(0.5, "task_start_warm")
+		}
 		return
 	}
 
@@ -2504,6 +2509,13 @@ public task_delayed_swap()
 	new iPlayer, iPlayers[MAX_PLAYERS], iNum
 	get_players(iPlayers, iNum, "ch")
 
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
+		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
+	}
+
 	rg_swap_all_players()
 
 	for(new i; i < iNum; i++)
@@ -2514,9 +2526,6 @@ public task_delayed_swap()
 
 		if(iTeam == TEAM_UNASSIGNED || iTeam == TEAM_SPECTATOR)
 			continue 
-
-		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
-		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
 		SetMembers()
 		set_member_game(m_bCTCantBuy, true)
 		set_member_game(m_bTCantBuy, true)
@@ -3661,5 +3670,16 @@ stock fnScreenFade(id, Timer, FadeTime, Colors[3], Alpha, Type)
 	write_byte(Colors[2])
 	write_byte(Alpha)
 	message_end()
+}
+
+public RG_RestartRound_Post()
+{
+	if(g_eBooleans[bIsMixOn] || g_eBooleans[bTeamSwap])
+	{
+		if(!g_eBooleans[bIsWarm] && !g_eBooleans[bIsKnife] && !g_eBooleans[bIsStoppingMix])
+		{
+			task_delayed_members()
+		}
+	}
 }
 
