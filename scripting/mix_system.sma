@@ -1664,6 +1664,7 @@ public task_end_round(index)
 	{
 		if(g_eBooleans[bIsKnife] && !g_eBooleans[bIsStoppingMix])
 		{
+			set_pcvar_num(g_cFreezeTime, g_ePluginSettings[iKnifeStartDelay])
 			static iPlayer, iPlayers[MAX_PLAYERS], iNum
 			get_players(iPlayers, iNum, "ch")
 
@@ -1854,7 +1855,7 @@ public task_end_round(index)
 			g_bPaused = true
 		}
 
-		if(!g_bPaused)
+		if(!g_bPaused && !task_exists(TASK_CHECKVOTES))
 		{
 			set_pcvar_num(g_cFreezeTime, g_iFreezeTime)
 		}
@@ -2627,7 +2628,7 @@ public task_mix_restart2()
 public task_mix_live()
 {
 	server_cmd("sv_restart 1")
-	set_task(1.5, "task_show_live")
+	set_task(2.5, "task_show_live")
 }
 
 public task_give_equipment(iPlayer)
