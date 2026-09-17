@@ -375,7 +375,6 @@ public plugin_init()
 	register_clcmd("fullupdate", "clcmd_fullupdate")
 
 	RegisterHookChain(RG_RoundEnd, "RG_EndRound")
-	RegisterHookChain(RG_CSGameRules_RestartRound, "RG_RestartRound_Post", 1)
 	RegisterHookChain(RG_CSGameRules_PlayerKilled, "RG_Player_Killed_Post", 1)
 	RegisterHookChain(RG_CWeaponBox_SetModel, "RG_Weapon_Remove")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_ChooseTeam_Pre")
@@ -1592,7 +1591,7 @@ public RG_EndRound(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
 	{
 		if(g_eBooleans[bIsWarm])
 		{
-			set_task(0.5, "task_start_warm")
+			set_task(0.5, "task_reapply_warm")
 		}
 		return
 	}
@@ -3639,16 +3638,31 @@ public task_start_warm()
 
 public task_show_live()
 {
-	fnScreenFade(0, 3, 2, {0, 255, 0}, 75, 0x0000)
-	set_dhudmessage(0, 255, 0, -1.0, 0.3, 2, 0.1, 8.0, 0.1, 0.1)
+	fnScreenFade(0, 15, 10, {0, 255, 0}, 75, 0x0000)
+	set_dhudmessage(0, 255, 0, -1.0, 0.3, 2, 0.1, 40.0, 0.1, 0.1)
 	show_dhudmessage(0, "=== LIVE LIVE LIVE ===")
 }
 
 public task_show_halftime()
 {
-	fnScreenFade(0, 3, 2, {0, 150, 255}, 75, 0x0000)
-	set_dhudmessage(0, 150, 255, -1.0, 0.3, 2, 0.1, 8.0, 0.1, 0.1)
+	fnScreenFade(0, 15, 10, {0, 150, 255}, 75, 0x0000)
+	set_dhudmessage(0, 150, 255, -1.0, 0.3, 2, 0.1, 40.0, 0.1, 0.1)
 	show_dhudmessage(0, "=== HALF TIME ===")
+}
+
+public task_reapply_warm()
+{
+	server_cmd("mp_freezetime 0")
+	server_cmd("mp_buytime 99999")
+	server_cmd("mp_startmoney 16000")
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		if(is_user_connected(iPlayer))
+			rg_add_account(iPlayer, 16000, AS_SET)
+	}
 }
 
 stock fnScreenFade(id, Timer, FadeTime, Colors[3], Alpha, Type)
@@ -3670,16 +3684,5 @@ stock fnScreenFade(id, Timer, FadeTime, Colors[3], Alpha, Type)
 	write_byte(Colors[2])
 	write_byte(Alpha)
 	message_end()
-}
-
-public RG_RestartRound_Post()
-{
-	if(g_eBooleans[bIsMixOn] || g_eBooleans[bTeamSwap])
-	{
-		if(!g_eBooleans[bIsWarm] && !g_eBooleans[bIsKnife] && !g_eBooleans[bIsStoppingMix])
-		{
-			task_delayed_members()
-		}
-	}
 }
 
