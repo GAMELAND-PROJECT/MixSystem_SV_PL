@@ -7,10 +7,11 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.0.1"
+#define VERSION "1.0.3"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
+#define TASK_BLACK_SCREEN 19001
 
 new Array:g_aMaps
 new g_pAlltalk
@@ -74,6 +75,10 @@ public plugin_init()
 	g_pFadeToBlack = get_cvar_pointer("mp_fadetoblack")
 	g_pJoinMode = register_cvar("gameland_join_mode", "1")
 	g_iJoinMode = clamp(get_pcvar_num(g_pJoinMode), 0, 2)
+	if(g_iJoinMode == 2)
+	{
+		set_task(0.5, "RefreshBlackScreen", TASK_BLACK_SCREEN, _, _, "b")
+	}
 
 	g_aMaps = ArrayCreate(32)
 	LoadMaps()
@@ -282,7 +287,9 @@ public HookChooseTeam_Pre(id, MenuChooseTeam:slot)
 
 stock bool:IsJoinLockedPlayer(id)
 {
-	if(g_iJoinMode != 0 || !is_user_connected(id))
+	// j1 is the only mode that allows spectators to join.
+	// j0 blocks joining; j2 blocks joining and hides spectator view.
+	if(g_iJoinMode == 1 || !is_user_connected(id))
 	{
 		return false
 	}
@@ -310,12 +317,16 @@ stock SetJoinMode(id, level, cid, mode)
 		SetCvar(g_pForceCamera, 2)
 		SetCvar(g_pForceChaseCam, 2)
 		SetCvar(g_pFadeToBlack, 1)
+		remove_task(TASK_BLACK_SCREEN)
+		set_task(0.5, "RefreshBlackScreen", TASK_BLACK_SCREEN, _, _, "b")
 	}
 	else
 	{
+		remove_task(TASK_BLACK_SCREEN)
 		SetCvar(g_pForceCamera, 0)
 		SetCvar(g_pForceChaseCam, 0)
 		SetCvar(g_pFadeToBlack, 0)
+		ClearBlackScreens()
 	}
 
 	new name[MAX_NAME_LENGTH]
@@ -331,6 +342,56 @@ stock SetJoinMode(id, level, cid, mode)
 	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1set join mode to ^4/j%d^1.", name, mode)
 	log_amx("Cmd: ^"%s^" set join mode to ^"j%d^"", name, mode)
 	return PLUGIN_HANDLED
+}
+
+public RefreshBlackScreen()
+{
+	if(g_iJoinMode != 2)
+	{
+		remove_task(TASK_BLACK_SCREEN)
+		return
+	}
+
+	for(new id = 1; id <= get_maxplayers(); id++)
+	{
+		if(is_user_connected(id)
+		&& (cs_get_user_team(id) == CS_TEAM_SPECTATOR || cs_get_user_team(id) == CS_TEAM_UNASSIGNED))
+		{
+			SendBlackScreen(id)
+		}
+	}
+}
+
+stock SendBlackScreen(id)
+{
+	message_begin(MSG_ONE_UNRELIABLE, get_user_msgid("ScreenFade"), _, id)
+	write_short(1 << 10)
+	write_short(1 << 12)
+	write_short(0x0004)
+	write_byte(0)
+	write_byte(0)
+	write_byte(0)
+	write_byte(255)
+	message_end()
+}
+
+stock ClearBlackScreens()
+{
+	for(new id = 1; id <= get_maxplayers(); id++)
+	{
+		if(is_user_connected(id))
+		{
+			message_begin(MSG_ONE_UNRELIABLE, get_user_msgid("ScreenFade"), _, id)
+			write_short(1)
+			write_short(1)
+			write_short(0)
+			write_byte(0)
+			write_byte(0)
+			write_byte(0)
+			write_byte(0)
+			message_end()
+		}
+	}
 }
 
 stock SetCvar(pcvar, value)
