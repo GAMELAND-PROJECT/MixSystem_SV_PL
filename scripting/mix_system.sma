@@ -387,6 +387,9 @@ public plugin_init()
 	RegisterHookChain(RG_CSGameRules_PlayerKilled, "RG_Player_Killed_Post", 1)
 	RegisterHookChain(RG_CWeaponBox_SetModel, "RG_Weapon_Remove")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_ChooseTeam_Pre")
+	RegisterHookChain(RG_HandleMenu_ChooseAppearance, "ShootingAppearance_Pre")
+	RegisterHookChain(RG_CBasePlayer_Spawn, "ShootingSpawn_Post", 1)
+	RegisterHookChain(RG_CSGameRules_OnRoundFreezeEnd, "ShootingFreezeEnd_Post", 1)
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_ChooseTeam_Post", 1)
 	RegisterHookChain(RG_CSGameRules_CanHavePlayerItem, "RG_CSGameRules_CanHavePlayerItem_Pre")
 
@@ -995,6 +998,30 @@ public RG_CSGameRules_CanHavePlayerItem_Pre(id, item)
 	}
 }
 
+public ShootingAppearance_Pre(id, slot)
+{
+	if(g_eBooleans[bIsShooting] && g_eBooleans[bIsMixOn])
+		SetHookChainArg(2, ATYPE_INTEGER, 1)
+	return HC_CONTINUE
+}
+
+public ShootingSpawn_Post(id)
+{
+	if(!is_user_alive(id) || !g_eBooleans[bIsShooting] || !g_eBooleans[bIsMixOn])
+		return
+	new CsTeams:team = cs_get_user_team(id)
+	if(team == CS_TEAM_CT)
+		cs_set_user_model(id, "urban")
+	else if(team == CS_TEAM_T)
+		cs_set_user_model(id, "leet")
+}
+
+public ShootingFreezeEnd_Post()
+{
+	if(g_eBooleans[bIsShooting] && g_eBooleans[bIsMixOn])
+		set_pcvar_num(g_cFreezeTime, 0)
+}
+
 public RG_ChooseTeam_Pre(id, MenuChooseTeam:slot)
 {
 	if(g_eBooleans[bIsMixOn])
@@ -1590,7 +1617,7 @@ public clcmd_startmix_internal(id, bool:bKnife)
 		server_cmd("mp_timelimit 0")
 		server_cmd("mp_maxrounds 0")
 		server_cmd("mp_winlimit 0")
-		server_cmd("mp_freezetime 0")
+		server_cmd("mp_freezetime 5")
 		server_cmd("mp_buytime 0.25")
 		set_task(0.4, "ApplyShootingLoadout")
 		server_cmd("sv_restart 1")
@@ -3628,6 +3655,12 @@ public clcmd_say_pause(id)
 
 ResetScore()
 {
+	if(g_eBooleans[bIsShooting])
+	{
+		for(new id = 1; id <= MAX_PLAYERS; id++)
+			if(is_user_connected(id))
+				cs_reset_user_model(id)
+	}
 	g_iScore[TERO_SCORE] = 0
 	g_iScore[CT_SCORE] = 0
 	g_iOvertimeScore[CT_OVER_SCORE] = 0
@@ -3774,7 +3807,7 @@ stock RandomizeShootingTeams()
 		players[j] = temp
 	}
 
-	new half = (playerCount + 1) / 2
+	new half = playerCount / 2 + (playerCount % 2 ? random_num(0, 1) : 0)
 	for(new i; i < playerCount; i++)
 	{
 		new id = players[i]
@@ -3783,7 +3816,8 @@ stock RandomizeShootingTeams()
 			continue
 		}
 
-		cs_set_user_team(id, i < half ? CS_TEAM_CT : CS_TEAM_T)
+		cs_set_user_team(id, i < half ? CS_TEAM_CT : CS_TEAM_T, i < half ? CS_CT_URBAN : CS_T_LEET)
+		cs_set_user_model(id, i < half ? "urban" : "leet")
 	}
 }
 
