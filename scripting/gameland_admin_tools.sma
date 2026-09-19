@@ -3,6 +3,7 @@
 #include <amxmodx>
 #include <amxmisc>
 #include <cstrike>
+#include <reapi>
 
 #define PLUGIN  "GAMELAND Admin Tools"
 #define VERSION "1.0.0"
@@ -60,6 +61,7 @@ public plugin_init()
 	register_clcmd("say_team /j2", "CmdJoinBlack", ADMIN_CVAR)
 	register_clcmd("j2", "CmdJoinBlack", ADMIN_CVAR)
 	register_clcmd("jointeam", "CmdJoinTeam")
+	RegisterHookChain(RG_HandleMenu_ChooseTeam, "HookChooseTeam_Pre")
 
 	g_pAllowSpectators = get_cvar_pointer("allow_spectators")
 	g_pForceCamera = get_cvar_pointer("mp_forcecamera")
@@ -197,6 +199,24 @@ public CmdJoinTeam(id)
 	}
 
 	return PLUGIN_CONTINUE
+}
+
+public HookChooseTeam_Pre(id, MenuChooseTeam:slot)
+{
+	if(g_iJoinMode != 0 || !is_user_connected(id) || cs_get_user_team(id) != CS_TEAM_SPECTATOR)
+	{
+		return HC_CONTINUE
+	}
+
+	if(slot == MenuChoose_T || slot == MenuChoose_CT || slot == MenuChoose_AutoSelect)
+	{
+		SetHookChainReturn(ATYPE_INTEGER, 0)
+		client_print(id, print_center, "Joining a team is currently disabled.")
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1/j0 is active: spectators must remain spectators.")
+		return HC_SUPERCEDE
+	}
+
+	return HC_CONTINUE
 }
 
 stock SetJoinMode(id, level, cid, mode)
