@@ -7,7 +7,7 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.0.5"
+#define VERSION "1.0.6"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -267,7 +267,7 @@ stock ApplyRestrictedJoinKey(id, key, bool:showMenu)
 	{
 		if(key == 0)
 		{
-			client_cmd(id, "disconnect")
+			KickRestrictedClient(id)
 		}
 		else if(showMenu)
 		{
@@ -283,17 +283,32 @@ stock ApplyRestrictedJoinKey(id, key, bool:showMenu)
 			user_silentkill(id)
 		}
 		cs_set_user_team(id, CS_TEAM_SPECTATOR)
+		SetCvar(g_pForceCamera, 0)
+		SetCvar(g_pForceChaseCam, 0)
+		SetCvar(g_pFadeToBlack, 0)
 		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You were moved to Spectator.")
 	}
 	else if(key == 1)
 	{
-		client_cmd(id, "disconnect")
+		KickRestrictedClient(id)
 	}
 	else if(showMenu)
 	{
 		ShowRestrictedJoinMenu(id)
 	}
 	return PLUGIN_HANDLED
+}
+
+stock KickRestrictedClient(id)
+{
+	if(!is_user_connected(id))
+	{
+		return
+	}
+
+	new userid = get_user_userid(id)
+	server_cmd("kick #%d ^"GAMELAND: server join is currently restricted.^"", userid)
+	server_exec()
 }
 
 public HookClientCommand(id)
