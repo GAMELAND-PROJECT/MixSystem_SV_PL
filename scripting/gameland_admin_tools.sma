@@ -7,11 +7,12 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.0.3"
+#define VERSION "1.0.4"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
 #define TASK_BLACK_SCREEN 19001
+#define JOIN_MENU_ID "GAMELAND_Join_Menu"
 
 new Array:g_aMaps
 new g_pAlltalk
@@ -68,6 +69,7 @@ public plugin_init()
 	register_forward(FM_ClientCommand, "HookClientCommand")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "HookChooseTeam_Pre")
 	register_menucmd(register_menuid("Team_Select", 1), 1023, "HookTeamSelectMenu")
+	register_menucmd(register_menuid(JOIN_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleJoinMenu")
 
 	g_pAllowSpectators = get_cvar_pointer("allow_spectators")
 	g_pForceCamera = get_cvar_pointer("mp_forcecamera")
@@ -215,7 +217,63 @@ public CmdJoinTeam(id)
 
 public CmdChooseTeam(id)
 {
+	if(g_iJoinMode != 1 && is_user_connected(id))
+	{
+		ShowRestrictedJoinMenu(id)
+		return PLUGIN_HANDLED
+	}
 	return CmdJoinTeam(id)
+}
+
+public ShowRestrictedJoinMenu(id)
+{
+	if(!is_user_connected(id))
+	{
+		return
+	}
+
+	new menuText[256]
+	if(g_iJoinMode == 2)
+	{
+		formatex(menuText, charsmax(menuText),
+			"\y[GAMELAND]\w Spectator access is restricted^n^n\y1.\w Disconnect from server")
+		show_menu(id, MENU_KEY_1, menuText, -1, JOIN_MENU_ID)
+	}
+	else
+	{
+		formatex(menuText, charsmax(menuText),
+			"\y[GAMELAND]\w Join options^n^n\y1.\w Move to Spectator^n\y2.\w Disconnect from server")
+		show_menu(id, MENU_KEY_1 | MENU_KEY_2, menuText, -1, JOIN_MENU_ID)
+	}
+}
+
+public HandleJoinMenu(id, key)
+{
+	if(!is_user_connected(id) || g_iJoinMode == 1)
+	{
+		return PLUGIN_HANDLED
+	}
+
+	if(g_iJoinMode == 2 && key == 0)
+	{
+		client_cmd(id, "disconnect")
+		return PLUGIN_HANDLED
+	}
+
+	if(g_iJoinMode == 0)
+	{
+		if(key == 0)
+		{
+			cs_set_user_team(id, CS_TEAM_SPECTATOR)
+			engclient_cmd(id, "slot10")
+		}
+		else if(key == 1)
+		{
+			client_cmd(id, "disconnect")
+		}
+	}
+
+	return PLUGIN_HANDLED
 }
 
 public HookClientCommand(id)
@@ -233,7 +291,7 @@ public HookClientCommand(id)
 
 	if(equali(command, "jointeam") || equali(command, "chooseteam"))
 	{
-		client_print(id, print_center, "Joining a team is currently disabled.")
+		ShowRestrictedJoinMenu(id)
 		return FMRES_SUPERCEDE
 	}
 
