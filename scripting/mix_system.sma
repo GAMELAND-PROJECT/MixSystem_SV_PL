@@ -335,6 +335,7 @@ new g_eBooleans[Bools]
 
 new g_cFreezeTime
 new g_iFreezeTime
+new bool:g_bShootingOpening
 
 new g_szHltvDemoName[64]
 
@@ -390,6 +391,8 @@ public plugin_init()
 	RegisterHookChain(RG_HandleMenu_ChooseAppearance, "ShootingAppearance_Pre")
 	RegisterHookChain(RG_CBasePlayer_Spawn, "ShootingSpawn_Post", 1)
 	RegisterHookChain(RG_CSGameRules_OnRoundFreezeEnd, "ShootingFreezeEnd_Post", 1)
+	RegisterHookChain(RG_CSGameRules_RestartRound, "ShootingRestart_Pre")
+	RegisterHookChain(RG_CSGameRules_RestartRound, "ShootingRestart_Post", 1)
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_ChooseTeam_Post", 1)
 	RegisterHookChain(RG_CSGameRules_CanHavePlayerItem, "RG_CSGameRules_CanHavePlayerItem_Pre")
 
@@ -1013,13 +1016,39 @@ public ShootingSpawn_Post(id)
 	if(team == CS_TEAM_CT)
 		cs_set_user_model(id, "urban")
 	else if(team == CS_TEAM_T)
-		cs_set_user_model(id, "leet")
+		cs_set_user_model(id, "terror")
 }
 
 public ShootingFreezeEnd_Post()
 {
 	if(g_eBooleans[bIsShooting] && g_eBooleans[bIsMixOn])
+	{
+		if(g_bShootingOpening)
+		{
+			g_bShootingOpening = false
+			ShowShootingLive()
+			client_print_color(0, print_team_default, "^4[GAMELAND] ^1LIVE!")
+		}
 		set_pcvar_num(g_cFreezeTime, 0)
+	}
+}
+
+public ShootingRestart_Pre()
+{
+	if(g_eBooleans[bIsShooting] && g_eBooleans[bIsMixOn])
+		set_pcvar_num(g_cFreezeTime, g_bShootingOpening ? 5 : 0)
+}
+
+public ShootingRestart_Post()
+{
+	if(g_eBooleans[bIsShooting] && g_eBooleans[bIsMixOn] && g_bShootingOpening)
+		ShowShootingLive()
+}
+
+stock ShowShootingLive()
+{
+	set_hudmessage(0, 255, 0, -1.0, 0.25, 0, 0.0, 5.0, 0.0, 0.2, -1)
+	show_hudmessage(0, "=== LIVE LIVE LIVE ===")
 }
 
 public RG_ChooseTeam_Pre(id, MenuChooseTeam:slot)
@@ -1613,15 +1642,17 @@ public clcmd_startmix_internal(id, bool:bKnife)
 
 	if(bShootingMap)
 	{
+		g_bShootingOpening = true
 		RandomizeShootingTeams()
 		server_cmd("mp_timelimit 0")
+		// The plugin owns the ten-round shooting match. Keep the engine
+		// max-round limit disabled so it cannot trigger a map change.
 		server_cmd("mp_maxrounds 0")
 		server_cmd("mp_winlimit 0")
-		server_cmd("mp_freezetime 5")
+		server_cmd("mp_freezetime 7")
 		server_cmd("mp_buytime 0.25")
 		set_task(0.4, "ApplyShootingLoadout")
 		server_cmd("sv_restart 1")
-		set_task(1.5, "task_show_live")
 		set_task(1.0, "StartCount", TASK_COUNT_DURATION, .flags = "b")
 		return PLUGIN_CONTINUE
 	}
@@ -2245,7 +2276,7 @@ public task_end_round(index)
 
 		if(!g_bPaused && !task_exists(TASK_CHECKVOTES))
 		{
-			set_pcvar_num(g_cFreezeTime, g_iFreezeTime)
+			set_pcvar_num(g_cFreezeTime, g_eBooleans[bIsShooting] ? 0 : g_iFreezeTime)
 		}
 
 		if(IsHalf() && !g_eBooleans[bOvertime] && !g_eBooleans[bTeamSwap])
@@ -3655,6 +3686,7 @@ public clcmd_say_pause(id)
 
 ResetScore()
 {
+	g_bShootingOpening = false
 	if(g_eBooleans[bIsShooting])
 	{
 		for(new id = 1; id <= MAX_PLAYERS; id++)
@@ -3816,8 +3848,8 @@ stock RandomizeShootingTeams()
 			continue
 		}
 
-		cs_set_user_team(id, i < half ? CS_TEAM_CT : CS_TEAM_T, i < half ? CS_CT_URBAN : CS_T_LEET)
-		cs_set_user_model(id, i < half ? "urban" : "leet")
+		cs_set_user_team(id, i < half ? CS_TEAM_CT : CS_TEAM_T, i < half ? CS_CT_URBAN : CS_T_TERROR)
+		cs_set_user_model(id, i < half ? "urban" : "terror")
 	}
 }
 
