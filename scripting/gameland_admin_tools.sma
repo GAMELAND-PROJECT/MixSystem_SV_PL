@@ -7,7 +7,7 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.0.8"
+#define VERSION "1.1.0"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -71,6 +71,7 @@ public plugin_init()
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "HookChooseTeam_Pre")
 	register_menucmd(register_menuid("Team_Select", 1), 1023, "HookTeamSelectMenu")
 	register_menucmd(register_menuid(JOIN_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleJoinMenu")
+	register_menucmd(register_menuid("GAMELAND_Open_Team_Menu", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6, "HandleOpenTeamMenu")
 
 	g_pAllowSpectators = get_cvar_pointer("allow_spectators")
 	g_pForceCamera = get_cvar_pointer("mp_forcecamera")
@@ -217,12 +218,65 @@ public CmdJoinTeam(id)
 
 public CmdChooseTeam(id)
 {
-	if(g_iJoinMode != 1 && is_user_connected(id))
+	if(g_iJoinMode == 1 && is_user_connected(id)
+	&& (cs_get_user_team(id) == CS_TEAM_T || cs_get_user_team(id) == CS_TEAM_CT))
+	{
+		ShowOpenTeamMenu(id)
+		return PLUGIN_HANDLED
+	}
+
+	if(g_iJoinMode != 1 && IsJoinLockedPlayer(id))
 	{
 		ShowRestrictedJoinMenu(id)
 		return PLUGIN_HANDLED
 	}
+
+	if(g_iJoinMode != 1 && is_user_connected(id)
+	&& (cs_get_user_team(id) == CS_TEAM_T || cs_get_user_team(id) == CS_TEAM_CT))
+	{
+		return PLUGIN_HANDLED
+	}
+
 	return CmdJoinTeam(id)
+}
+
+public ShowOpenTeamMenu(id)
+{
+	if(!is_user_connected(id))
+	{
+		return
+	}
+
+	show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6,
+		"\y[GAMELAND]\w Team options^n^n\y1.\w Terrorist^n\y2.\w Counter-Terrorist^n\y6.\w Spectator",
+		-1, "GAMELAND_Open_Team_Menu")
+}
+
+public HandleOpenTeamMenu(id, key)
+{
+	if(!is_user_connected(id) || g_iJoinMode != 1)
+	{
+		return PLUGIN_HANDLED
+	}
+
+	if(key == 0)
+	{
+		g_bInternalTeamChange[id] = true
+		engclient_cmd(id, "jointeam", "1")
+		g_bInternalTeamChange[id] = false
+	}
+	else if(key == 1)
+	{
+		g_bInternalTeamChange[id] = true
+		engclient_cmd(id, "jointeam", "2")
+		g_bInternalTeamChange[id] = false
+	}
+	else if(key == 5)
+	{
+		MoveToFreeSpectator(id)
+	}
+
+	return PLUGIN_HANDLED
 }
 
 public ShowRestrictedJoinMenu(id)
