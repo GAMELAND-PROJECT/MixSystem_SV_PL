@@ -978,7 +978,9 @@ public RG_Weapon_Remove(iEnt, const szModelName[])
 
 public RG_CSGameRules_CanHavePlayerItem_Pre(id, item)
 {
-	if(g_eBooleans[bIsKnife] || get_member_game(m_bCTCantBuy) || get_member_game(m_bTCantBuy))
+	// Shooting maps receive their loadout through rg_give_item.  Do not let
+	// knife-round/buy-lock restrictions reject those weapons.
+	if(!g_eBooleans[bIsShooting] && (g_eBooleans[bIsKnife] || get_member_game(m_bCTCantBuy) || get_member_game(m_bTCantBuy)))
 	{
 		if(get_member(item, m_iId) == WEAPON_KNIFE)
 			return
