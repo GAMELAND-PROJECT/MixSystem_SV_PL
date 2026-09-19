@@ -1707,6 +1707,10 @@ public clcmd_warm(id)
 
 	g_eBooleans[bIsWarm] = true
 	g_eBooleans[bOvertime] = false
+	// ReGameDLL must ignore team win conditions during warmup.  The hook
+	// prevents our mix logic from advancing, while this cvar also blocks the
+	// engine's native round-end path after a player dies.
+	server_cmd("mp_ignore_round_win_conditions 1")
 	#if defined FASTCUP_MODE
 	g_eBooleans[bWasKnife] = false
 	#endif
@@ -3608,6 +3612,7 @@ ResetScore()
 	g_eBooleans[bIsShooting] = false
 	g_eBooleans[bTeamSwap] = false
 	g_eBooleans[bIsWarm] = false
+	server_cmd("mp_ignore_round_win_conditions 0")
 	g_eOvertime[FirstOvertime] = false
 	g_eOvertime[SecondOvertime] = false
 	g_eBooleans[bIsKnife] = false
