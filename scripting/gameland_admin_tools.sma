@@ -79,7 +79,7 @@ public plugin_init()
 	register_menucmd(register_menuid("Team_Select", 1), 1023, "HookTeamSelectMenu")
 	register_menucmd(register_menuid(JOIN_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleJoinMenu")
 	register_menucmd(register_menuid("GAMELAND_Open_Team_Menu", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_0, "HandleOpenTeamMenu")
-	register_menucmd(register_menuid("GAMELAND_Map_Categories", 1), MENU_KEY_1 | MENU_KEY_8 | MENU_KEY_9 | MENU_KEY_0, "HandleMapCategoryMenu")
+	register_menucmd(register_menuid("GAMELAND_Map_Categories", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_0, "HandleMapCategoryMenu")
 
 	g_pAllowSpectators = get_cvar_pointer("allow_spectators")
 	g_pForceCamera = get_cvar_pointer("mp_forcecamera")
@@ -178,10 +178,20 @@ public CmdMapMenu(id, level, cid)
 		return PLUGIN_HANDLED
 	}
 
-	show_menu(id, MENU_KEY_1 | MENU_KEY_8 | MENU_KEY_9 | MENU_KEY_0,
-		"\y[GAMELAND]\w Map browser^n^n\y1.\w Competitive DE maps^n^n\y8.\w Next: SK/AWP -> CS^n\y9.\w CS maps^n^n\y0.\w Cancel",
-		-1, "GAMELAND_Map_Categories")
+	ShowMapBrowser(id)
 	return PLUGIN_HANDLED
+}
+
+public ShowMapBrowser(id)
+{
+	if(!is_user_connected(id) || !(get_user_flags(id) & ADMIN_MAP))
+	{
+		return
+	}
+
+	show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_0,
+		"\y[GAMELAND]\w Map browser^n^n\y1.\w Competitive DE maps^n\y2.\w Shooting SK / AWP^n\y3.\w CS maps^n^n\y0.\w Cancel",
+		-1, "GAMELAND_Map_Categories")
 }
 
 public HandleMapCategoryMenu(id, key)
@@ -195,11 +205,11 @@ public HandleMapCategoryMenu(id, key)
 	{
 		ShowMapCategory(id, 1)
 	}
-	else if(key == 7)
+	else if(key == 1)
 	{
-		ShowMapCategory(id, g_iMapCategory[id] == 2 ? 3 : 2)
+		ShowMapCategory(id, 2)
 	}
-	else if(key == 8)
+	else if(key == 2)
 	{
 		ShowMapCategory(id, 3)
 	}
@@ -294,6 +304,7 @@ public KickMenuHandler(id, menu, item)
 	if(item == MENU_EXIT)
 	{
 		menu_destroy(menu)
+		ShowMapBrowser(id)
 		return PLUGIN_HANDLED
 	}
 
