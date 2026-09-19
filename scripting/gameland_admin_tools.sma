@@ -7,12 +7,13 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.1.3"
+#define VERSION "1.1.4"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
 #define TASK_BLACK_SCREEN 19001
 #define TASK_SPECTATOR_FINALIZE 19100
+#define TASK_INITIAL_JOIN_MENU 19200
 #define JOIN_MENU_ID "GAMELAND_Join_Menu"
 
 new Array:g_aMaps
@@ -87,6 +88,42 @@ public plugin_init()
 
 	g_aMaps = ArrayCreate(32)
 	LoadMaps()
+}
+
+public client_putinserver(id)
+{
+	set_task(0.4, "ShowInitialJoinMenu", TASK_INITIAL_JOIN_MENU + id)
+}
+
+public client_disconnected(id)
+{
+	remove_task(TASK_INITIAL_JOIN_MENU + id)
+	remove_task(TASK_SPECTATOR_FINALIZE + id)
+	g_bInternalTeamChange[id] = false
+}
+
+public ShowInitialJoinMenu(taskId)
+{
+	new id = taskId - TASK_INITIAL_JOIN_MENU
+	if(!is_user_connected(id))
+	{
+		return
+	}
+
+	new CsTeams:team = cs_get_user_team(id)
+	if(team != CS_TEAM_UNASSIGNED && team != CS_TEAM_SPECTATOR)
+	{
+		return
+	}
+
+	if(g_iJoinMode == 1)
+	{
+		ShowOpenTeamMenu(id)
+	}
+	else
+	{
+		ShowRestrictedJoinMenu(id)
+	}
 }
 
 public plugin_end()
