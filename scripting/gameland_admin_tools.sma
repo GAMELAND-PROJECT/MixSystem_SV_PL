@@ -7,7 +7,7 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.0.4"
+#define VERSION "1.0.5"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -205,10 +205,9 @@ public CmdJoinTeam(id)
 
 	new requested[8]
 	read_argv(1, requested, charsmax(requested))
-	if(equali(requested, "1") || equali(requested, "2") || equali(requested, "5"))
+	if(equali(requested, "1") || equali(requested, "2") || equali(requested, "5") || equali(requested, "6"))
 	{
-		client_print(id, print_center, "Joining a team is currently disabled.")
-		client_print_color(id, print_team_default, "^4[GAMELAND] ^1Spectators cannot join a team right now.")
+		ApplyRestrictedJoinKey(id, str_to_num(requested) - 1, true)
 		return PLUGIN_HANDLED
 	}
 
@@ -254,25 +253,46 @@ public HandleJoinMenu(id, key)
 		return PLUGIN_HANDLED
 	}
 
-	if(g_iJoinMode == 2 && key == 0)
+	return ApplyRestrictedJoinKey(id, key, false)
+}
+
+stock ApplyRestrictedJoinKey(id, key, bool:showMenu)
+{
+	if(!is_user_connected(id) || g_iJoinMode == 1)
 	{
-		client_cmd(id, "disconnect")
 		return PLUGIN_HANDLED
 	}
 
-	if(g_iJoinMode == 0)
+	if(g_iJoinMode == 2)
 	{
 		if(key == 0)
 		{
-			cs_set_user_team(id, CS_TEAM_SPECTATOR)
-			engclient_cmd(id, "slot10")
-		}
-		else if(key == 1)
-		{
 			client_cmd(id, "disconnect")
 		}
+		else if(showMenu)
+		{
+			ShowRestrictedJoinMenu(id)
+		}
+		return PLUGIN_HANDLED
 	}
 
+	if(key == 0)
+	{
+		if(is_user_alive(id))
+		{
+			user_silentkill(id)
+		}
+		cs_set_user_team(id, CS_TEAM_SPECTATOR)
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You were moved to Spectator.")
+	}
+	else if(key == 1)
+	{
+		client_cmd(id, "disconnect")
+	}
+	else if(showMenu)
+	{
+		ShowRestrictedJoinMenu(id)
+	}
 	return PLUGIN_HANDLED
 }
 
@@ -297,10 +317,9 @@ public HookClientCommand(id)
 
 	if(equali(command, "menuselect")
 	&& get_member(id, m_iMenu) == CS_Menu_ChooseTeam
-	&& (equali(args, "1") || equali(args, "2") || equali(args, "5")))
+	&& (equali(args, "1") || equali(args, "2") || equali(args, "5") || equali(args, "6")))
 	{
-		client_print(id, print_center, "Joining a team is currently disabled.")
-		client_print_color(id, print_team_default, "^4[GAMELAND] ^1/j0 is active: spectators must remain spectators.")
+		ApplyRestrictedJoinKey(id, str_to_num(args) - 1, true)
 		return FMRES_SUPERCEDE
 	}
 
@@ -315,10 +334,9 @@ public HookTeamSelectMenu(id, key)
 	}
 
 	// Team_Select keys: 1=T (0), 2=CT (1), 5=Auto (4), 6=Spec (5).
-	if(key == 0 || key == 1 || key == 4)
+	if(key == 0 || key == 1 || key == 4 || key == 5)
 	{
-		client_print(id, print_center, "Joining a team is currently disabled.")
-		client_print_color(id, print_team_default, "^4[GAMELAND] ^1/j0 is active: spectators must remain spectators.")
+		ApplyRestrictedJoinKey(id, key, true)
 		return PLUGIN_HANDLED
 	}
 
@@ -332,11 +350,25 @@ public HookChooseTeam_Pre(id, MenuChooseTeam:slot)
 		return HC_CONTINUE
 	}
 
-	if(slot == MenuChoose_T || slot == MenuChoose_CT || slot == MenuChoose_AutoSelect)
+	if(slot == MenuChoose_T || slot == MenuChoose_CT || slot == MenuChoose_AutoSelect || slot == MenuChoose_Spec)
 	{
 		SetHookChainReturn(ATYPE_INTEGER, 0)
-		client_print(id, print_center, "Joining a team is currently disabled.")
-		client_print_color(id, print_team_default, "^4[GAMELAND] ^1/j0 is active: spectators must remain spectators.")
+		if(slot == MenuChoose_T)
+		{
+			ApplyRestrictedJoinKey(id, 0, true)
+		}
+		else if(slot == MenuChoose_CT)
+		{
+			ApplyRestrictedJoinKey(id, 1, true)
+		}
+		else if(slot == MenuChoose_AutoSelect)
+		{
+			ApplyRestrictedJoinKey(id, 4, true)
+		}
+		else
+		{
+			ApplyRestrictedJoinKey(id, 5, true)
+		}
 		return HC_SUPERCEDE
 	}
 
