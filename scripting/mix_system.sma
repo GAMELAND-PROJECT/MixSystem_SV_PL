@@ -3706,9 +3706,16 @@ stock bool:IsShootingMap()
 	new mapName[32]
 	get_mapname(mapName, charsmax(mapName))
 
-	return containi(mapName, "aim_sk_") == 0
+	// Standard fast-shooting map families. Keep de_/cs_ maps on the normal
+	// competitive mix path; everything here uses randomized teams and a
+	// dedicated weapon loadout.
+	return containi(mapName, "aim_") == 0
 		|| containi(mapName, "awp_") == 0
 		|| containi(mapName, "sk_") == 0
+		|| containi(mapName, "fy_") == 0
+		|| containi(mapName, "dm_") == 0
+		|| containi(mapName, "ka_") == 0
+		|| containi(mapName, "hs_") == 0
 }
 
 stock RandomizeShootingTeams()
