@@ -18,6 +18,7 @@ new g_pAllowSpectators
 new g_pForceCamera
 new g_pForceChaseCam
 new g_pFadeToBlack
+new g_pJoinMode
 new g_iJoinMode = 1
 
 public plugin_init()
@@ -61,12 +62,16 @@ public plugin_init()
 	register_clcmd("say_team /j2", "CmdJoinBlack", ADMIN_CVAR)
 	register_clcmd("j2", "CmdJoinBlack", ADMIN_CVAR)
 	register_clcmd("jointeam", "CmdJoinTeam")
+	register_clcmd("chooseteam", "CmdChooseTeam")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "HookChooseTeam_Pre")
+	register_menucmd(register_menuid("Team_Select", 1), 1023, "HookTeamSelectMenu")
 
 	g_pAllowSpectators = get_cvar_pointer("allow_spectators")
 	g_pForceCamera = get_cvar_pointer("mp_forcecamera")
 	g_pForceChaseCam = get_cvar_pointer("mp_forcechasecam")
 	g_pFadeToBlack = get_cvar_pointer("mp_fadetoblack")
+	g_pJoinMode = register_cvar("gameland_join_mode", "1")
+	g_iJoinMode = clamp(get_pcvar_num(g_pJoinMode), 0, 2)
 
 	g_aMaps = ArrayCreate(32)
 	LoadMaps()
@@ -201,6 +206,28 @@ public CmdJoinTeam(id)
 	return PLUGIN_CONTINUE
 }
 
+public CmdChooseTeam(id)
+{
+	return CmdJoinTeam(id)
+}
+
+public HookTeamSelectMenu(id, key)
+{
+	if(g_iJoinMode != 0 || !is_user_connected(id) || cs_get_user_team(id) != CS_TEAM_SPECTATOR)
+	{
+		return PLUGIN_CONTINUE
+	}
+
+	if(key == 0 || key == 1 || key == 4)
+	{
+		client_print(id, print_center, "Joining a team is currently disabled.")
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1/j0 is active: spectators must remain spectators.")
+		return PLUGIN_HANDLED
+	}
+
+	return PLUGIN_CONTINUE
+}
+
 public HookChooseTeam_Pre(id, MenuChooseTeam:slot)
 {
 	if(g_iJoinMode != 0 || !is_user_connected(id) || cs_get_user_team(id) != CS_TEAM_SPECTATOR)
@@ -227,6 +254,10 @@ stock SetJoinMode(id, level, cid, mode)
 	}
 
 	g_iJoinMode = mode
+	if(g_pJoinMode)
+	{
+		set_pcvar_num(g_pJoinMode, mode)
+	}
 	SetCvar(g_pAllowSpectators, 1)
 
 	if(mode == 2)
