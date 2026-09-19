@@ -39,8 +39,10 @@
 #define PLUGIN  "Mix System ~ Fastcup Mode"
 #endif
 
-#define VERSION "2.19.10"
+#define VERSION "2.19.11"
 #define AUTHOR  "Shadows Adi"
+
+#define SHOOTING_END_SCORE 10
 
 #define IsPlayer(%1)				((1 <= %1 <= MAX_PLAYERS) && is_user_connected(%1))
 #define NATIVE_ERROR				-1
@@ -212,6 +214,8 @@ enum _:Bools
 	#endif
 	bool:bCanChat[MAX_PLAYERS + 1],
 	bool:bIsMixOn,
+	bool:bIsShooting,
+	bool:bShouldRecordMix,
 	bool:bIsKnife,
 	bool:bIsWarm,
 	bool:bTeamSwap,
@@ -379,6 +383,7 @@ public plugin_init()
 
 	RegisterHookChain(RG_RoundEnd, "RG_EndRound")
 	RegisterHookChain(RG_RoundEnd, "RG_EndRound_Pre", 0)
+	RegisterHookChain(RG_CSGameRules_CheckWinConditions, "RG_CheckWinConditions_Pre")
 	RegisterHookChain(RG_CSGameRules_PlayerKilled, "RG_Player_Killed_Post", 1)
 	RegisterHookChain(RG_CWeaponBox_SetModel, "RG_Weapon_Remove")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_ChooseTeam_Pre")
@@ -1278,8 +1283,76 @@ stock HLTV_StopRecording()
 	}
 }
 
+stock gregorian_to_jalali(g_y, g_m, g_d, &j_y, &j_m, &j_d)
+{
+	new g_days_in_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+	new j_days_in_month[] = {31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 29}
+	
+	new gy = g_y - 1600
+	new gm = g_m - 1
+	new gd = g_d - 1
+	
+	new g_day_no = 365*gy + floatround(float((gy+3)/4)) - floatround(float((gy+99)/100)) + floatround(float((gy+399)/400))
+	
+	for(new i=0; i<gm; ++i)
+		g_day_no += g_days_in_month[i]
+		
+	if (gm > 1 && ((gy%4==0 && gy%100!=0) || (gy%400==0)))
+		g_day_no++
+		
+	g_day_no += gd
+	new j_day_no = g_day_no - 79
+	
+	new j_np = j_day_no / 12053
+	j_day_no = j_day_no % 12053
+	
+	j_y = 979 + 33*j_np + 4 * (j_day_no/1461)
+	j_day_no %= 1461
+	
+	if (j_day_no >= 366) {
+		j_y += (j_day_no-1)/365
+		j_day_no = (j_day_no-1)%365
+	}
+	
+	for (new i = 0; i < 11 && j_day_no >= j_days_in_month[i]; ++i) {
+		j_day_no -= j_days_in_month[i]
+		j_m = i + 1
+	}
+	j_m++
+	j_d = j_day_no + 1
+}
+
+stock MakeDemoSafeName(szName[], const iLen)
+{
+	replace_all(szName, iLen, " ", "_")
+	replace_all(szName, iLen, "^"", "_")
+	replace_all(szName, iLen, "\", "_")
+	replace_all(szName, iLen, "/", "_")
+	replace_all(szName, iLen, ":", "_")
+	replace_all(szName, iLen, "*", "_")
+	replace_all(szName, iLen, "?", "_")
+	replace_all(szName, iLen, "<", "_")
+	replace_all(szName, iLen, ">", "_")
+	replace_all(szName, iLen, "|", "_")
+	replace_all(szName, iLen, ".", "_")
+}
+
+stock Client_StartRecordingAll(const szDemoPrefix[])
+{
+	#pragma unused szDemoPrefix
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Client POV demo is local-only now. Players can press ^3F5^1 to start or stop their own demo.")
+}
+
+stock Client_StopRecordingAll()
+{
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Client POV demo is controlled locally with ^3F5^1.")
+}
+
+
 public clcmd_startmix(id, bool:bKnife)
 {
+	client_print_color(id, print_team_default, "^4[Debug] ^1clcmd_startmix called with id: %d", id)
+	
 	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
 	{
 		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
@@ -1307,6 +1380,120 @@ public clcmd_startmix(id, bool:bKnife)
 		}
 	}
 
+	g_eInformations[MIX_STARTER] = id
+
+	#if defined FASTCUP_MODE
+	if(!g_eBooleans[bWasKnife])
+	{
+		g_eBooleans[bShouldRecordMix] = false
+		clcmd_startmix_internal(id, bKnife)
+		return PLUGIN_HANDLED
+	}
+	#endif
+
+	ShowRecordMatchMenu(id, bKnife)
+	return PLUGIN_HANDLED
+}
+
+public ApplyShootingLoadout()
+{
+	if(!g_eBooleans[bIsMixOn] || !IsShootingMap())
+	{
+		return
+	}
+
+	new players[MAX_PLAYERS], count
+	get_players(players, count, "ch")
+
+	new mapName[32]
+	get_mapname(mapName, charsmax(mapName))
+	new bool:bAwp = containi(mapName, "awp_") == 0 || containi(mapName, "aim_sk_awp") == 0
+
+	for(new i; i < count; i++)
+	{
+		new id = players[i]
+		new CsTeams:team = cs_get_user_team(id)
+		if(!IsPlayer(id) || (team != CS_TEAM_T && team != CS_TEAM_CT))
+		{
+			continue
+		}
+
+		if(bAwp)
+		{
+			rg_give_item(id, "weapon_awp", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_AWP, 90)
+		}
+		else if(team == CS_TEAM_CT)
+		{
+			rg_give_item(id, "weapon_m4a1", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_M4A1, 90)
+		}
+		else
+		{
+			rg_give_item(id, "weapon_ak47", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_AK47, 90)
+		}
+
+		rg_give_item(id, "weapon_deagle", GT_REPLACE)
+		rg_set_user_bpammo(id, WEAPON_DEAGLE, 35)
+		rg_set_user_armor(id, 100, ARMOR_VESTHELM)
+	}
+}
+
+stock ShowRecordMatchMenu(id, bool:bKnife)
+{
+	if(!is_user_connected(id))
+	{
+		g_eBooleans[bShouldRecordMix] = false
+		clcmd_startmix_internal(id, bKnife)
+		return
+	}
+
+	client_print_color(id, print_team_default, "^4[Debug] ^1Displaying HLTV record menu to id: %d", id)
+
+	new szTitle[128]
+	formatex(szTitle, charsmax(szTitle), "\y[GAMELAND]\w Start server-side HLTV recording?")
+	new menu = menu_create(szTitle, "menu_record_match")
+	
+	new szInfo[2]
+	szInfo[0] = bKnife ? '1' : '0'
+	szInfo[1] = 0
+	
+	menu_additem(menu, "Yes, Record", szInfo)
+	menu_additem(menu, "No, Do not record", szInfo)
+	menu_additem(menu, "Cancel", "2")
+	
+	menu_display(id, menu)
+}
+
+public menu_record_match(id, menu, item)
+{
+	if(item == MENU_EXIT)
+	{
+		menu_destroy(menu)
+		return PLUGIN_HANDLED
+	}
+	
+	new szData[6], szName[64], access, callback
+	menu_item_getinfo(menu, item, access, szData, charsmax(szData), szName, charsmax(szName), callback)
+	menu_destroy(menu)
+	
+	if(szData[0] == '2') 
+	{
+		return PLUGIN_HANDLED // Cancel
+	}
+	
+	new bool:bKnife = (szData[0] == '1')
+	g_eBooleans[bShouldRecordMix] = (item == 0) // item 0 is Yes, item 1 is No
+	
+	clcmd_startmix_internal(id, bKnife)
+	return PLUGIN_HANDLED
+}
+
+public clcmd_startmix_internal(id, bool:bKnife)
+{
+	new bool:bShootingMap = IsShootingMap()
+
 	#if defined FASTCUP_MODE
 	if(g_eBooleans[bWasKnife])
 	#endif
@@ -1321,12 +1508,14 @@ public clcmd_startmix(id, bool:bKnife)
 	date(iDate[iYear], iDate[iMonth], iDate[iDay])
 	time(iTime[iHour], iTime[iMin], iTime[iSec])
 	
-	HLTV_StartRecording("GL_Mix")
+	if(g_eBooleans[bShouldRecordMix])
+	{
+		HLTV_StartRecording("GL_Mix")
+		Client_StartRecordingAll("GL_Mix")
+	}
 
 	static iPlayer, iPlayers[MAX_PLAYERS], iNum
 	get_players(iPlayers, iNum, "ch")
-
-	g_eInformations[MIX_STARTER] = id
 
 	new CsTeams:iTeam
 
@@ -1349,10 +1538,7 @@ public clcmd_startmix(id, bool:bKnife)
 				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_STARTED_BY_X", g_szName[g_eInformations[MIX_STARTER]])
 			}
 
-			if(g_eDemoSettings[iDemoAuto])
-			{
-				client_print_color(iPlayer, iPlayer, "^4%s ^1Client POV demo is local-only now. Press ^3F5^1 to start your own demo.", g_ePluginSettings[szPrefix])
-			}
+			// Client POV demo recording disabled - HLTV records the match centrally on the server
 			
 			iTeam = cs_get_user_team(iPlayer)
 
@@ -1370,16 +1556,17 @@ public clcmd_startmix(id, bool:bKnife)
 	g_iStart = 0
 
 	ResetScore()
+	g_eBooleans[bIsShooting] = bShootingMap
 
 	#if defined FASTCUP_MODE
-	if(!g_eBooleans[bWasKnife])
+	if(!bShootingMap && !g_eBooleans[bWasKnife])
 	{
 		g_eBooleans[bWasKnife] = true
 		clcmd_knife(id)
 		return PLUGIN_HANDLED
 	}
 
-	if(!bKnife)
+	if(!bShootingMap && !bKnife)
 	{
 		return PLUGIN_HANDLED
 	}
@@ -1394,6 +1581,17 @@ public clcmd_startmix(id, bool:bKnife)
 	g_eTeamPause[TERO_PAUSE] = 0
 
 	StartConfig()
+
+	if(bShootingMap)
+	{
+		RandomizeShootingTeams()
+		server_cmd("mp_timelimit 0")
+		server_cmd("mp_maxrounds 0")
+		server_cmd("mp_winlimit 0")
+		server_cmd("mp_freezetime 3")
+		server_cmd("mp_buytime 0.25")
+		set_task(0.4, "ApplyShootingLoadout")
+	}
 
 	server_cmd("sv_restart 1")
 	set_task(3.0, "task_mix_restart1")
@@ -1451,8 +1649,6 @@ public clcmd_stopmix(id)
 		{
 					}
 
-		// Client POV demo recording is controlled locally by the player.
-
 			}
 
 	#if defined FASTCUP_MODE
@@ -1463,6 +1659,7 @@ public clcmd_stopmix(id)
 	StopConfig()
 
 	HLTV_StopRecording()
+	Client_StopRecordingAll()
 
 	server_cmd("sv_restart 1")
 
@@ -1682,6 +1879,11 @@ public RG_EndRound(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
 		return
 	}
 
+	if(g_eBooleans[bIsWarm])
+	{
+		return
+	}
+
 	set_task(1.0, "task_end_round", any:status)
 }
 
@@ -1703,6 +1905,16 @@ public RG_EndRound_Pre(WinStatus:status, ScenarioEventEndRound:event, Float:tmDe
 	}
 
 	return HC_SUPERCEDE
+}
+
+public RG_CheckWinConditions_Pre()
+{
+	if(g_eBooleans[bIsWarm])
+	{
+		return HC_SUPERCEDE
+	}
+
+	return HC_CONTINUE
 }
 
 public task_end_round(index)
@@ -2075,7 +2287,7 @@ public task_do_change(iTaskID)
 
 	g_eBooleans[bCanShowStats] = false
 
-	clcmd_startmix(g_eInformations[MIX_STARTER], true)
+	ShowRecordMatchMenu(g_eInformations[MIX_STARTER], true)
 
 	return PLUGIN_HANDLED
 }
@@ -2237,10 +2449,6 @@ public hook_say(id)
 		if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminFlags])))
 		{
 			return PLUGIN_HANDLED
-		}
-		else if(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminFlags]))
-		{
-			return PLUGIN_CONTINUE
 		}
 	}
 
@@ -2603,6 +2811,7 @@ public task_show_score()
 		set_task(5.0, "task_start_warm")
 		
 		HLTV_StopRecording()
+		Client_StopRecordingAll()
 	}
 
 	g_eBooleans[bIsStoppingMix] = false
@@ -2773,8 +2982,40 @@ public task_give_equipment(iPlayer)
 	if(iTeam == TEAM_UNASSIGNED || iTeam == TEAM_SPECTATOR)
 		return 
 
-	rg_remove_all_items(iPlayer, false)
+	rg_remove_all_items(iPlayer, g_eBooleans[bIsShooting] && IsShootingMap())
 	rg_set_user_armor(iPlayer, 100, ARMOR_KEVLAR)
+
+	// Shooting maps own their weapon rules.  The regular mix equipment path
+	// used to run after ApplyShootingLoadout and replace the guns with a knife
+	// and the default pistol on every restart/round setup.
+	if(g_eBooleans[bIsShooting] && IsShootingMap())
+	{
+		new mapName[32]
+		get_mapname(mapName, charsmax(mapName))
+		new bool:bAwp = containi(mapName, "awp_") == 0 || containi(mapName, "aim_sk_awp") == 0
+
+		if(bAwp)
+		{
+			rg_give_item(iPlayer, "weapon_awp", GT_REPLACE)
+			rg_set_user_bpammo(iPlayer, WEAPON_AWP, 90)
+		}
+		else if(iTeam == TEAM_CT)
+		{
+			rg_give_item(iPlayer, "weapon_m4a1", GT_REPLACE)
+			rg_set_user_bpammo(iPlayer, WEAPON_M4A1, 90)
+		}
+		else
+		{
+			rg_give_item(iPlayer, "weapon_ak47", GT_REPLACE)
+			rg_set_user_bpammo(iPlayer, WEAPON_AK47, 90)
+		}
+
+		rg_give_item(iPlayer, "weapon_deagle", GT_REPLACE)
+		rg_set_user_bpammo(iPlayer, WEAPON_DEAGLE, 35)
+		rg_set_user_armor(iPlayer, 100, ARMOR_VESTHELM)
+		return
+	}
+
 	rg_give_item(iPlayer, "weapon_knife")
 
 	switch(iTeam)
@@ -3360,7 +3601,11 @@ ResetScore()
 		g_eBooleans[bCanChat][i] = true
 	}
 	g_eBooleans[bIsMixOn] = false
+
+	HLTV_StopRecording()
+	Client_StopRecordingAll()
 	g_eBooleans[bOvertime] = false  // Fix #5: removed duplicate reset that was on next line
+	g_eBooleans[bIsShooting] = false
 	g_eBooleans[bTeamSwap] = false
 	g_eBooleans[bIsWarm] = false
 	g_eOvertime[FirstOvertime] = false
@@ -3423,6 +3668,11 @@ public task_stop_mix()
 
 stock bool:IsHalf()
 {
+	if(g_eBooleans[bIsShooting])
+	{
+		return false
+	}
+
 	if(!g_eBooleans[bTeamSwap] && g_iRoundNum == 15 && !g_eBooleans[bOvertime])
 	{
 		return true
@@ -3432,11 +3682,62 @@ stock bool:IsHalf()
 
 stock bool:IsLastRound()
 {
+	if(g_eBooleans[bIsShooting])
+	{
+		return g_iScore[CT_SCORE] >= SHOOTING_END_SCORE || g_iScore[TERO_SCORE] >= SHOOTING_END_SCORE
+	}
+
 	if(g_eBooleans[bTeamSwap] && g_iScore[CT_SCORE] == g_ePluginSettings[iMixEndRound] && !g_eBooleans[bOvertime] || g_eBooleans[bTeamSwap] && g_iScore[TERO_SCORE] == g_ePluginSettings[iMixEndRound] && !g_eBooleans[bOvertime])
 	{
 		return true
 	}
 	return false
+}
+
+stock bool:IsShootingMap()
+{
+	new mapName[32]
+	get_mapname(mapName, charsmax(mapName))
+
+	return containi(mapName, "aim_sk_") == 0
+		|| containi(mapName, "awp_") == 0
+		|| containi(mapName, "sk_") == 0
+}
+
+stock RandomizeShootingTeams()
+{
+	new connected[MAX_PLAYERS], players[MAX_PLAYERS], count, playerCount
+	get_players(connected, count, "ch")
+
+	for(new i; i < count; i++)
+	{
+		new id = connected[i]
+		new CsTeams:team = cs_get_user_team(id)
+		if(team == CS_TEAM_T || team == CS_TEAM_CT)
+		{
+			players[playerCount++] = id
+		}
+	}
+
+	for(new i = playerCount - 1; i > 0; i--)
+	{
+		new j = random_num(0, i)
+		new temp = players[i]
+		players[i] = players[j]
+		players[j] = temp
+	}
+
+	new half = (playerCount + 1) / 2
+	for(new i; i < playerCount; i++)
+	{
+		new id = players[i]
+		if(!IsPlayer(id))
+		{
+			continue
+		}
+
+		cs_set_user_team(id, i < half ? CS_TEAM_CT : CS_TEAM_T)
+	}
 }
 
 stock bool:IsPreLastRound()
@@ -3854,7 +4155,7 @@ public clcmd_hs1(id)
 		return PLUGIN_HANDLED
 	}
 
-	HLTV_StartRecording("GL_Manual")
+	HLTV_StartRecording("GL_Mix")
 	client_print_color(id ? id : 0, print_team_default, "^4[GAMELAND] ^1HLTV recording started. Client POV recording is local-only; players use ^3F5^1.")
 	return PLUGIN_HANDLED
 }
@@ -3868,5 +4169,6 @@ public clcmd_hs0(id)
 	}
 
 	HLTV_StopRecording()
+	Client_StopRecordingAll()
 	return PLUGIN_HANDLED
 }
