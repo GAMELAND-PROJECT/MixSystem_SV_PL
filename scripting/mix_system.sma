@@ -2067,6 +2067,29 @@ public task_end_round(index)
 		}
 	}
 
+	// Do not wait for the delayed score HUD task on shooting maps.  The
+	// round-end callback is the authoritative point where the winning
+	// team's score has just been committed, so finish immediately at ten.
+	if(g_eBooleans[bIsShooting] && g_eBooleans[bIsMixOn]
+		&& (g_iScore[CT_SCORE] >= SHOOTING_END_SCORE || g_iScore[TERO_SCORE] >= SHOOTING_END_SCORE))
+	{
+		new szWinningTeam[16]
+		if(g_iScore[CT_SCORE] >= SHOOTING_END_SCORE)
+		{
+			formatex(szWinningTeam, charsmax(szWinningTeam), "%L", LANG_SERVER, "CT_TEAM")
+		}
+		else
+		{
+			formatex(szWinningTeam, charsmax(szWinningTeam), "%L", LANG_SERVER, "TERO_TEAM")
+		}
+
+		client_print_color(0, 0, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_WON_BY_X_TEAM", szWinningTeam)
+		client_print_color(0, 0, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_END_SCORE", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
+
+		FinishShootingMatch()
+		return HC_CONTINUE
+	}
+
 	if(g_eBooleans[bIsMixOn])
 		SetGameDesc(g_eBooleans[bOvertime] ? MATCHSTATE_OVERTIME : MATCHSTATE_IN_MATCH)
 	else if(g_ePluginSettings[bForceWarmup] && !g_eBooleans[bIsWarm] && !g_eBooleans[bIsKnife])
