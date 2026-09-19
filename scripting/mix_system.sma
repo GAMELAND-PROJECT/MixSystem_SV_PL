@@ -378,6 +378,7 @@ public plugin_init()
 	register_clcmd("fullupdate", "clcmd_fullupdate")
 
 	RegisterHookChain(RG_RoundEnd, "RG_EndRound")
+	RegisterHookChain(RG_RoundEnd, "RG_EndRound_Pre", 0)
 	RegisterHookChain(RG_CSGameRules_PlayerKilled, "RG_Player_Killed_Post", 1)
 	RegisterHookChain(RG_CWeaponBox_SetModel, "RG_Weapon_Remove")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_ChooseTeam_Pre")
@@ -1084,7 +1085,8 @@ public RG_Player_Killed_Post(iVictim, iKiller, iInflictor)
 {
 	if(IsPlayer(iVictim) && g_eBooleans[bIsWarm])
 	{
-		set_task(1.0, "task_revive", iVictim + TASK_REVIVE)
+		remove_task(iVictim + TASK_REVIVE)
+		set_task(0.1, "task_revive", iVictim + TASK_REVIVE)
 	}
 
 	if(g_eBooleans[bIsMixOn] && !g_eBooleans[bIsWarm])
@@ -1681,6 +1683,26 @@ public RG_EndRound(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
 	}
 
 	set_task(1.0, "task_end_round", any:status)
+}
+
+public RG_EndRound_Pre(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
+{
+	if(!g_eBooleans[bIsWarm] || event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
+	{
+		return HC_CONTINUE
+	}
+
+	// Warmup is continuous: keep a 1v1 running after a death.
+	for(new id = 1; id <= MAX_PLAYERS; id++)
+	{
+		if(IsPlayer(id) && !is_user_alive(id))
+		{
+			remove_task(id + TASK_REVIVE)
+			set_task(0.1, "task_revive", id + TASK_REVIVE)
+		}
+	}
+
+	return HC_SUPERCEDE
 }
 
 public task_end_round(index)
