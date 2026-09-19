@@ -2814,6 +2814,7 @@ public clcmd_passoff(id)
 public task_show_score()
 {
 	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	new bool:bShootingFinished
 	get_players(iPlayers, iNum, "ch")
 
 	for(new i; i < iNum; i++)
@@ -2862,6 +2863,11 @@ public task_show_score()
 			
 			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_WON_BY_X_TEAM", szTemp)
 			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_PLAYER, "MIX_END_SCORE", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
+
+			if(g_eBooleans[bIsShooting])
+			{
+				bShootingFinished = true
+			}
 		
 			// Client POV demo recording is controlled locally by the player.
 		}
@@ -2903,6 +2909,15 @@ public task_show_score()
 
 	ExecuteForward(g_eForwards[NewRound], g_iRet, g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iDuration)
 
+	// Shooting matches are single-half games. Once one team reaches ten
+	// rounds, end the plugin state before starting warmup; otherwise the
+	// regular warmup guard sees bIsMixOn and silently refuses the transition.
+	if(bShootingFinished)
+	{
+		FinishShootingMatch()
+		return
+	}
+
 	if(IsLastRound() || OvertimeFinished())
 	{
 		set_task(5.0, "task_start_warm")
@@ -2916,6 +2931,31 @@ public task_show_score()
 	g_eInformations[SEMI_ACE] = -1
 
 	g_iStart = 1
+}
+
+stock FinishShootingMatch()
+{
+	if(!g_eBooleans[bIsMixOn] || !g_eBooleans[bIsShooting])
+	{
+		return
+	}
+
+	g_eBooleans[bIsStoppingMix] = true
+
+	HLTV_StopRecording()
+	Client_StopRecordingAll()
+
+	// Keep the shooting map loaded and prevent the engine from starting
+	// another match or changing the map while the result is displayed.
+	StopConfig()
+	server_cmd("mp_timelimit 0")
+	server_cmd("mp_maxrounds 0")
+	server_cmd("mp_winlimit 0")
+	set_pcvar_num(g_cFreezeTime, 0)
+
+	// Clear the mix state first so clcmd_warm(0) is accepted.
+	ResetScore()
+	set_task(1.0, "task_start_warm")
 }
 
 public task_show_dhud()
