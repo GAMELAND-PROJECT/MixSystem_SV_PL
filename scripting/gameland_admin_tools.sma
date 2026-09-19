@@ -7,7 +7,7 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.0.7"
+#define VERSION "1.0.8"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -325,6 +325,18 @@ public HookClientCommand(id)
 	if(g_bInternalTeamChange[id])
 	{
 		return FMRES_IGNORED
+	}
+
+	// While j0 is active, players already in a team must not reopen
+	// the default team menu with M/chooseteam. Spectators still get
+	// the restricted menu handled below.
+	new commandName[32]
+	read_argv(0, commandName, charsmax(commandName))
+	if(g_iJoinMode == 0 && is_user_connected(id)
+	&& (equali(commandName, "chooseteam") || equali(commandName, "jointeam"))
+	&& (cs_get_user_team(id) == CS_TEAM_T || cs_get_user_team(id) == CS_TEAM_CT))
+	{
+		return FMRES_SUPERCEDE
 	}
 
 	if(!IsJoinLockedPlayer(id))
