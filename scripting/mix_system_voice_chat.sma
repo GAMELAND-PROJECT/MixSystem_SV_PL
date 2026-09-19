@@ -14,10 +14,23 @@ public plugin_init()
 	register_plugin(PLUGIN, VERSION, AUTHOR)
 
 	g_pAlltalk = get_cvar_pointer("sv_alltalk")
+	if(!g_pAlltalk)
+	{
+		set_fail_state("Required cvar sv_alltalk was not found")
+		return
+	}
+
+	// Normal live/warmup communication allows all players to hear each other.
+	set_pcvar_num(g_pAlltalk, 3)
 }
 
 public mix_game_new_round(iCTScore, iTeroScore, iDuration)
 {
+	if(!g_pAlltalk)
+	{
+		return
+	}
+
 	if(Mix_IsHalf())
 	{
 		// https://github.com/rehlds/ReGameDLL_CS/wiki/sv_alltalk#sv_alltalk-1
