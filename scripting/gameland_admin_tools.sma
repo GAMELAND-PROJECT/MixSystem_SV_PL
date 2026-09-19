@@ -7,7 +7,7 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.1.4"
+#define VERSION "1.1.5"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -70,6 +70,7 @@ public plugin_init()
 	register_clcmd("jointeam", "CmdJoinTeam")
 	register_clcmd("chooseteam", "CmdChooseTeam")
 	register_forward(FM_ClientCommand, "HookClientCommand")
+	register_message(get_user_msgid("ShowMenu"), "MessageShowMenu")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "HookChooseTeam_Pre")
 	register_menucmd(register_menuid("Team_Select", 1), 1023, "HookTeamSelectMenu")
 	register_menucmd(register_menuid(JOIN_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleJoinMenu")
@@ -93,6 +94,30 @@ public plugin_init()
 public client_putinserver(id)
 {
 	set_task(0.4, "ShowInitialJoinMenu", TASK_INITIAL_JOIN_MENU + id)
+}
+
+public MessageShowMenu(msgId, msgDest, id)
+{
+	if(!is_user_connected(id) || !IsJoinMenuPlayer(id))
+	{
+		return PLUGIN_CONTINUE
+	}
+
+	new menuText[128]
+	get_msg_arg_string(4, menuText, charsmax(menuText))
+	if(contain(menuText, "Team_Select") == -1 && contain(menuText, "#Team_Select") == -1)
+	{
+		return PLUGIN_CONTINUE
+	}
+
+	ShowInitialJoinMenu(TASK_INITIAL_JOIN_MENU + id)
+	return PLUGIN_HANDLED
+}
+
+stock bool:IsJoinMenuPlayer(id)
+{
+	new CsTeams:team = cs_get_user_team(id)
+	return team == CS_TEAM_UNASSIGNED || team == CS_TEAM_SPECTATOR
 }
 
 public client_disconnected(id)
