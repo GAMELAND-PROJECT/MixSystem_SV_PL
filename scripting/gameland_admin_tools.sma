@@ -7,11 +7,12 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.1.2"
+#define VERSION "1.1.3"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
 #define TASK_BLACK_SCREEN 19001
+#define TASK_SPECTATOR_FINALIZE 19100
 #define JOIN_MENU_ID "GAMELAND_Join_Menu"
 
 new Array:g_aMaps
@@ -370,10 +371,32 @@ stock MoveToFreeSpectator(id)
 		return
 	}
 
+	if(is_user_alive(id))
+	{
+		user_silentkill(id)
+	}
+
 	g_bInternalTeamChange[id] = true
 	engclient_cmd(id, "jointeam", "6")
 	cs_set_user_team(id, CS_TEAM_SPECTATOR)
 	g_bInternalTeamChange[id] = false
+	set_task(0.1, "FinalizeSpectator", TASK_SPECTATOR_FINALIZE + id)
+}
+
+public FinalizeSpectator(taskId)
+{
+	new id = taskId - TASK_SPECTATOR_FINALIZE
+	if(!is_user_connected(id))
+	{
+		return
+	}
+
+	if(is_user_alive(id))
+	{
+		user_silentkill(id)
+	}
+
+	cs_set_user_team(id, CS_TEAM_SPECTATOR)
 }
 
 stock KickRestrictedClient(id)
