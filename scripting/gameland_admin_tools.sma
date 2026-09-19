@@ -4,9 +4,10 @@
 #include <amxmisc>
 #include <cstrike>
 #include <reapi>
+#include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.0.0"
+#define VERSION "1.0.1"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -63,6 +64,7 @@ public plugin_init()
 	register_clcmd("j2", "CmdJoinBlack", ADMIN_CVAR)
 	register_clcmd("jointeam", "CmdJoinTeam")
 	register_clcmd("chooseteam", "CmdChooseTeam")
+	register_forward(FM_ClientCommand, "HookClientCommand")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "HookChooseTeam_Pre")
 	register_menucmd(register_menuid("Team_Select", 1), 1023, "HookTeamSelectMenu")
 
@@ -189,14 +191,14 @@ public CmdJoinBlack(id, level, cid)
 
 public CmdJoinTeam(id)
 {
-	if(g_iJoinMode != 0 || !is_user_connected(id) || cs_get_user_team(id) != CS_TEAM_SPECTATOR)
+	if(!IsJoinLockedPlayer(id))
 	{
 		return PLUGIN_CONTINUE
 	}
 
 	new requested[8]
 	read_argv(1, requested, charsmax(requested))
-	if(equali(requested, "2") || equali(requested, "3") || equali(requested, "5"))
+	if(equali(requested, "1") || equali(requested, "2") || equali(requested, "5"))
 	{
 		client_print(id, print_center, "Joining a team is currently disabled.")
 		client_print_color(id, print_team_default, "^4[GAMELAND] ^1Spectators cannot join a team right now.")
@@ -211,13 +213,45 @@ public CmdChooseTeam(id)
 	return CmdJoinTeam(id)
 }
 
+public HookClientCommand(id)
+{
+	if(!IsJoinLockedPlayer(id))
+	{
+		return FMRES_IGNORED
+	}
+
+	new command[32], args[16]
+	read_argv(0, command, charsmax(command))
+	read_args(args, charsmax(args))
+	remove_quotes(args)
+	trim(args)
+
+	if(equali(command, "jointeam") || equali(command, "chooseteam"))
+	{
+		client_print(id, print_center, "Joining a team is currently disabled.")
+		return FMRES_SUPERCEDE
+	}
+
+	if(equali(command, "menuselect")
+	&& get_member(id, m_iMenu) == CS_Menu_ChooseTeam
+	&& (equali(args, "1") || equali(args, "2") || equali(args, "5")))
+	{
+		client_print(id, print_center, "Joining a team is currently disabled.")
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1/j0 is active: spectators must remain spectators.")
+		return FMRES_SUPERCEDE
+	}
+
+	return FMRES_IGNORED
+}
+
 public HookTeamSelectMenu(id, key)
 {
-	if(g_iJoinMode != 0 || !is_user_connected(id) || cs_get_user_team(id) != CS_TEAM_SPECTATOR)
+	if(!IsJoinLockedPlayer(id))
 	{
 		return PLUGIN_CONTINUE
 	}
 
+	// Team_Select keys: 1=T (0), 2=CT (1), 5=Auto (4), 6=Spec (5).
 	if(key == 0 || key == 1 || key == 4)
 	{
 		client_print(id, print_center, "Joining a team is currently disabled.")
@@ -230,7 +264,7 @@ public HookTeamSelectMenu(id, key)
 
 public HookChooseTeam_Pre(id, MenuChooseTeam:slot)
 {
-	if(g_iJoinMode != 0 || !is_user_connected(id) || cs_get_user_team(id) != CS_TEAM_SPECTATOR)
+	if(!IsJoinLockedPlayer(id))
 	{
 		return HC_CONTINUE
 	}
@@ -244,6 +278,17 @@ public HookChooseTeam_Pre(id, MenuChooseTeam:slot)
 	}
 
 	return HC_CONTINUE
+}
+
+stock bool:IsJoinLockedPlayer(id)
+{
+	if(g_iJoinMode != 0 || !is_user_connected(id))
+	{
+		return false
+	}
+
+	new CsTeams:team = cs_get_user_team(id)
+	return team == CS_TEAM_UNASSIGNED || team == CS_TEAM_SPECTATOR
 }
 
 stock SetJoinMode(id, level, cid, mode)
