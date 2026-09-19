@@ -20,8 +20,8 @@ public plugin_init()
 		return
 	}
 
-	// Normal live/warmup communication allows all players to hear each other.
-	set_pcvar_num(g_pAlltalk, 3)
+	// Warmup starts open so players can coordinate before the match.
+	set_pcvar_num(g_pAlltalk, 1)
 }
 
 public mix_game_new_round(iCTScore, iTeroScore, iDuration)
@@ -31,7 +31,7 @@ public mix_game_new_round(iCTScore, iTeroScore, iDuration)
 		return
 	}
 
-	if(Mix_IsHalf())
+	if(Mix_IsWarm() || Mix_IsHalf())
 	{
 		// https://github.com/rehlds/ReGameDLL_CS/wiki/sv_alltalk#sv_alltalk-1
 		set_pcvar_num(g_pAlltalk, 1)
