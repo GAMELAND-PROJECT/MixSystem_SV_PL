@@ -980,7 +980,7 @@ public RG_CSGameRules_CanHavePlayerItem_Pre(id, item)
 {
 	// Shooting maps receive their loadout through rg_give_item.  Do not let
 	// knife-round/buy-lock restrictions reject those weapons.
-	if(!g_eBooleans[bIsShooting] && (g_eBooleans[bIsKnife] || get_member_game(m_bCTCantBuy) || get_member_game(m_bTCantBuy)))
+	if(!(g_eBooleans[bIsShooting] || (g_eBooleans[bIsWarm] && IsShootingMap())) && (g_eBooleans[bIsKnife] || get_member_game(m_bCTCantBuy) || get_member_game(m_bTCantBuy)))
 	{
 		if(get_member(item, m_iId) == WEAPON_KNIFE)
 			return
@@ -1590,9 +1590,13 @@ public clcmd_startmix_internal(id, bool:bKnife)
 		server_cmd("mp_timelimit 0")
 		server_cmd("mp_maxrounds 0")
 		server_cmd("mp_winlimit 0")
-		server_cmd("mp_freezetime 3")
+		server_cmd("mp_freezetime 0")
 		server_cmd("mp_buytime 0.25")
 		set_task(0.4, "ApplyShootingLoadout")
+		server_cmd("sv_restart 1")
+		set_task(1.5, "task_show_live")
+		set_task(1.0, "StartCount", TASK_COUNT_DURATION, .flags = "b")
+		return PLUGIN_CONTINUE
 	}
 
 	server_cmd("sv_restart 1")
@@ -1781,6 +1785,35 @@ public task_give_weapon(id)
 	}
 
 	new TeamName:iTeam = get_member(id, m_iTeam)
+
+	// Shooting maps use the same weapon set during warmup and live play.
+	if(IsShootingMap())
+	{
+		new mapName[32]
+		get_mapname(mapName, charsmax(mapName))
+		new bool:bAwp = containi(mapName, "awp_") == 0 || containi(mapName, "aim_sk_awp") == 0
+		rg_remove_all_items(id, true)
+		if(bAwp)
+		{
+			rg_give_item(id, "weapon_awp", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_AWP, 90)
+		}
+		else if(iTeam == TEAM_CT)
+		{
+			rg_give_item(id, "weapon_m4a1", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_M4A1, 90)
+		}
+		else
+		{
+			rg_give_item(id, "weapon_ak47", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_AK47, 90)
+		}
+		rg_give_item(id, "weapon_deagle", GT_REPLACE)
+		rg_set_user_bpammo(id, WEAPON_DEAGLE, 35)
+		rg_set_user_armor(id, 100, ARMOR_VESTHELM)
+		return PLUGIN_HANDLED
+	}
+
 	new iWeaponID[3]
 
 	iWeaponID[0] = rg_get_weapon_info(g_eWarmSettings[szWeaponT], WI_ID)
