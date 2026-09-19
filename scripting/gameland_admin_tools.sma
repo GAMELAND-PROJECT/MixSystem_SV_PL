@@ -7,7 +7,7 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.2.0"
+#define VERSION "1.3.1"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -25,6 +25,7 @@ new g_pForceChaseCam
 new g_pFadeToBlack
 new g_pJoinMode
 new g_iJoinMode = 1
+new g_iMapCategory[33]
 new bool:g_bInternalTeamChange[33]
 
 public plugin_init()
@@ -78,6 +79,7 @@ public plugin_init()
 	register_menucmd(register_menuid("Team_Select", 1), 1023, "HookTeamSelectMenu")
 	register_menucmd(register_menuid(JOIN_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleJoinMenu")
 	register_menucmd(register_menuid("GAMELAND_Open_Team_Menu", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_0, "HandleOpenTeamMenu")
+	register_menucmd(register_menuid("GAMELAND_Map_Categories", 1), MENU_KEY_1 | MENU_KEY_8 | MENU_KEY_9 | MENU_KEY_0, "HandleMapCategoryMenu")
 
 	g_pAllowSpectators = get_cvar_pointer("allow_spectators")
 	g_pForceCamera = get_cvar_pointer("mp_forcecamera")
@@ -127,6 +129,7 @@ public client_disconnected(id)
 {
 	remove_task(TASK_INITIAL_JOIN_MENU + id)
 	remove_task(TASK_SPECTATOR_FINALIZE + id)
+	g_iMapCategory[id] = 0
 	g_bInternalTeamChange[id] = false
 }
 
@@ -175,18 +178,82 @@ public CmdMapMenu(id, level, cid)
 		return PLUGIN_HANDLED
 	}
 
-	new menu = menu_create("\y[GAMELAND]\w Change Map", "MapMenuHandler")
+	show_menu(id, MENU_KEY_1 | MENU_KEY_8 | MENU_KEY_9 | MENU_KEY_0,
+		"\y[GAMELAND]\w Map browser^n^n\y1.\w Competitive DE maps^n^n\y8.\w Next: SK/AWP -> CS^n\y9.\w CS maps^n^n\y0.\w Cancel",
+		-1, "GAMELAND_Map_Categories")
+	return PLUGIN_HANDLED
+}
+
+public HandleMapCategoryMenu(id, key)
+{
+	if(!is_user_connected(id) || !(get_user_flags(id) & ADMIN_MAP))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	if(key == 0)
+	{
+		ShowMapCategory(id, 1)
+	}
+	else if(key == 7)
+	{
+		ShowMapCategory(id, g_iMapCategory[id] == 2 ? 3 : 2)
+	}
+	else if(key == 8)
+	{
+		ShowMapCategory(id, 3)
+	}
+	return PLUGIN_HANDLED
+}
+
+public ShowMapCategory(id, category)
+{
+	if(!is_user_connected(id) || !(get_user_flags(id) & ADMIN_MAP))
+	{
+		return
+	}
+
+	new title[64]
+	switch(category)
+	{
+		case 1: copy(title, charsmax(title), "\y[GAMELAND]\w Competitive DE")
+		case 2: copy(title, charsmax(title), "\y[GAMELAND]\w Shooting SK / AWP")
+		case 3: copy(title, charsmax(title), "\y[GAMELAND]\w CS maps")
+		default: return
+	}
+	g_iMapCategory[id] = category
+
+	new mapMenu = menu_create(title, "MapMenuHandler")
 	new map[32]
 
 	for(new i = 0; i < ArraySize(g_aMaps); i++)
 	{
 		ArrayGetString(g_aMaps, i, map, charsmax(map))
-		menu_additem(menu, map, map)
+		if(MapMatchesCategory(map, category))
+		{
+			menu_additem(mapMenu, map, map)
+		}
 	}
 
-	menu_setprop(menu, MPROP_EXIT, MEXIT_ALL)
-	menu_display(id, menu)
-	return PLUGIN_HANDLED
+	menu_setprop(mapMenu, MPROP_EXIT, MEXIT_ALL)
+	menu_display(id, mapMenu)
+}
+
+stock bool:MapMatchesCategory(const map[], category)
+{
+	if(category == 1)
+	{
+		return containi(map, "de_") == 0
+	}
+	if(category == 2)
+	{
+		return containi(map, "awp_") == 0 || containi(map, "aim_sk_") == 0
+	}
+	if(category == 3)
+	{
+		return containi(map, "cs_") == 0
+	}
+	return false
 }
 
 public CmdKickMenu(id, level, cid)
@@ -844,6 +911,71 @@ stock LoadMaps()
 	}
 
 	ReadMapList(path)
+	SortMapsByPriority()
+}
+
+stock SortMapsByPriority()
+{
+	new Array:ordered = ArrayCreate(32)
+	new map[32]
+	new priorityMap[32]
+
+	for(new p = 0; p < 9; p++)
+	{
+		GetPriorityMap(p, priorityMap, charsmax(priorityMap))
+		if(is_map_valid(priorityMap) && MapExists(priorityMap))
+		{
+			ArrayPushString(ordered, priorityMap)
+		}
+	}
+
+	for(new i = 0; i < ArraySize(g_aMaps); i++)
+	{
+		ArrayGetString(g_aMaps, i, map, charsmax(map))
+		if(!IsPriorityMap(map))
+		{
+			ArrayPushString(ordered, map)
+		}
+	}
+
+	ArrayClear(g_aMaps)
+	for(new i = 0; i < ArraySize(ordered); i++)
+	{
+		ArrayGetString(ordered, i, map, charsmax(map))
+		ArrayPushString(g_aMaps, map)
+	}
+	ArrayDestroy(ordered)
+}
+
+stock GetPriorityMap(index, output[], outputLen)
+{
+	switch(index)
+	{
+		// Core competitive rotation: always keep the three primary maps first.
+		case 0: copy(output, outputLen, "de_dust2")
+		case 1: copy(output, outputLen, "de_inferno")
+		case 2: copy(output, outputLen, "de_nuke")
+		case 3: copy(output, outputLen, "de_train")
+		case 4: copy(output, outputLen, "de_mirage")
+		case 5: copy(output, outputLen, "de_cache")
+		case 6: copy(output, outputLen, "de_cbble")
+		case 7: copy(output, outputLen, "de_overpass")
+		case 8: copy(output, outputLen, "de_tuscan")
+		default: output[0] = 0
+	}
+}
+
+stock bool:IsPriorityMap(const map[])
+{
+	return equali(map, "de_dust2")
+		|| equali(map, "de_inferno")
+		|| equali(map, "de_nuke")
+		|| equali(map, "de_train")
+		|| equali(map, "de_mirage")
+		|| equali(map, "de_cache")
+		|| equali(map, "de_cbble")
+		|| equali(map, "de_overpass")
+		|| equali(map, "de_tuscan")
 }
 
 stock ReadMapList(const path[])
