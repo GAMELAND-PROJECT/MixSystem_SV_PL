@@ -7,7 +7,7 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.1.5"
+#define VERSION "1.2.0"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -34,6 +34,9 @@ public plugin_init()
 	register_clcmd("say /map", "CmdMapMenu", ADMIN_MAP)
 	register_clcmd("say_team /map", "CmdMapMenu", ADMIN_MAP)
 	register_clcmd("map", "CmdMapMenu", ADMIN_MAP)
+	register_clcmd("say /k", "CmdKickMenu", ADMIN_KICK)
+	register_clcmd("say_team /k", "CmdKickMenu", ADMIN_KICK)
+	register_clcmd("k", "CmdKickMenu", ADMIN_KICK)
 
 	register_clcmd("say /t1", "CmdAlltalk1", ADMIN_CVAR)
 	register_clcmd("say_team /t1", "CmdAlltalk1", ADMIN_CVAR)
@@ -183,6 +186,76 @@ public CmdMapMenu(id, level, cid)
 
 	menu_setprop(menu, MPROP_EXIT, MEXIT_ALL)
 	menu_display(id, menu)
+	return PLUGIN_HANDLED
+}
+
+public CmdKickMenu(id, level, cid)
+{
+	if(!cmd_access(id, level, cid, 1))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	new menu = menu_create("\y[GAMELAND]\w Kick player", "KickMenuHandler")
+	new players[32], count, target
+	get_players(players, count, "ch")
+
+	for(new i = 0; i < count; i++)
+	{
+		target = players[i]
+		new name[MAX_NAME_LENGTH], userid[16], itemText[64]
+		get_user_name(target, name, charsmax(name))
+		num_to_str(get_user_userid(target), userid, charsmax(userid))
+		formatex(itemText, charsmax(itemText), "%s \y[%d]", name, target)
+		menu_additem(menu, itemText, userid)
+	}
+
+	if(count == 0)
+	{
+		menu_destroy(menu)
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1No players are available to kick.")
+		return PLUGIN_HANDLED
+	}
+
+	menu_setprop(menu, MPROP_EXIT, MEXIT_ALL)
+	menu_display(id, menu)
+	return PLUGIN_HANDLED
+}
+
+public KickMenuHandler(id, menu, item)
+{
+	if(item == MENU_EXIT)
+	{
+		menu_destroy(menu)
+		return PLUGIN_HANDLED
+	}
+
+	if(!is_user_connected(id) || !(get_user_flags(id) & ADMIN_KICK))
+	{
+		menu_destroy(menu)
+		return PLUGIN_HANDLED
+	}
+
+	new itemName[64], useridText[16], access, callback
+	menu_item_getinfo(menu, item, access, useridText, charsmax(useridText),
+		itemName, charsmax(itemName), callback)
+	menu_destroy(menu)
+
+	new userid = str_to_num(useridText)
+	new target = find_player("k", userid)
+	if(!target)
+	{
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1That player is no longer connected.")
+		return PLUGIN_HANDLED
+	}
+
+	new adminName[MAX_NAME_LENGTH], targetName[MAX_NAME_LENGTH]
+	get_user_name(id, adminName, charsmax(adminName))
+	get_user_name(target, targetName, charsmax(targetName))
+	log_amx("Cmd: ^"%s^" kicked ^"%s^" (userid %d)", adminName, targetName, userid)
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1kicked ^3%s^1.", adminName, targetName)
+	server_cmd("kick #%d ^"Kicked by GameLand admin.^"", userid)
+	server_exec()
 	return PLUGIN_HANDLED
 }
 
