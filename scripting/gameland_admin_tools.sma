@@ -7,7 +7,7 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.1.0"
+#define VERSION "1.1.2"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -71,7 +71,7 @@ public plugin_init()
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "HookChooseTeam_Pre")
 	register_menucmd(register_menuid("Team_Select", 1), 1023, "HookTeamSelectMenu")
 	register_menucmd(register_menuid(JOIN_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleJoinMenu")
-	register_menucmd(register_menuid("GAMELAND_Open_Team_Menu", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6, "HandleOpenTeamMenu")
+	register_menucmd(register_menuid("GAMELAND_Open_Team_Menu", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_0, "HandleOpenTeamMenu")
 
 	g_pAllowSpectators = get_cvar_pointer("allow_spectators")
 	g_pForceCamera = get_cvar_pointer("mp_forcecamera")
@@ -218,8 +218,7 @@ public CmdJoinTeam(id)
 
 public CmdChooseTeam(id)
 {
-	if(g_iJoinMode == 1 && is_user_connected(id)
-	&& (cs_get_user_team(id) == CS_TEAM_T || cs_get_user_team(id) == CS_TEAM_CT))
+	if(g_iJoinMode == 1 && is_user_connected(id))
 	{
 		ShowOpenTeamMenu(id)
 		return PLUGIN_HANDLED
@@ -247,14 +246,28 @@ public ShowOpenTeamMenu(id)
 		return
 	}
 
-	show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6,
-		"\y[GAMELAND]\w Team options^n^n\y1.\w Terrorist^n\y2.\w Counter-Terrorist^n\y6.\w Spectator",
-		-1, "GAMELAND_Open_Team_Menu")
+	if(cs_get_user_team(id) == CS_TEAM_T || cs_get_user_team(id) == CS_TEAM_CT)
+	{
+		show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_0,
+			"\y[GAMELAND]\w Team options^n^n\y1.\w Terrorist^n\y2.\w Counter-Terrorist^n^n\y6.\w Spectator^n^n\y0.\w Cancel",
+			-1, "GAMELAND_Open_Team_Menu")
+	}
+	else
+	{
+		show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_0,
+			"\y[GAMELAND]\w Team options^n^n\y1.\w Terrorist^n\y2.\w Counter-Terrorist^n^n\y0.\w Cancel",
+			-1, "GAMELAND_Open_Team_Menu")
+	}
 }
 
 public HandleOpenTeamMenu(id, key)
 {
 	if(!is_user_connected(id) || g_iJoinMode != 1)
+	{
+		return PLUGIN_HANDLED
+	}
+
+	if(key == 9)
 	{
 		return PLUGIN_HANDLED
 	}
@@ -290,20 +303,20 @@ public ShowRestrictedJoinMenu(id)
 	if(g_iJoinMode == 2)
 	{
 		formatex(menuText, charsmax(menuText),
-			"\y[GAMELAND]\w Spectator access is restricted^n^n\y1.\w Disconnect from server")
-		show_menu(id, MENU_KEY_1, menuText, -1, JOIN_MENU_ID)
+			"\y[GAMELAND]\w Spectator access is restricted^n^n\y1.\w Disconnect from server^n^n\y0.\w Cancel")
+		show_menu(id, MENU_KEY_1 | MENU_KEY_0, menuText, -1, JOIN_MENU_ID)
 	}
 	else
 	{
 		formatex(menuText, charsmax(menuText),
-			"\y[GAMELAND]\w Join options^n^n\y1.\w Move to Spectator^n\y2.\w Disconnect from server")
-		show_menu(id, MENU_KEY_1 | MENU_KEY_2, menuText, -1, JOIN_MENU_ID)
+			"\y[GAMELAND]\w Join options^n^n\y1.\w Move to Spectator^n\y2.\w Disconnect from server^n^n\y0.\w Cancel")
+		show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_0, menuText, -1, JOIN_MENU_ID)
 	}
 }
 
 public HandleJoinMenu(id, key)
 {
-	if(!is_user_connected(id) || g_iJoinMode == 1)
+	if(!is_user_connected(id) || g_iJoinMode == 1 || key == 9)
 	{
 		return PLUGIN_HANDLED
 	}
@@ -359,6 +372,7 @@ stock MoveToFreeSpectator(id)
 
 	g_bInternalTeamChange[id] = true
 	engclient_cmd(id, "jointeam", "6")
+	cs_set_user_team(id, CS_TEAM_SPECTATOR)
 	g_bInternalTeamChange[id] = false
 }
 
