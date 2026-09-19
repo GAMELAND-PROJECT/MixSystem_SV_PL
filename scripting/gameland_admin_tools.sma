@@ -7,7 +7,7 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.0.6"
+#define VERSION "1.0.7"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -23,6 +23,7 @@ new g_pForceChaseCam
 new g_pFadeToBlack
 new g_pJoinMode
 new g_iJoinMode = 1
+new bool:g_bInternalTeamChange[33]
 
 public plugin_init()
 {
@@ -278,11 +279,7 @@ stock ApplyRestrictedJoinKey(id, key, bool:showMenu)
 
 	if(key == 0)
 	{
-		if(is_user_alive(id))
-		{
-			user_silentkill(id)
-		}
-		cs_set_user_team(id, CS_TEAM_SPECTATOR)
+		MoveToFreeSpectator(id)
 		SetCvar(g_pForceCamera, 0)
 		SetCvar(g_pForceChaseCam, 0)
 		SetCvar(g_pFadeToBlack, 0)
@@ -299,6 +296,18 @@ stock ApplyRestrictedJoinKey(id, key, bool:showMenu)
 	return PLUGIN_HANDLED
 }
 
+stock MoveToFreeSpectator(id)
+{
+	if(!is_user_connected(id))
+	{
+		return
+	}
+
+	g_bInternalTeamChange[id] = true
+	engclient_cmd(id, "jointeam", "6")
+	g_bInternalTeamChange[id] = false
+}
+
 stock KickRestrictedClient(id)
 {
 	if(!is_user_connected(id))
@@ -313,6 +322,11 @@ stock KickRestrictedClient(id)
 
 public HookClientCommand(id)
 {
+	if(g_bInternalTeamChange[id])
+	{
+		return FMRES_IGNORED
+	}
+
 	if(!IsJoinLockedPlayer(id))
 	{
 		return FMRES_IGNORED
@@ -343,6 +357,11 @@ public HookClientCommand(id)
 
 public HookTeamSelectMenu(id, key)
 {
+	if(g_bInternalTeamChange[id])
+	{
+		return PLUGIN_CONTINUE
+	}
+
 	if(!IsJoinLockedPlayer(id))
 	{
 		return PLUGIN_CONTINUE
@@ -394,7 +413,7 @@ stock bool:IsJoinLockedPlayer(id)
 {
 	// j1 is the only mode that allows spectators to join.
 	// j0 blocks joining; j2 blocks joining and hides spectator view.
-	if(g_iJoinMode == 1 || !is_user_connected(id))
+	if(g_iJoinMode == 1 || g_bInternalTeamChange[id] || !is_user_connected(id))
 	{
 		return false
 	}
