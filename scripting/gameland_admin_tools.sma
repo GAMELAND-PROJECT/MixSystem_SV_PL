@@ -44,6 +44,8 @@ new Float:g_flLastActivity[33]
 new Float:g_flLastViewAngles[33][3]
 new bool:g_bSpecConfirmOpen[33]
 new g_iBanTargetUserId[33]
+new g_szBannedIps[MAX_BAN_ENTRIES][32]
+new g_iBannedIpCount
 new bool:g_bVoteMapSelected[33][MAX_MAPS]
 new g_iVoteMapPage[33]
 new bool:g_bMapVoteActive
@@ -563,10 +565,14 @@ stock StartSelectedMapVote(admin)
 	menu_setprop(menu, MPROP_EXIT, MEXIT_NEVER)
 	for(new player = 1; player <= MAX_PLAYERS; player++)
 	{
-		if(is_user_connected(player) && !is_user_hltv(player))
+		if(player != admin && is_user_connected(player) && !is_user_hltv(player))
 		{
 			menu_display(player, menu)
 		}
+	}
+	if(is_user_connected(admin) && !is_user_hltv(admin))
+	{
+		menu_display(admin, menu)
 	}
 	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Map vote started. You have ^420 seconds^1 to vote.")
 	set_task(MAP_VOTE_DURATION, "FinishMapVote", TASK_MAP_VOTE)
@@ -902,8 +908,13 @@ stock ExecuteBan(admin, target, minutes)
 
 	new ip[32]
 	get_user_ip(target, ip, charsmax(ip), 1)
-	server_cmd("kick #%d ^"GAMELAND: IP banned by admin.^";wait;addip ^"%s^" ^"%s^";wait;writeip", userid, minutesText, ip)
+	server_cmd("addip ^"%s^" ^"%s^";wait;writeip;kick #%d ^"GAMELAND: IP banned by admin.^"", minutesText, ip, userid)
 	server_exec()
+	if(!IsCachedBanIp(ip) && g_iBannedIpCount < MAX_BAN_ENTRIES)
+	{
+		copy(g_szBannedIps[g_iBannedIpCount], charsmax(g_szBannedIps[]), ip)
+		g_iBannedIpCount++
+	}
 
 	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1IP-banned ^3%s ^1for ^4%s minutes^1.",
 		adminName, targetName, minutesText)
@@ -931,6 +942,13 @@ public ShowUnbanMenu(id)
 
 	new menu = menu_create("\y[GAMELAND]\w Unban list", "UnbanMenuHandler")
 	new value[64], display[96], info[80], count
+	for(new i = 0; i < g_iBannedIpCount && menu_items(menu) < 7; i++)
+	{
+		formatex(display, charsmax(display), "%s \y[IP]", g_szBannedIps[i])
+		formatex(info, charsmax(info), "1|%s", g_szBannedIps[i])
+		menu_additem(menu, display, info)
+		count++
+	}
 	new filePath[192]
 	GetBanFilePath(1, filePath, charsmax(filePath))
 	new file = fopen(filePath, "rt")
@@ -938,13 +956,16 @@ public ShowUnbanMenu(id)
 	{
 		while(count < MAX_BAN_ENTRIES && ReadBanEntry(file, 1, value, charsmax(value)))
 		{
-			if(menu_items(menu) < 7)
+			if(menu_items(menu) < 7 && !IsCachedBanIp(value))
 			{
 				formatex(display, charsmax(display), "%s \y[IP]", value)
 				formatex(info, charsmax(info), "1|%s", value)
 				menu_additem(menu, display, info)
 			}
-			count++
+			if(!IsCachedBanIp(value))
+			{
+				count++
+			}
 		}
 		fclose(file)
 	}
@@ -1008,6 +1029,7 @@ stock UnbanEntry(id, const value[])
 
 	server_cmd("removeip ^"%s^";wait;writeip", value)
 	server_exec()
+	RemoveCachedBanIp(value)
 
 	new adminName[MAX_NAME_LENGTH]
 	GetAdminName(id, adminName, charsmax(adminName))
@@ -1031,6 +1053,7 @@ stock UnbanAllEntries(id)
 	}
 	server_cmd("writeip")
 	server_exec()
+	g_iBannedIpCount = 0
 
 	new adminName[MAX_NAME_LENGTH]
 	GetAdminName(id, adminName, charsmax(adminName))
@@ -1071,6 +1094,34 @@ stock bool:ReadBanEntry(file, type, output[], outputLen)
 		}
 	}
 	return false
+}
+
+stock bool:IsCachedBanIp(const value[])
+{
+	for(new i = 0; i < g_iBannedIpCount; i++)
+	{
+		if(equal(g_szBannedIps[i], value))
+		{
+			return true
+		}
+	}
+	return false
+}
+
+stock RemoveCachedBanIp(const value[])
+{
+	for(new i = 0; i < g_iBannedIpCount; i++)
+	{
+		if(equal(g_szBannedIps[i], value))
+		{
+			for(new j = i; j < g_iBannedIpCount - 1; j++)
+			{
+				copy(g_szBannedIps[j], charsmax(g_szBannedIps[]), g_szBannedIps[j + 1])
+			}
+			g_iBannedIpCount--
+			return
+		}
+	}
 }
 
 public CmdMoveAllToSpec(id, level, cid)
