@@ -336,6 +336,8 @@ new g_eBooleans[Bools]
 new g_cFreezeTime
 new g_iFreezeTime
 new bool:g_bShootingOpening
+// sv_restart emits a synthetic round-end callback. Keep it separate from a
+// real knife result so /r cannot consume the first knife round.
 new bool:g_bKnifeRestarting
 new TeamName:g_iKnifeWinnerTeam
 
@@ -355,6 +357,7 @@ new g_iTimer
 new bool:g_bVoted
 new g_iVote
 new g_iAnswer[TeamAnswers]
+new g_iKnifeAnswer[MAX_PLAYERS + 1]
 #endif
 
 new g_ePlayerStats[MAX_PLAYERS + 1][MAX_PLAYERS + 1][PlayerStats]
@@ -2126,6 +2129,14 @@ public task_end_round(index)
 			static iPlayer, iPlayers[MAX_PLAYERS], iNum
 			get_players(iPlayers, iNum, "ch")
 
+			#if defined FASTCUP_MODE
+			// Reset the vote once, before scheduling menus for the winners.
+			arrayset(g_iKnifeAnswer, 0, sizeof(g_iKnifeAnswer))
+			arrayset(g_iAnswer, 0, sizeof(g_iAnswer))
+			g_bVoted = false
+			g_iKnifeWinnerTeam = iWTeam
+			#endif
+
 			for(new i; i < iNum; i++)
 			{
 				iPlayer = iPlayers[i]
@@ -2133,10 +2144,9 @@ public task_end_round(index)
 				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "KNIFE_ROUND_WON_BY_X_TEAM", szTeamWon)
 				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "KNIFE_ROUND_MATCH_START_IN", g_ePluginSettings[iKnifeStartDelay])
 				
-				#if defined FASTCUP_MODE
-				g_iKnifeWinnerTeam = iWTeam
-				if(get_member(iPlayer, m_iTeam) == iWTeam)
-				{
+			#if defined FASTCUP_MODE
+			if(get_member(iPlayer, m_iTeam) == iWTeam)
+			{
 					g_iPlayers += 1
 					set_task(0.2, "task_ask_player", iPlayer + TASK_ASK)
 				}
@@ -2344,6 +2354,11 @@ public task_ask_player(id)
 {
 	id -= TASK_ASK
 
+	if(!IsPlayer(id) || g_bVoted || g_eBooleans[bIsMixOn])
+	{
+		return
+	}
+
 	new szTemp[64]
 
 	formatex(szTemp, charsmax(szTemp), "\r%s \w%L", g_ePluginSettings[szPrefix], LANG_SERVER, "MENU_ASK_PLAYER")
@@ -2365,21 +2380,48 @@ public handle_ask_menu(id, menu, item)
 		return _MenuExit(menu)
 	}
 
+	new iNewAnswer = item + 1
+	new iOldAnswer = g_iKnifeAnswer[id]
+
+	// Allow a player to change the vote before the timer expires.
+	if(iOldAnswer != iNewAnswer)
+	{
+		if(iOldAnswer == 1)
+		{
+			g_iAnswer[SWITCH] = max(0, g_iAnswer[SWITCH] - 1)
+		}
+		else if(iOldAnswer == 2)
+		{
+			g_iAnswer[STAY] = max(0, g_iAnswer[STAY] - 1)
+		}
+
+		g_iKnifeAnswer[id] = iNewAnswer
+		g_iAnswer[item] += 1
+	}
+
 	switch(item)
 	{
 		case 0:
 		{
-			g_iAnswer[SWITCH] += 1
+			client_print_color(id, id, "^4%s ^1Team vote: ^3TR", g_ePluginSettings[szPrefix])
 		}
 		case 1:
 		{
-			g_iAnswer[STAY] += 1
+			client_print_color(id, id, "^4%s ^1Team vote: ^3CT", g_ePluginSettings[szPrefix])
 		}
 	}
 
 	CheckVotes(g_iAnswer)
 
-	return _MenuExit(menu)
+	_MenuExit(menu)
+
+	// Re-open the same menu so the player can visibly revise the vote.
+	if(!g_bVoted && !g_eBooleans[bIsMixOn])
+	{
+		set_task(0.05, "task_ask_player", id + TASK_ASK)
+	}
+
+	return PLUGIN_HANDLED
 }
 
 public CheckVotes(any:iAnswer[])
@@ -3308,12 +3350,18 @@ public clcmd_restart(id)
 
 	if(g_eBooleans[bIsKnife])
 	{
-		g_iKnifes = 0
+		// Keep the current knife phase alive across an administrative
+		// restart; zero would suppress the winner menu on the next death.
+		g_iKnifes = 1
+		g_bKnifeRestarting = true
+		remove_task(TASK_CHANGE_BOOL)
+		set_task(1.5, "ClearKnifeRestartGuard")
 		
 		#if defined FASTCUP_MODE
 		g_bVoted = false
 		remove_task(TASK_CHECKVOTES)
 		arrayset(g_iAnswer, 0, sizeof(g_iAnswer))
+		arrayset(g_iKnifeAnswer, 0, sizeof(g_iKnifeAnswer))
 		#endif
 	}
 
@@ -3777,6 +3825,7 @@ ResetScore()
 	#if defined FASTCUP_MODE
 	g_bVoted = false
 	arrayset(g_iAnswer, 0, sizeof(g_iAnswer))
+	arrayset(g_iKnifeAnswer, 0, sizeof(g_iKnifeAnswer))
 	#endif
 	server_cmd("sv_restart 1")
 }
