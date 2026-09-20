@@ -336,6 +336,8 @@ new g_eBooleans[Bools]
 new g_cFreezeTime
 new g_iFreezeTime
 new bool:g_bShootingOpening
+new bool:g_bKnifeRestarting
+new TeamName:g_iKnifeWinnerTeam
 
 new g_szHltvDemoName[64]
 
@@ -1958,6 +1960,7 @@ public clcmd_knife(id)
 	ResetScore()
 
 	g_eBooleans[bIsKnife] = true
+	g_bKnifeRestarting = false
 
 	g_iKnifes += 1
 
@@ -1986,6 +1989,11 @@ public RG_EndRound(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
 		{
 			set_task(0.5, "task_reapply_warm")
 		}
+		return
+	}
+
+	if(g_eBooleans[bIsKnife] && g_bKnifeRestarting)
+	{
 		return
 	}
 
@@ -2126,6 +2134,7 @@ public task_end_round(index)
 				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "KNIFE_ROUND_MATCH_START_IN", g_ePluginSettings[iKnifeStartDelay])
 				
 				#if defined FASTCUP_MODE
+				g_iKnifeWinnerTeam = iWTeam
 				if(get_member(iPlayer, m_iTeam) == iWTeam)
 				{
 					g_iPlayers += 1
@@ -2340,10 +2349,10 @@ public task_ask_player(id)
 	formatex(szTemp, charsmax(szTemp), "\r%s \w%L", g_ePluginSettings[szPrefix], LANG_SERVER, "MENU_ASK_PLAYER")
 	new menu = menu_create(szTemp, "handle_ask_menu")
 
-	formatex(szTemp, charsmax(szTemp), "\y%L", LANG_SERVER, "ASK_MENU_SWITCH")
+	formatex(szTemp, charsmax(szTemp), "\y1. TR")
 	menu_additem(menu, szTemp)
 
-	formatex(szTemp, charsmax(szTemp), "\y%L", LANG_SERVER, "ASK_MENU_STAY")
+	formatex(szTemp, charsmax(szTemp), "\y2. CT")
 	menu_additem(menu, szTemp)
 
 	_MenuDisplay(id, menu)
@@ -2375,22 +2384,7 @@ public handle_ask_menu(id, menu, item)
 
 public CheckVotes(any:iAnswer[])
 {
-	if(iAnswer[SWITCH] > iAnswer[STAY])
-	{
-		g_iVote = 1
-	}
-	else if(iAnswer[SWITCH] < iAnswer[STAY])
-	{
-		g_iVote = 0
-	}
-	else if(iAnswer[SWITCH] == iAnswer[STAY])
-	{
-		g_iVote = 0
-	}
-	else 
-	{
-		g_iVote = 0
-	}
+	g_iVote = (iAnswer[SWITCH] > iAnswer[STAY]) ? (_:TEAM_TERRORIST) : (_:TEAM_CT)
 }
 
 public task_do_change(iTaskID)
@@ -2399,21 +2393,10 @@ public task_do_change(iTaskID)
 
 	new szTemp[128]
 
-	switch(g_iVote)
-	{
-		case 0:
-		{
-			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "STAY")
-		}
-		case 1:
-		{
-			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "SWITCH")
-		}
-	}
+	formatex(szTemp, charsmax(szTemp), g_iVote == (_:TEAM_TERRORIST) ? "TR" : "CT")
+	client_print_color(0, 0, "^4%s Team selection: ^3%s", g_ePluginSettings[szPrefix], szTemp)
 
-	client_print_color(0, 0, "^4%s %L %s", g_ePluginSettings[szPrefix], LANG_SERVER, "TEAM_VOTED", szTemp)
-
-	if(g_iVote) 
+	if(g_iVote != (_:g_iKnifeWinnerTeam))
 	{
 		rg_swap_all_players()
 	}
@@ -2447,7 +2430,17 @@ public ev_NewRound()
 
 public ev_GameRestart()
 {
+	if(g_eBooleans[bIsKnife])
+	{
+		g_bKnifeRestarting = true
+		set_task(1.5, "ClearKnifeRestartGuard")
+	}
 	set_task(1.0, "task_change_bool", TASK_CHANGE_BOOL)
+}
+
+public ClearKnifeRestartGuard()
+{
+	g_bKnifeRestarting = false
 }
 
 public task_change_bool(taskid)

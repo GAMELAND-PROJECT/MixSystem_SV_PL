@@ -7,7 +7,7 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.4.1"
+#define VERSION "1.4.2"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -53,6 +53,9 @@ new g_iVoteMapCount
 new g_iVoteMapIndex[MAX_VOTE_MAPS]
 new g_iVoteCount[MAX_VOTE_MAPS]
 new g_iPlayerVote[MAX_PLAYERS + 1]
+new g_iVoteCreator
+new g_iVoteSecondsLeft
+new g_iVoteMenu
 
 public plugin_init()
 {
@@ -80,9 +83,9 @@ public plugin_init()
 	register_clcmd("say /st", "CmdSwapTeams", ADMIN_CVAR)
 	register_clcmd("say_team /st", "CmdSwapTeams", ADMIN_CVAR)
 	register_clcmd("st", "CmdSwapTeams", ADMIN_CVAR)
-	register_clcmd("say /rr", "CmdRestartRound", ADMIN_CVAR)
-	register_clcmd("say_team /rr", "CmdRestartRound", ADMIN_CVAR)
-	register_clcmd("rr", "CmdRestartRound", ADMIN_CVAR)
+	register_clcmd("say /r", "CmdRestartRound", ADMIN_CVAR)
+	register_clcmd("say_team /r", "CmdRestartRound", ADMIN_CVAR)
+	register_clcmd("r", "CmdRestartRound", ADMIN_CVAR)
 	register_clcmd("say /restart", "CmdRestartRound", ADMIN_CVAR)
 	register_clcmd("say_team /restart", "CmdRestartRound", ADMIN_CVAR)
 	register_clcmd("restart", "CmdRestartRound", ADMIN_CVAR)
@@ -549,12 +552,15 @@ stock StartSelectedMapVote(admin)
 
 	g_bMapVoteActive = true
 	g_iVoteMapCount = count
+	g_iVoteCreator = admin
+	g_iVoteSecondsLeft = floatround(MAP_VOTE_DURATION)
 	for(new id = 1; id <= MAX_PLAYERS; id++)
 	{
 		g_iPlayerVote[id] = -1
 	}
 
 	new menu = menu_create("\y[GAMELAND]\w Choose the next map", "MapVoteMenuHandler")
+	g_iVoteMenu = menu
 	new map[32], info[8]
 	for(new i = 0; i < count; i++)
 	{
@@ -574,13 +580,24 @@ stock StartSelectedMapVote(admin)
 	{
 		menu_display(admin, menu)
 	}
+	set_task(0.2, "ReopenVoteForCreator", TASK_MAP_VOTE + 3)
 	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Map vote started. You have ^420 seconds^1 to vote.")
+	remove_task(TASK_MAP_VOTE + 2)
+	set_task(1.0, "UpdateMapVoteStatus", TASK_MAP_VOTE + 2, _, _, "b")
 	set_task(MAP_VOTE_DURATION, "FinishMapVote", TASK_MAP_VOTE)
+}
+
+public ReopenVoteForCreator()
+{
+	if(g_bMapVoteActive && g_iVoteMenu > 0 && is_user_connected(g_iVoteCreator))
+	{
+		menu_display(g_iVoteCreator, g_iVoteMenu)
+	}
 }
 
 public MapVoteMenuHandler(id, menu, item)
 {
-	if(!g_bMapVoteActive || item == MENU_EXIT || !is_user_connected(id))
+	if(!g_bMapVoteActive || item == MENU_EXIT || item < 0 || item >= g_iVoteMapCount || !is_user_connected(id))
 	{
 		return PLUGIN_HANDLED
 	}
@@ -594,7 +611,43 @@ public MapVoteMenuHandler(id, menu, item)
 	g_iVoteCount[item]++
 	client_print_color(id, print_team_default, "^4[GAMELAND] ^1Your vote was recorded.")
 	menu_display(id, menu)
+	UpdateMapVoteHud()
 	return PLUGIN_HANDLED
+}
+
+public UpdateMapVoteStatus()
+{
+	if(!g_bMapVoteActive)
+	{
+		remove_task(TASK_MAP_VOTE + 2)
+		return
+	}
+
+	if(g_iVoteSecondsLeft > 0)
+	{
+		g_iVoteSecondsLeft--
+	}
+	UpdateMapVoteHud()
+}
+
+stock UpdateMapVoteHud()
+{
+	if(!g_bMapVoteActive)
+	{
+		return
+	}
+
+	new message[256], map[32], line[48]
+	formatex(message, charsmax(message), "MAP VOTE  [%02d sec]^n", g_iVoteSecondsLeft)
+	for(new i = 0; i < g_iVoteMapCount; i++)
+	{
+		ArrayGetString(g_aMaps, g_iVoteMapIndex[i], map, charsmax(map))
+		formatex(line, charsmax(line), "%s: %d vote%s^n", map, g_iVoteCount[i], g_iVoteCount[i] == 1 ? "" : "s")
+		add(message, charsmax(message), line)
+	}
+
+	set_hudmessage(255, 220, 80, 0.72, 0.18, 0, 0.0, 1.1, 0.0, 0.0, -1)
+	show_hudmessage(0, message)
 }
 
 public FinishMapVote()
@@ -616,6 +669,14 @@ public FinishMapVote()
 	new map[32]
 	ArrayGetString(g_aMaps, g_iVoteMapIndex[winner], map, charsmax(map))
 	g_bMapVoteActive = false
+	remove_task(TASK_MAP_VOTE + 2)
+	remove_task(TASK_MAP_VOTE + 3)
+	if(g_iVoteMenu > 0)
+	{
+		menu_destroy(g_iVoteMenu)
+		g_iVoteMenu = 0
+	}
+	g_iVoteCreator = 0
 	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Vote finished: ^4%s^1 won with ^3%d^1 votes.", map, g_iVoteCount[winner])
 	set_task(2.0, "ChangeToVotedMap", TASK_MAP_VOTE + 1, map, sizeof map)
 }
