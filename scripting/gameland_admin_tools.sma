@@ -7,7 +7,7 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.3.6"
+#define VERSION "1.4.1"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
@@ -16,10 +16,17 @@
 #define TASK_INITIAL_JOIN_MENU 19200
 #define TASK_SPEC_GUARD 19300
 #define TASK_SPEC_CONFIRM 19400
-#define SPEC_GRACE_SECONDS 600.0
+#define SPEC_IDLE_SECONDS 120.0
+#define SPEC_GRACE_SECONDS 300.0
 #define SPEC_CONFIRM_SECONDS 20.0
 #define JOIN_MENU_ID "GAMELAND_Join_Menu"
 #define SPEC_CONFIRM_MENU_ID "GAMELAND_Spec_Confirm"
+#define BAN_PLAYERS_MENU_ID "GAMELAND_Ban_Players"
+#define BAN_OPTIONS_MENU_ID "GAMELAND_Ban_Options"
+#define MAX_BAN_ENTRIES 128
+#define TASK_MAP_VOTE 19500
+#define MAP_VOTE_DURATION 20.0
+#define MAX_VOTE_MAPS 7
 
 new Array:g_aMaps
 new g_pAlltalk
@@ -33,7 +40,17 @@ new g_iJoinMode = 1
 new g_iMapCategory[33]
 new bool:g_bInternalTeamChange[33]
 new Float:g_flSpecEnteredAt[33]
+new Float:g_flLastActivity[33]
+new Float:g_flLastViewAngles[33][3]
 new bool:g_bSpecConfirmOpen[33]
+new g_iBanTargetUserId[33]
+new bool:g_bVoteMapSelected[33][MAX_MAPS]
+new g_iVoteMapPage[33]
+new bool:g_bMapVoteActive
+new g_iVoteMapCount
+new g_iVoteMapIndex[MAX_VOTE_MAPS]
+new g_iVoteCount[MAX_VOTE_MAPS]
+new g_iPlayerVote[MAX_PLAYERS + 1]
 
 public plugin_init()
 {
@@ -45,6 +62,15 @@ public plugin_init()
 	register_clcmd("say /k", "CmdKickMenu", ADMIN_KICK)
 	register_clcmd("say_team /k", "CmdKickMenu", ADMIN_KICK)
 	register_clcmd("k", "CmdKickMenu", ADMIN_KICK)
+	register_clcmd("say /b", "CmdBanMenu", ADMIN_BAN)
+	register_clcmd("say_team /b", "CmdBanMenu", ADMIN_BAN)
+	register_clcmd("b", "CmdBanMenu", ADMIN_BAN)
+	register_clcmd("say /ub", "CmdUnban", ADMIN_BAN)
+	register_clcmd("say_team /ub", "CmdUnban", ADMIN_BAN)
+	register_clcmd("ub", "CmdUnban", ADMIN_BAN)
+	register_clcmd("say /vm", "CmdVoteMapMenu", ADMIN_MAP)
+	register_clcmd("say_team /vm", "CmdVoteMapMenu", ADMIN_MAP)
+	register_clcmd("vm", "CmdVoteMapMenu", ADMIN_MAP)
 
 	register_clcmd("say /spec", "CmdMoveAllToSpec", ADMIN_CVAR)
 	register_clcmd("say_team /spec", "CmdMoveAllToSpec", ADMIN_CVAR)
@@ -52,6 +78,12 @@ public plugin_init()
 	register_clcmd("say /st", "CmdSwapTeams", ADMIN_CVAR)
 	register_clcmd("say_team /st", "CmdSwapTeams", ADMIN_CVAR)
 	register_clcmd("st", "CmdSwapTeams", ADMIN_CVAR)
+	register_clcmd("say /rr", "CmdRestartRound", ADMIN_CVAR)
+	register_clcmd("say_team /rr", "CmdRestartRound", ADMIN_CVAR)
+	register_clcmd("rr", "CmdRestartRound", ADMIN_CVAR)
+	register_clcmd("say /restart", "CmdRestartRound", ADMIN_CVAR)
+	register_clcmd("say_team /restart", "CmdRestartRound", ADMIN_CVAR)
+	register_clcmd("restart", "CmdRestartRound", ADMIN_CVAR)
 	register_clcmd("say /kspec", "CmdKickSpecs", ADMIN_KICK)
 	register_clcmd("say_team /kspec", "CmdKickSpecs", ADMIN_KICK)
 	register_clcmd("kspec", "CmdKickSpecs", ADMIN_KICK)
@@ -91,12 +123,14 @@ public plugin_init()
 	register_clcmd("jointeam", "CmdJoinTeam")
 	register_clcmd("chooseteam", "CmdChooseTeam")
 	register_forward(FM_ClientCommand, "HookClientCommand")
+	register_forward(FM_CmdStart, "HookCmdStart", 1)
 	register_message(get_user_msgid("ShowMenu"), "MessageShowMenu")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "HookChooseTeam_Pre")
 	register_menucmd(register_menuid("Team_Select", 1), 1023, "HookTeamSelectMenu")
 	register_menucmd(register_menuid(JOIN_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_0, "HandleJoinMenu")
 	register_menucmd(register_menuid("GAMELAND_Open_Team_Menu", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_0, "HandleOpenTeamMenu")
 	register_menucmd(register_menuid("GAMELAND_Map_Categories", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_0, "HandleMapCategoryMenu")
+	register_menucmd(register_menuid("GAMELAND_VoteMap_Select", 1), 1023, "HandleVoteMapSelect")
 	register_menucmd(register_menuid(SPEC_CONFIRM_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleSpecConfirmMenu")
 
 	g_pAllowSpectators = get_cvar_pointer("allow_spectators")
@@ -117,6 +151,9 @@ public plugin_init()
 
 public client_putinserver(id)
 {
+	g_flLastActivity[id] = get_gametime()
+	g_flSpecEnteredAt[id] = 0.0
+	g_bSpecConfirmOpen[id] = false
 	set_task(0.4, "ShowInitialJoinMenu", TASK_INITIAL_JOIN_MENU + id)
 }
 
@@ -152,7 +189,16 @@ public client_disconnected(id)
 	g_iMapCategory[id] = 0
 	g_bInternalTeamChange[id] = false
 	g_flSpecEnteredAt[id] = 0.0
+	g_flLastActivity[id] = get_gametime()
+	g_flLastViewAngles[id][0] = 0.0
+	g_flLastViewAngles[id][1] = 0.0
+	g_flLastViewAngles[id][2] = 0.0
 	g_bSpecConfirmOpen[id] = false
+	g_iBanTargetUserId[id] = 0
+	g_iPlayerVote[id] = -1
+	arrayset(g_bVoteMapSelected[id], false, MAX_MAPS)
+	g_iVoteMapPage[id] = 0
+	g_iPlayerVote[id] = -1
 }
 
 public ShowInitialJoinMenu(taskId)
@@ -192,6 +238,15 @@ public TaskSpecGuard()
 		}
 
 		new CsTeams:team = cs_get_user_team(id)
+		if((team == CS_TEAM_T || team == CS_TEAM_CT)
+		&& g_flLastActivity[id] > 0.0
+		&& now - g_flLastActivity[id] >= SPEC_IDLE_SECONDS)
+		{
+			client_print_color(id, print_team_default, "^4[GAMELAND] ^1You were moved to Spectator after 2 minutes of inactivity.")
+			MoveToFreeSpectator(id)
+			continue
+		}
+
 		if(team != CS_TEAM_SPECTATOR)
 		{
 			ResetSpecGuard(id)
@@ -223,6 +278,37 @@ stock ResetSpecGuard(id)
 	g_bSpecConfirmOpen[id] = false
 }
 
+public HookCmdStart(id, ucHandle, seed)
+{
+	if(!is_user_connected(id) || is_user_hltv(id) || IsAdminExempt(id))
+	{
+		return FMRES_IGNORED
+	}
+
+	new CsTeams:team = cs_get_user_team(id)
+	if(team != CS_TEAM_T && team != CS_TEAM_CT)
+	{
+		return FMRES_IGNORED
+	}
+
+	new buttons = get_uc(ucHandle, UC_Buttons)
+	new Float:angles[3]
+	get_uc(ucHandle, UC_ViewAngles, angles)
+
+	if(buttons != 0
+	|| floatabs(angles[0] - g_flLastViewAngles[id][0]) > 0.25
+	|| floatabs(angles[1] - g_flLastViewAngles[id][1]) > 0.25
+	|| floatabs(angles[2] - g_flLastViewAngles[id][2]) > 0.25)
+	{
+		g_flLastActivity[id] = get_gametime()
+	}
+
+	g_flLastViewAngles[id][0] = angles[0]
+	g_flLastViewAngles[id][1] = angles[1]
+	g_flLastViewAngles[id][2] = angles[2]
+	return FMRES_IGNORED
+}
+
 stock bool:IsAdminExempt(id)
 {
 	return (get_user_flags(id) & (ADMIN_KICK | ADMIN_CVAR | ADMIN_MAP | ADMIN_RCON)) != 0
@@ -238,8 +324,8 @@ stock ShowSpecConfirmMenu(id)
 	}
 
 	g_bSpecConfirmOpen[id] = true
-	show_menu(id, MENU_KEY_1 | MENU_KEY_2,
-		"\y[GAMELAND]\w Are you still watching?^n^n\y1.\w Yes, extend spectator time^n\y2.\w Disconnect from server^n^n\rYou have 20 seconds to answer.",
+	show_menu(id, MENU_KEY_1,
+		"\y[GAMELAND]\w Are you still present?^n^n\y1.\w Yes, keep watching^n^n\rYou have 20 seconds to answer.",
 		floatround(SPEC_CONFIRM_SECONDS), SPEC_CONFIRM_MENU_ID)
 
 	remove_task(TASK_SPEC_CONFIRM + id)
@@ -266,11 +352,7 @@ public HandleSpecConfirmMenu(id, key)
 	if(key == 0)
 	{
 		g_flSpecEnteredAt[id] = get_gametime()
-		client_print_color(id, print_team_default, "^4[GAMELAND] ^1Spectator time extended for another 10 minutes.")
-	}
-	else
-	{
-		KickSpectatorTimeout(id)
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1Presence confirmed. You may continue watching.")
 	}
 
 	return PLUGIN_HANDLED
@@ -332,6 +414,246 @@ public CmdMapMenu(id, level, cid)
 
 	ShowMapBrowser(id)
 	return PLUGIN_HANDLED
+}
+
+public CmdVoteMapMenu(id, level, cid)
+{
+	if(!cmd_access(id, level, cid, 1))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	if(g_bMapVoteActive)
+	{
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1A map vote is already active.")
+		return PLUGIN_HANDLED
+	}
+
+	if(GetDeMapCount() < 2)
+	{
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1At least two de_ maps are required.")
+		return PLUGIN_HANDLED
+	}
+
+	g_iVoteMapPage[id] = 0
+	arrayset(g_bVoteMapSelected[id], false, MAX_MAPS)
+	ShowVoteMapSelectMenu(id)
+	return PLUGIN_HANDLED
+}
+
+stock ShowVoteMapSelectMenu(id)
+{
+	if(!is_user_connected(id) || !(get_user_flags(id) & ADMIN_MAP))
+	{
+		return
+	}
+
+	new page = g_iVoteMapPage[id]
+	new start = page * MAX_VOTE_MAPS
+	new total = GetDeMapCount()
+	if(start >= total)
+	{
+		g_iVoteMapPage[id] = 0
+		page = 0
+		start = 0
+	}
+
+	new text[512], line[96], map[32], actualIndex
+	formatex(text, charsmax(text), "\y[GAMELAND]\w Vote maps \r(Page %d)^n^n", page + 1)
+
+	for(new slot = 0; slot < MAX_VOTE_MAPS; slot++)
+	{
+		actualIndex = GetDeMapIndexByPosition(start + slot)
+		if(actualIndex < 0)
+		{
+			break
+		}
+
+		ArrayGetString(g_aMaps, actualIndex, map, charsmax(map))
+		formatex(line, charsmax(line), "\y%d.\w %s%s^n", slot + 1,
+			g_bVoteMapSelected[id][actualIndex] ? "\r*\w " : "", map)
+		add(text, charsmax(text), line)
+	}
+
+	add(text, charsmax(text), "^n\y8.\w Start vote")
+	if(start + MAX_VOTE_MAPS < total)
+	{
+		add(text, charsmax(text), "^n\y9.\w Next page")
+	}
+	add(text, charsmax(text), "^n\y0.\w Cancel")
+
+	show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_4 | MENU_KEY_5 | MENU_KEY_6 | MENU_KEY_7 | MENU_KEY_8 | MENU_KEY_9 | MENU_KEY_0, text, -1, "GAMELAND_VoteMap_Select")
+}
+
+public HandleVoteMapSelect(id, key)
+{
+	if(!is_user_connected(id) || !(get_user_flags(id) & ADMIN_MAP) || g_bMapVoteActive)
+	{
+		return PLUGIN_HANDLED
+	}
+
+	new total = GetDeMapCount()
+	new page = g_iVoteMapPage[id]
+	new start = page * MAX_VOTE_MAPS
+
+	if(key >= 0 && key < MAX_VOTE_MAPS)
+	{
+		new actualIndex = GetDeMapIndexByPosition(start + key)
+		if(actualIndex >= 0)
+		{
+			g_bVoteMapSelected[id][actualIndex] = !g_bVoteMapSelected[id][actualIndex]
+		}
+		ShowVoteMapSelectMenu(id)
+		return PLUGIN_HANDLED
+	}
+
+	if(key == 7)
+	{
+		StartSelectedMapVote(id)
+		return PLUGIN_HANDLED
+	}
+
+	if(key == 8 && start + MAX_VOTE_MAPS < total)
+	{
+		g_iVoteMapPage[id]++
+		ShowVoteMapSelectMenu(id)
+		return PLUGIN_HANDLED
+	}
+
+	return PLUGIN_HANDLED
+}
+
+stock StartSelectedMapVote(admin)
+{
+	new count
+	for(new i = 0; i < ArraySize(g_aMaps) && count < MAX_VOTE_MAPS; i++)
+	{
+		new candidate[32]
+		ArrayGetString(g_aMaps, i, candidate, charsmax(candidate))
+		if(MapMatchesCategory(candidate, 1) && g_bVoteMapSelected[admin][i])
+		{
+			g_iVoteMapIndex[count] = i
+			g_iVoteCount[count] = 0
+			count++
+		}
+	}
+
+	if(count < 2)
+	{
+		client_print_color(admin, print_team_default, "^4[GAMELAND] ^1Select at least two maps before starting the vote.")
+		ShowVoteMapSelectMenu(admin)
+		return
+	}
+
+	g_bMapVoteActive = true
+	g_iVoteMapCount = count
+	for(new id = 1; id <= MAX_PLAYERS; id++)
+	{
+		g_iPlayerVote[id] = -1
+	}
+
+	new menu = menu_create("\y[GAMELAND]\w Choose the next map", "MapVoteMenuHandler")
+	new map[32], info[8]
+	for(new i = 0; i < count; i++)
+	{
+		ArrayGetString(g_aMaps, g_iVoteMapIndex[i], map, charsmax(map))
+		num_to_str(i, info, charsmax(info))
+		menu_additem(menu, map, info)
+	}
+	menu_setprop(menu, MPROP_EXIT, MEXIT_NEVER)
+	for(new player = 1; player <= MAX_PLAYERS; player++)
+	{
+		if(is_user_connected(player) && !is_user_hltv(player))
+		{
+			menu_display(player, menu)
+		}
+	}
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Map vote started. You have ^420 seconds^1 to vote.")
+	set_task(MAP_VOTE_DURATION, "FinishMapVote", TASK_MAP_VOTE)
+}
+
+public MapVoteMenuHandler(id, menu, item)
+{
+	if(!g_bMapVoteActive || item == MENU_EXIT || !is_user_connected(id))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	if(g_iPlayerVote[id] >= 0 && g_iPlayerVote[id] < g_iVoteMapCount)
+	{
+		g_iVoteCount[g_iPlayerVote[id]]--
+	}
+
+	g_iPlayerVote[id] = item
+	g_iVoteCount[item]++
+	client_print_color(id, print_team_default, "^4[GAMELAND] ^1Your vote was recorded.")
+	menu_display(id, menu)
+	return PLUGIN_HANDLED
+}
+
+public FinishMapVote()
+{
+	if(!g_bMapVoteActive)
+	{
+		return
+	}
+
+	new winner = 0
+	for(new i = 1; i < g_iVoteMapCount; i++)
+	{
+		if(g_iVoteCount[i] > g_iVoteCount[winner])
+		{
+			winner = i
+		}
+	}
+
+	new map[32]
+	ArrayGetString(g_aMaps, g_iVoteMapIndex[winner], map, charsmax(map))
+	g_bMapVoteActive = false
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Vote finished: ^4%s^1 won with ^3%d^1 votes.", map, g_iVoteCount[winner])
+	set_task(2.0, "ChangeToVotedMap", TASK_MAP_VOTE + 1, map, sizeof map)
+}
+
+public ChangeToVotedMap(map[])
+{
+	if(is_map_valid(map))
+	{
+		engine_changelevel(map)
+	}
+}
+
+stock GetDeMapCount()
+{
+	new count
+	for(new i = 0; i < ArraySize(g_aMaps); i++)
+	{
+		new map[32]
+		ArrayGetString(g_aMaps, i, map, charsmax(map))
+		if(MapMatchesCategory(map, 1))
+		{
+			count++
+		}
+	}
+	return count
+}
+
+stock GetDeMapIndexByPosition(position)
+{
+	new current
+	for(new i = 0; i < ArraySize(g_aMaps); i++)
+	{
+		new map[32]
+		ArrayGetString(g_aMaps, i, map, charsmax(map))
+		if(MapMatchesCategory(map, 1))
+		{
+			if(current == position)
+			{
+				return i
+			}
+			current++
+		}
+	}
+	return -1
 }
 
 public ShowMapBrowser(id)
@@ -451,6 +773,306 @@ public CmdKickMenu(id, level, cid)
 	return PLUGIN_HANDLED
 }
 
+public CmdBanMenu(id, level, cid)
+{
+	if(!cmd_access(id, level, cid, 1))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	new menu = menu_create("\y[GAMELAND]\w Ban player", "BanPlayerMenuHandler")
+	new players[32], count, target
+	get_players(players, count, "ch")
+
+	for(new i = 0; i < count; i++)
+	{
+		target = players[i]
+		if(is_user_hltv(target) || (get_user_flags(target) & ADMIN_IMMUNITY))
+		{
+			continue
+		}
+
+		new name[MAX_NAME_LENGTH], userid[16], itemText[64]
+		get_user_name(target, name, charsmax(name))
+		num_to_str(get_user_userid(target), userid, charsmax(userid))
+		formatex(itemText, charsmax(itemText), "%s \y[#%d]", name, get_user_userid(target))
+		menu_additem(menu, itemText, userid)
+	}
+
+	if(menu_items(menu) <= 0)
+	{
+		menu_destroy(menu)
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1No eligible players are available to ban.")
+		return PLUGIN_HANDLED
+	}
+
+	menu_setprop(menu, MPROP_EXIT, MEXIT_ALL)
+	menu_display(id, menu)
+	return PLUGIN_HANDLED
+}
+
+public BanPlayerMenuHandler(id, menu, item)
+{
+	if(item == MENU_EXIT)
+	{
+		menu_destroy(menu)
+		return PLUGIN_HANDLED
+	}
+
+	if(!is_user_connected(id) || !(get_user_flags(id) & ADMIN_BAN))
+	{
+		menu_destroy(menu)
+		return PLUGIN_HANDLED
+	}
+
+	new itemName[64], useridText[16], access, callback
+	menu_item_getinfo(menu, item, access, useridText, charsmax(useridText),
+		itemName, charsmax(itemName), callback)
+	menu_destroy(menu)
+
+	new target = find_player("k", str_to_num(useridText))
+	if(!target || is_user_hltv(target) || (get_user_flags(target) & ADMIN_IMMUNITY))
+	{
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1That player cannot be banned.")
+		return PLUGIN_HANDLED
+	}
+
+	g_iBanTargetUserId[id] = get_user_userid(target)
+	ShowBanOptions(id, target)
+	return PLUGIN_HANDLED
+}
+
+stock ShowBanOptions(id, target)
+{
+	new name[MAX_NAME_LENGTH]
+	get_user_name(target, name, charsmax(name))
+
+	new menu = menu_create(fmt("\y[GAMELAND]\w Ban \r%s", name), "BanOptionsMenuHandler")
+	menu_additem(menu, "5 minutes \y[IP]", "5")
+	menu_additem(menu, "15 minutes \y[IP]", "15")
+	menu_additem(menu, "30 minutes \y[IP]", "30")
+	menu_additem(menu, "2 hours \y[IP]", "120")
+	menu_additem(menu, "1 day \y[IP]", "1440")
+	menu_additem(menu, "7 days \y[IP]", "10080")
+	menu_additem(menu, "Permanent \y[IP]", "0")
+	menu_setprop(menu, MPROP_EXIT, MEXIT_ALL)
+	menu_display(id, menu)
+}
+
+public BanOptionsMenuHandler(id, menu, item)
+{
+	if(item == MENU_EXIT)
+	{
+		menu_destroy(menu)
+		return PLUGIN_HANDLED
+	}
+
+	if(!is_user_connected(id) || !(get_user_flags(id) & ADMIN_BAN))
+	{
+		menu_destroy(menu)
+		return PLUGIN_HANDLED
+	}
+
+	new itemName[64], option[32], access, callback
+	menu_item_getinfo(menu, item, access, option, charsmax(option),
+		itemName, charsmax(itemName), callback)
+	menu_destroy(menu)
+
+	new target = find_player("k", g_iBanTargetUserId[id])
+	if(!target || is_user_hltv(target) || (get_user_flags(target) & ADMIN_IMMUNITY))
+	{
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1That player is no longer eligible for banning.")
+		return PLUGIN_HANDLED
+	}
+
+	new minutes = str_to_num(option)
+	ExecuteBan(id, target, minutes)
+	return PLUGIN_HANDLED
+}
+
+stock ExecuteBan(admin, target, minutes)
+{
+	new userid = get_user_userid(target)
+	new targetName[MAX_NAME_LENGTH], adminName[MAX_NAME_LENGTH]
+	get_user_name(target, targetName, charsmax(targetName))
+	GetAdminName(admin, adminName, charsmax(adminName))
+
+	new minutesText[16]
+	num_to_str(minutes, minutesText, charsmax(minutesText))
+
+	new ip[32]
+	get_user_ip(target, ip, charsmax(ip), 1)
+	server_cmd("kick #%d ^"GAMELAND: IP banned by admin.^";wait;addip ^"%s^" ^"%s^";wait;writeip", userid, minutesText, ip)
+	server_exec()
+
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1IP-banned ^3%s ^1for ^4%s minutes^1.",
+		adminName, targetName, minutesText)
+	log_amx("Cmd: ^"%s^" IP-banned ^"%s^" (%s minutes)", adminName, targetName, minutesText)
+	g_iBanTargetUserId[admin] = 0
+}
+
+public CmdUnban(id, level, cid)
+{
+	if(!cmd_access(id, level, cid, 1))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	ShowUnbanMenu(id)
+	return PLUGIN_HANDLED
+}
+
+public ShowUnbanMenu(id)
+{
+	if(!is_user_connected(id) || !(get_user_flags(id) & ADMIN_BAN))
+	{
+		return
+	}
+
+	new menu = menu_create("\y[GAMELAND]\w Unban list", "UnbanMenuHandler")
+	new value[64], display[96], info[80], count
+	new filePath[192]
+	GetBanFilePath(1, filePath, charsmax(filePath))
+	new file = fopen(filePath, "rt")
+	if(file)
+	{
+		while(count < MAX_BAN_ENTRIES && ReadBanEntry(file, 1, value, charsmax(value)))
+		{
+			if(menu_items(menu) < 7)
+			{
+				formatex(display, charsmax(display), "%s \y[IP]", value)
+				formatex(info, charsmax(info), "1|%s", value)
+				menu_additem(menu, display, info)
+			}
+			count++
+		}
+		fclose(file)
+	}
+
+	if(count > 0)
+	{
+		menu_additem(menu, "Unban all entries", "ALL")
+	}
+	else
+	{
+		menu_additem(menu, "\dNo active bans found", "NONE")
+	}
+
+	menu_setprop(menu, MPROP_EXIT, MEXIT_ALL)
+	menu_display(id, menu)
+}
+
+public UnbanMenuHandler(id, menu, item)
+{
+	if(item == MENU_EXIT)
+	{
+		menu_destroy(menu)
+		return PLUGIN_HANDLED
+	}
+
+	if(!is_user_connected(id) || !(get_user_flags(id) & ADMIN_BAN))
+	{
+		menu_destroy(menu)
+		return PLUGIN_HANDLED
+	}
+
+	new itemName[96], info[80], access, callback
+	menu_item_getinfo(menu, item, access, info, charsmax(info),
+		itemName, charsmax(itemName), callback)
+	menu_destroy(menu)
+
+	if(equal(info, "NONE"))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	if(equal(info, "ALL"))
+	{
+		UnbanAllEntries(id)
+		return PLUGIN_HANDLED
+	}
+
+	new typeText[8], value[64]
+	strtok(info, typeText, charsmax(typeText), value, charsmax(value), '|')
+	trim(value)
+	UnbanEntry(id, value)
+	return PLUGIN_HANDLED
+}
+
+stock UnbanEntry(id, const value[])
+{
+	if(!value[0])
+	{
+		return
+	}
+
+	server_cmd("removeip ^"%s^";wait;writeip", value)
+	server_exec()
+
+	new adminName[MAX_NAME_LENGTH]
+	GetAdminName(id, adminName, charsmax(adminName))
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1unbanned ^4%s^1.", adminName, value)
+	log_amx("Cmd: ^"%s^" unbanned IP ^"%s^"", adminName, value)
+}
+
+stock UnbanAllEntries(id)
+{
+	new value[64], count, filePath[192]
+	GetBanFilePath(1, filePath, charsmax(filePath))
+	new file = fopen(filePath, "rt")
+	if(file)
+	{
+		while(count < MAX_BAN_ENTRIES && ReadBanEntry(file, 1, value, charsmax(value)))
+		{
+			server_cmd("removeip ^"%s^"", value)
+			count++
+		}
+		fclose(file)
+	}
+	server_cmd("writeip")
+	server_exec()
+
+	new adminName[MAX_NAME_LENGTH]
+	GetAdminName(id, adminName, charsmax(adminName))
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1unbanned all listed entries (^4%d^1).", adminName, count)
+	log_amx("Cmd: ^"%s^" unbanned all listed entries (%d)", adminName, count)
+}
+
+stock GetBanFilePath(type, output[], outputLen)
+{
+	new configsDir[128]
+	get_configsdir(configsDir, charsmax(configsDir))
+	formatex(output, outputLen, "%s/../../../%s", configsDir, type ? "listip.cfg" : "banned.cfg")
+}
+
+stock bool:ReadBanEntry(file, type, output[], outputLen)
+{
+	new line[256], command[16], minutes[16]
+	while(!feof(file))
+	{
+		fgets(file, line, charsmax(line))
+		trim(line)
+		if(!line[0] || line[0] == ';' || line[0] == '/' || line[0] == '#')
+		{
+			continue
+		}
+
+		command[0] = 0
+		minutes[0] = 0
+		output[0] = 0
+		parse(line, command, charsmax(command), minutes, charsmax(minutes), output, outputLen - 1)
+		if(type == 0 && equali(command, "banid") && output[0])
+		{
+			return true
+		}
+		if(type == 1 && equali(command, "addip") && output[0])
+		{
+			return true
+		}
+	}
+	return false
+}
+
 public CmdMoveAllToSpec(id, level, cid)
 {
 	if(!cmd_access(id, level, cid, 1))
@@ -498,11 +1120,32 @@ public CmdSwapTeams(id, level, cid)
 	}
 
 	rg_swap_all_players()
+	// ReGameDLL performs the proper round reset and respawns through the
+	// normal game flow; do not manually respawn players before it.
+	server_cmd("sv_restart 1")
+	server_exec()
 
 	new adminName[MAX_NAME_LENGTH]
 	GetAdminName(id, adminName, charsmax(adminName))
-	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1swapped the CT and Terrorist teams.", adminName)
-	log_amx("Cmd: ^"%s^" swapped CT and Terrorist teams", adminName)
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1swapped the CT and Terrorist teams and restarted the round.", adminName)
+	log_amx("Cmd: ^"%s^" swapped CT and Terrorist teams and restarted the round", adminName)
+	return PLUGIN_HANDLED
+}
+
+public CmdRestartRound(id, level, cid)
+{
+	if(!cmd_access(id, level, cid, 1))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	server_cmd("sv_restart 1")
+	server_exec()
+
+	new adminName[MAX_NAME_LENGTH]
+	GetAdminName(id, adminName, charsmax(adminName))
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1restarted the round.", adminName)
+	log_amx("Cmd: ^"%s^" restarted the round", adminName)
 	return PLUGIN_HANDLED
 }
 
@@ -865,6 +1508,7 @@ stock MoveToFreeSpectator(id)
 	cs_set_user_team(id, CS_TEAM_SPECTATOR)
 	g_bInternalTeamChange[id] = false
 	set_task(0.1, "FinalizeSpectator", TASK_SPECTATOR_FINALIZE + id)
+	g_flSpecEnteredAt[id] = get_gametime()
 }
 
 public FinalizeSpectator(taskId)

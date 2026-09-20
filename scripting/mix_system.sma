@@ -39,7 +39,7 @@
 #define PLUGIN  "Mix System ~ Fastcup Mode"
 #endif
 
-#define VERSION "2.19.12"
+#define VERSION "2.19.13"
 #define AUTHOR  "Shadows Adi"
 
 #define SHOOTING_END_SCORE 10
@@ -2492,12 +2492,6 @@ public clcmd_chat_on(id)
 	client_print_color(0, 0, "clcmd_chat() called")
 	#endif
 
-	if(!g_eBooleans[bIsMixOn])
-	{
-		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
-		return PLUGIN_HANDLED
-	}
-
 	static iPlayer, iPlayers[MAX_PLAYERS], iNum
 	get_players(iPlayers, iNum, "ch")
 
@@ -2533,12 +2527,6 @@ public clcmd_chat_off(id)
 	#if defined DEBUG
 	client_print_color(0, 0, "clcmd_chat() called")
 	#endif
-
-	if(!g_eBooleans[bIsMixOn])
-	{
-		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
-		return PLUGIN_HANDLED
-	}
 
 	static iPlayer, iPlayers[MAX_PLAYERS], iNum
 	get_players(iPlayers, iNum, "ch")
@@ -2577,7 +2565,7 @@ public hook_say(id)
 	if(!is_user_connected(id))
 		return PLUGIN_CONTINUE
 
-	if(!g_eBooleans[bCanChat][id] && g_eBooleans[bIsMixOn])
+	if(!g_eBooleans[bCanChat][id])
 	{
 		if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminFlags])))
 		{
