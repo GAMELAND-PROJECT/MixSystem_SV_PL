@@ -468,8 +468,8 @@ public ShowOpenTeamMenu(id)
 	}
 	else
 	{
-		show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_0,
-			"\y[GAMELAND]\w Team options^n^n\y1.\w Terrorist^n\y2.\w Counter-Terrorist^n^n\y0.\w Cancel",
+		show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6,
+			"\y[GAMELAND]\w Choose your team^n^n\y1.\w Terrorist^n\y2.\w Counter-Terrorist^n^n\y6.\w Spectator",
 			-1, "GAMELAND_Open_Team_Menu")
 	}
 }
@@ -481,8 +481,26 @@ public HandleOpenTeamMenu(id, key)
 		return PLUGIN_HANDLED
 	}
 
-	if(key == 9)
+	// On first connection, the open-join menu exposes only 1, 2 and 6:
+	// Terrorist, Counter-Terrorist and Spectator.
+	if(cs_get_user_team(id) == CS_TEAM_UNASSIGNED)
 	{
+		if(key == 5)
+		{
+			MoveToFreeSpectator(id)
+		}
+		else if(key == 0)
+		{
+			g_bInternalTeamChange[id] = true
+			engclient_cmd(id, "jointeam", "1")
+			g_bInternalTeamChange[id] = false
+		}
+		else if(key == 1)
+		{
+			g_bInternalTeamChange[id] = true
+			engclient_cmd(id, "jointeam", "2")
+			g_bInternalTeamChange[id] = false
+		}
 		return PLUGIN_HANDLED
 	}
 
