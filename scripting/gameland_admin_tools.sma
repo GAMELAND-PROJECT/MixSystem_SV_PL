@@ -7,14 +7,19 @@
 #include <fakemeta>
 
 #define PLUGIN  "GAMELAND Admin Tools"
-#define VERSION "1.3.1"
+#define VERSION "1.3.6"
 #define AUTHOR  "GAMELAND"
 
 #define MAX_MAPS 128
 #define TASK_BLACK_SCREEN 19001
 #define TASK_SPECTATOR_FINALIZE 19100
 #define TASK_INITIAL_JOIN_MENU 19200
+#define TASK_SPEC_GUARD 19300
+#define TASK_SPEC_CONFIRM 19400
+#define SPEC_GRACE_SECONDS 600.0
+#define SPEC_CONFIRM_SECONDS 20.0
 #define JOIN_MENU_ID "GAMELAND_Join_Menu"
+#define SPEC_CONFIRM_MENU_ID "GAMELAND_Spec_Confirm"
 
 new Array:g_aMaps
 new g_pAlltalk
@@ -27,6 +32,8 @@ new g_pJoinMode
 new g_iJoinMode = 1
 new g_iMapCategory[33]
 new bool:g_bInternalTeamChange[33]
+new Float:g_flSpecEnteredAt[33]
+new bool:g_bSpecConfirmOpen[33]
 
 public plugin_init()
 {
@@ -38,6 +45,16 @@ public plugin_init()
 	register_clcmd("say /k", "CmdKickMenu", ADMIN_KICK)
 	register_clcmd("say_team /k", "CmdKickMenu", ADMIN_KICK)
 	register_clcmd("k", "CmdKickMenu", ADMIN_KICK)
+
+	register_clcmd("say /spec", "CmdMoveAllToSpec", ADMIN_CVAR)
+	register_clcmd("say_team /spec", "CmdMoveAllToSpec", ADMIN_CVAR)
+	register_clcmd("spec", "CmdMoveAllToSpec", ADMIN_CVAR)
+	register_clcmd("say /st", "CmdSwapTeams", ADMIN_CVAR)
+	register_clcmd("say_team /st", "CmdSwapTeams", ADMIN_CVAR)
+	register_clcmd("st", "CmdSwapTeams", ADMIN_CVAR)
+	register_clcmd("say /kspec", "CmdKickSpecs", ADMIN_KICK)
+	register_clcmd("say_team /kspec", "CmdKickSpecs", ADMIN_KICK)
+	register_clcmd("kspec", "CmdKickSpecs", ADMIN_KICK)
 
 	register_clcmd("say /t1", "CmdAlltalk1", ADMIN_CVAR)
 	register_clcmd("say_team /t1", "CmdAlltalk1", ADMIN_CVAR)
@@ -77,9 +94,10 @@ public plugin_init()
 	register_message(get_user_msgid("ShowMenu"), "MessageShowMenu")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "HookChooseTeam_Pre")
 	register_menucmd(register_menuid("Team_Select", 1), 1023, "HookTeamSelectMenu")
-	register_menucmd(register_menuid(JOIN_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleJoinMenu")
+	register_menucmd(register_menuid(JOIN_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_0, "HandleJoinMenu")
 	register_menucmd(register_menuid("GAMELAND_Open_Team_Menu", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_0, "HandleOpenTeamMenu")
 	register_menucmd(register_menuid("GAMELAND_Map_Categories", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_0, "HandleMapCategoryMenu")
+	register_menucmd(register_menuid(SPEC_CONFIRM_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleSpecConfirmMenu")
 
 	g_pAllowSpectators = get_cvar_pointer("allow_spectators")
 	g_pForceCamera = get_cvar_pointer("mp_forcecamera")
@@ -94,6 +112,7 @@ public plugin_init()
 
 	g_aMaps = ArrayCreate(32)
 	LoadMaps()
+	set_task(5.0, "TaskSpecGuard", TASK_SPEC_GUARD, _, _, "b")
 }
 
 public client_putinserver(id)
@@ -129,8 +148,11 @@ public client_disconnected(id)
 {
 	remove_task(TASK_INITIAL_JOIN_MENU + id)
 	remove_task(TASK_SPECTATOR_FINALIZE + id)
+	remove_task(TASK_SPEC_CONFIRM + id)
 	g_iMapCategory[id] = 0
 	g_bInternalTeamChange[id] = false
+	g_flSpecEnteredAt[id] = 0.0
+	g_bSpecConfirmOpen[id] = false
 }
 
 public ShowInitialJoinMenu(taskId)
@@ -155,6 +177,136 @@ public ShowInitialJoinMenu(taskId)
 	{
 		ShowRestrictedJoinMenu(id)
 	}
+}
+
+public TaskSpecGuard()
+{
+	new Float:now = get_gametime()
+
+	for(new id = 1; id <= get_maxplayers(); id++)
+	{
+		if(!is_user_connected(id) || is_user_hltv(id) || IsAdminExempt(id))
+		{
+			ResetSpecGuard(id)
+			continue
+		}
+
+		new CsTeams:team = cs_get_user_team(id)
+		if(team != CS_TEAM_SPECTATOR)
+		{
+			ResetSpecGuard(id)
+			continue
+		}
+
+		if(g_flSpecEnteredAt[id] <= 0.0)
+		{
+			g_flSpecEnteredAt[id] = now
+			continue
+		}
+
+		if(!g_bSpecConfirmOpen[id] && now - g_flSpecEnteredAt[id] >= SPEC_GRACE_SECONDS)
+		{
+			ShowSpecConfirmMenu(id)
+		}
+	}
+}
+
+stock ResetSpecGuard(id)
+{
+	if(!(1 <= id <= 32))
+	{
+		return
+	}
+
+	remove_task(TASK_SPEC_CONFIRM + id)
+	g_flSpecEnteredAt[id] = 0.0
+	g_bSpecConfirmOpen[id] = false
+}
+
+stock bool:IsAdminExempt(id)
+{
+	return (get_user_flags(id) & (ADMIN_KICK | ADMIN_CVAR | ADMIN_MAP | ADMIN_RCON)) != 0
+}
+
+stock ShowSpecConfirmMenu(id)
+{
+	if(!is_user_connected(id) || is_user_hltv(id) || IsAdminExempt(id)
+	|| cs_get_user_team(id) != CS_TEAM_SPECTATOR)
+	{
+		ResetSpecGuard(id)
+		return
+	}
+
+	g_bSpecConfirmOpen[id] = true
+	show_menu(id, MENU_KEY_1 | MENU_KEY_2,
+		"\y[GAMELAND]\w Are you still watching?^n^n\y1.\w Yes, extend spectator time^n\y2.\w Disconnect from server^n^n\rYou have 20 seconds to answer.",
+		floatround(SPEC_CONFIRM_SECONDS), SPEC_CONFIRM_MENU_ID)
+
+	remove_task(TASK_SPEC_CONFIRM + id)
+	set_task(SPEC_CONFIRM_SECONDS, "TaskSpecConfirmTimeout", TASK_SPEC_CONFIRM + id)
+	client_print_color(id, print_team_default, "^4[GAMELAND] ^1Spectator timeout check: press ^41 ^1within 20 seconds to stay.")
+}
+
+public HandleSpecConfirmMenu(id, key)
+{
+	if(!is_user_connected(id))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	remove_task(TASK_SPEC_CONFIRM + id)
+	g_bSpecConfirmOpen[id] = false
+
+	if(IsAdminExempt(id) || cs_get_user_team(id) != CS_TEAM_SPECTATOR)
+	{
+		ResetSpecGuard(id)
+		return PLUGIN_HANDLED
+	}
+
+	if(key == 0)
+	{
+		g_flSpecEnteredAt[id] = get_gametime()
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1Spectator time extended for another 10 minutes.")
+	}
+	else
+	{
+		KickSpectatorTimeout(id)
+	}
+
+	return PLUGIN_HANDLED
+}
+
+public TaskSpecConfirmTimeout(taskId)
+{
+	new id = taskId - TASK_SPEC_CONFIRM
+	if(!is_user_connected(id))
+	{
+		return
+	}
+
+	g_bSpecConfirmOpen[id] = false
+
+	if(!IsAdminExempt(id) && cs_get_user_team(id) == CS_TEAM_SPECTATOR)
+	{
+		KickSpectatorTimeout(id)
+	}
+	else
+	{
+		ResetSpecGuard(id)
+	}
+}
+
+stock KickSpectatorTimeout(id)
+{
+	if(!is_user_connected(id))
+	{
+		return
+	}
+
+	new userid = get_user_userid(id)
+	server_cmd("kick #%d ^"GAMELAND: spectator timeout.^"", userid)
+	server_exec()
+	ResetSpecGuard(id)
 }
 
 public plugin_end()
@@ -297,6 +449,102 @@ public CmdKickMenu(id, level, cid)
 	menu_setprop(menu, MPROP_EXIT, MEXIT_ALL)
 	menu_display(id, menu)
 	return PLUGIN_HANDLED
+}
+
+public CmdMoveAllToSpec(id, level, cid)
+{
+	if(!cmd_access(id, level, cid, 1))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	new moved
+	for(new player = 1; player <= get_maxplayers(); player++)
+	{
+		if(!is_user_connected(player) || is_user_hltv(player))
+		{
+			continue
+		}
+
+		new CsTeams:team = cs_get_user_team(player)
+		if(team != CS_TEAM_T && team != CS_TEAM_CT)
+		{
+			continue
+		}
+
+		if(is_user_alive(player))
+		{
+			user_silentkill(player)
+		}
+
+		g_bInternalTeamChange[player] = true
+		rg_join_team(player, TEAM_SPECTATOR)
+		g_bInternalTeamChange[player] = false
+		moved++
+	}
+
+	new adminName[MAX_NAME_LENGTH]
+	GetAdminName(id, adminName, charsmax(adminName))
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1moved ^4%d ^1players to Spectator.", adminName, moved)
+	log_amx("Cmd: ^"%s^" moved %d players to Spectator", adminName, moved)
+	return PLUGIN_HANDLED
+}
+
+public CmdSwapTeams(id, level, cid)
+{
+	if(!cmd_access(id, level, cid, 1))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	rg_swap_all_players()
+
+	new adminName[MAX_NAME_LENGTH]
+	GetAdminName(id, adminName, charsmax(adminName))
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1swapped the CT and Terrorist teams.", adminName)
+	log_amx("Cmd: ^"%s^" swapped CT and Terrorist teams", adminName)
+	return PLUGIN_HANDLED
+}
+
+public CmdKickSpecs(id, level, cid)
+{
+	if(!cmd_access(id, level, cid, 1))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	new kicked
+	for(new player = 1; player <= get_maxplayers(); player++)
+	{
+		if(!is_user_connected(player) || is_user_hltv(player)
+		|| cs_get_user_team(player) != CS_TEAM_SPECTATOR)
+		{
+			continue
+		}
+
+		new userid = get_user_userid(player)
+		server_cmd("kick #%d ^"GAMELAND: spectators removed by admin.^"", userid)
+		kicked++
+	}
+	server_exec()
+
+	new adminName[MAX_NAME_LENGTH]
+	GetAdminName(id, adminName, charsmax(adminName))
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1kicked ^4%d ^1spectators.", adminName, kicked)
+	log_amx("Cmd: ^"%s^" kicked %d spectators", adminName, kicked)
+	return PLUGIN_HANDLED
+}
+
+stock GetAdminName(id, output[], outputLen)
+{
+	if(id > 0 && is_user_connected(id))
+	{
+		get_user_name(id, output, outputLen)
+	}
+	else
+	{
+		copy(output, outputLen, "Console")
+	}
 }
 
 public KickMenuHandler(id, menu, item)
@@ -548,7 +796,12 @@ public ShowRestrictedJoinMenu(id)
 
 public HandleJoinMenu(id, key)
 {
-	if(!is_user_connected(id) || g_iJoinMode == 1 || key == 9)
+	if(!is_user_connected(id) || g_iJoinMode == 1)
+	{
+		return PLUGIN_HANDLED
+	}
+
+	if(key == 9)
 	{
 		return PLUGIN_HANDLED
 	}
@@ -569,7 +822,7 @@ stock ApplyRestrictedJoinKey(id, key, bool:showMenu)
 		{
 			KickRestrictedClient(id)
 		}
-		else if(showMenu)
+		else if(key != 9 && showMenu)
 		{
 			ShowRestrictedJoinMenu(id)
 		}
@@ -774,7 +1027,9 @@ stock SetJoinMode(id, level, cid, mode)
 	{
 		SetCvar(g_pForceCamera, 2)
 		SetCvar(g_pForceChaseCam, 2)
-		SetCvar(g_pFadeToBlack, 1)
+		// Keep dead CT/T players able to spectate teammates. The custom
+		// ScreenFade below is reserved for actual spectators only.
+		SetCvar(g_pFadeToBlack, 0)
 		remove_task(TASK_BLACK_SCREEN)
 		set_task(0.5, "RefreshBlackScreen", TASK_BLACK_SCREEN, _, _, "b")
 	}
@@ -812,8 +1067,13 @@ public RefreshBlackScreen()
 
 	for(new id = 1; id <= get_maxplayers(); id++)
 	{
-		if(is_user_connected(id)
-		&& (cs_get_user_team(id) == CS_TEAM_SPECTATOR || cs_get_user_team(id) == CS_TEAM_UNASSIGNED))
+		if(!is_user_connected(id) || is_user_hltv(id))
+		{
+			continue
+		}
+
+		new CsTeams:team = cs_get_user_team(id)
+		if(team == CS_TEAM_SPECTATOR || team == CS_TEAM_UNASSIGNED)
 		{
 			SendBlackScreen(id)
 		}
@@ -850,6 +1110,24 @@ stock ClearBlackScreens()
 			message_end()
 		}
 	}
+}
+
+stock ClearBlackScreen(id)
+{
+	if(!is_user_connected(id))
+	{
+		return
+	}
+
+	message_begin(MSG_ONE_UNRELIABLE, get_user_msgid("ScreenFade"), _, id)
+	write_short(1)
+	write_short(1)
+	write_short(0)
+	write_byte(0)
+	write_byte(0)
+	write_byte(0)
+	write_byte(0)
+	message_end()
 }
 
 stock SetCvar(pcvar, value)

@@ -39,7 +39,7 @@
 #define PLUGIN  "Mix System ~ Fastcup Mode"
 #endif
 
-#define VERSION "2.19.11"
+#define VERSION "2.19.12"
 #define AUTHOR  "Shadows Adi"
 
 #define SHOOTING_END_SCORE 10
@@ -426,6 +426,19 @@ public plugin_init()
 	register_clcmd("say .hs0", "clcmd_hs0")
 	register_clcmd("say_team hs0", "clcmd_hs0")
 	register_clcmd("say_team /hs0", "clcmd_hs0")
+
+	// Stable aliases for opening/closing public chat during a mix.
+	// They use the same handlers as the configured chat commands.
+	register_clcmd("s1", "clcmd_chat_on")
+	register_clcmd("say s1", "clcmd_chat_on")
+	register_clcmd("say /s1", "clcmd_chat_on")
+	register_clcmd("say_team s1", "clcmd_chat_on")
+	register_clcmd("say_team /s1", "clcmd_chat_on")
+	register_clcmd("s0", "clcmd_chat_off")
+	register_clcmd("say s0", "clcmd_chat_off")
+	register_clcmd("say /s0", "clcmd_chat_off")
+	register_clcmd("say_team s0", "clcmd_chat_off")
+	register_clcmd("say_team /s0", "clcmd_chat_off")
  
 
 	g_eForwards[Kill] = CreateMultiForward("mix_player_killed", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_STRING, FP_STRING)
