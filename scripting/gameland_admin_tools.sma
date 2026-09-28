@@ -5,6 +5,7 @@
 #include <cstrike>
 #include <reapi>
 #include <fakemeta>
+#include <hamsandwich>
 
 #define PLUGIN  "GAMELAND Admin Tools"
 #define VERSION "1.4.2"
@@ -152,6 +153,8 @@ public plugin_init()
 	g_aMaps = ArrayCreate(32)
 	LoadMaps()
 	set_task(5.0, "TaskSpecGuard", TASK_SPEC_GUARD, _, _, "b")
+	RegisterHam(Ham_Weapon_SecondaryAttack, "weapon_famas", "Ham_FamasSecondaryAttack_Pre", 0)
+	set_task(1.0, "Task_EnsureFastDuckFixSourceUpdated")
 }
 
 public client_putinserver(id)
