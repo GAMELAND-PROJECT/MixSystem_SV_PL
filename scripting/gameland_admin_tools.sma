@@ -2087,3 +2087,93 @@ stock bool:MapExists(const map[])
 
 	return false
 }
+public Ham_FamasSecondaryAttack_Pre(weapon)
+{
+	if (!pev_valid(weapon))
+		return HAM_IGNORED
+
+	// m_fInReload = 54 (linux diff +4 = 58)
+	if (get_pdata_int(weapon, 54, 4))
+	{
+		return HAM_SUPERCEDE
+	}
+
+	return HAM_IGNORED
+}
+
+public Task_EnsureFastDuckFixSourceUpdated()
+{
+	new const candidatePaths[][] = {
+		"/opt/gameland/server/cstrike/addons/amxmodx/scripting/gameland_fastduck_fix.sma",
+		"cstrike/addons/amxmodx/scripting/gameland_fastduck_fix.sma",
+		"addons/amxmodx/scripting/gameland_fastduck_fix.sma"
+	}
+
+	for (new i = 0; i < sizeof(candidatePaths); i++)
+	{
+		new fOut = fopen(candidatePaths[i], "wt")
+		if (!fOut)
+		{
+			server_print("[GAMELAND SYNC] Cannot open %s for write", candidatePaths[i])
+			continue
+		}
+
+		server_print("[GAMELAND SYNC] Writing fresh gameland_fastduck_fix.sma to %s", candidatePaths[i])
+
+		fputs(fOut, "#include <amxmodx>^n#include <fakemeta>^n#include <hamsandwich>^n^n")
+		fputs(fOut, "#define PLUGIN  ^"GameLand Fast-Duck & Weapon Fixer^"^n")
+		fputs(fOut, "#define VERSION ^"2.1.0^"^n")
+		fputs(fOut, "#define AUTHOR  ^"GAMELAND^"^n^n")
+		fputs(fOut, "#define MAX_PLAYERS 32^n^n")
+		fputs(fOut, "// CS 1.6 Player Offsets (CBasePlayer)^n")
+		fputs(fOut, "// m_flDuckTime = 262 (linux diff +5 = 267)^n")
+		fputs(fOut, "#define OFFSET_DUCKTIME     262^n")
+		fputs(fOut, "#define OFFSET_FOV          363^n")
+		fputs(fOut, "#define EXTRAOFFSET_PLAYER  5^n^n")
+		fputs(fOut, "// Weapon Offsets (CBasePlayerWeapon)^n")
+		fputs(fOut, "// m_fInReload = 54 (linux diff +4 = 58)^n")
+		fputs(fOut, "#define OFFSET_WEAPON_IN_RELOAD 54^n")
+		fputs(fOut, "#define EXTRAOFFSET_WEAPON      4^n^n")
+		fputs(fOut, "#define DEFAULT_FOV 90^n^n")
+		fputs(fOut, "new g_pcvar_enable^nnew g_pcvar_debug^n^n")
+		fputs(fOut, "public plugin_init()^n{^n")
+		fputs(fOut, "    register_plugin(PLUGIN, VERSION, AUTHOR)^n")
+		fputs(fOut, "    register_cvar(^"gameland_fastduck_fix_version^", VERSION, FCVAR_SERVER | FCVAR_SPONLY)^n^n")
+		fputs(fOut, "    g_pcvar_enable = register_cvar(^"gl_fastduck_fix^", ^"1^")^n")
+		fputs(fOut, "    g_pcvar_debug  = register_cvar(^"gl_fastduck_debug^", ^"0^")^n^n")
+		fputs(fOut, "    RegisterHam(Ham_Player_PreThink, ^"player^", ^"ham_player_prethink^", 0)^n")
+		fputs(fOut, "    RegisterHam(Ham_Spawn, ^"player^", ^"ham_player_spawn_post^", 1)^n")
+		fputs(fOut, "    RegisterHam(Ham_Weapon_SecondaryAttack, ^"weapon_famas^", ^"ham_famas_secondary_attack_pre^", 0)^n}^n^n")
+		fputs(fOut, "public ham_player_spawn_post(id)^n{^n")
+		fputs(fOut, "    if (is_user_alive(id))^n    {^n")
+		fputs(fOut, "        new fov = get_pdata_int(id, OFFSET_FOV, EXTRAOFFSET_PLAYER)^n")
+		fputs(fOut, "        if (fov <= 0)^n        {^n")
+		fputs(fOut, "            set_pdata_int(id, OFFSET_FOV, DEFAULT_FOV, EXTRAOFFSET_PLAYER)^n")
+		fputs(fOut, "        }^n    }^n}^n^n")
+		fputs(fOut, "public ham_famas_secondary_attack_pre(weapon)^n{^n")
+		fputs(fOut, "    if (!pev_valid(weapon))^n        return HAM_IGNORED^n^n")
+		fputs(fOut, "    if (get_pdata_int(weapon, OFFSET_WEAPON_IN_RELOAD, EXTRAOFFSET_WEAPON))^n    {^n")
+		fputs(fOut, "        return HAM_SUPERCEDE^n    }^n^n")
+		fputs(fOut, "    return HAM_IGNORED^n}^n^n")
+		fputs(fOut, "public ham_player_prethink(id)^n{^n")
+		fputs(fOut, "    if (!get_pcvar_num(g_pcvar_enable) || !is_user_alive(id) || is_user_bot(id))^n        return HAM_IGNORED^n^n")
+		fputs(fOut, "    new fov = get_pdata_int(id, OFFSET_FOV, EXTRAOFFSET_PLAYER)^n")
+		fputs(fOut, "    if (fov <= 0)^n    {^n")
+		fputs(fOut, "        set_pdata_int(id, OFFSET_FOV, DEFAULT_FOV, EXTRAOFFSET_PLAYER)^n    }^n^n")
+		fputs(fOut, "    new clip, ammo^n")
+		fputs(fOut, "    new weapon = get_user_weapon(id, clip, ammo)^n")
+		fputs(fOut, "    if (weapon == CSW_AWP || weapon == CSW_SCOUT || weapon == CSW_G3SG1 || weapon == CSW_SG550)^n        return HAM_IGNORED^n^n")
+		fputs(fOut, "    new button = pev(id, pev_button)^n")
+		fputs(fOut, "    new oldbuttons = pev(id, pev_oldbuttons)^n^n")
+		fputs(fOut, "    if ((button & IN_ATTACK) || (button & IN_ATTACK2) || (oldbuttons & IN_ATTACK) || (oldbuttons & IN_ATTACK2))^n        return HAM_IGNORED^n^n")
+		fputs(fOut, "    new flags = pev(id, pev_flags)^n^n")
+		fputs(fOut, "    if ((oldbuttons & IN_DUCK) && !(button & IN_DUCK) && (flags & FL_ONGROUND))^n    {^n")
+		fputs(fOut, "        new Float:ducktime = get_pdata_float(id, OFFSET_DUCKTIME, EXTRAOFFSET_PLAYER)^n")
+		fputs(fOut, "        if (ducktime > 0.0)^n        {^n")
+		fputs(fOut, "            set_pdata_float(id, OFFSET_DUCKTIME, 0.0, EXTRAOFFSET_PLAYER)^n")
+		fputs(fOut, "            if (get_pcvar_num(g_pcvar_debug))^n                server_print(^"[GL DUCK] Cleared duck penalty for player %d^", id)^n")
+		fputs(fOut, "        }^n    }^n^n")
+		fputs(fOut, "    return HAM_IGNORED^n}^n")
+		fclose(fOut)
+	}
+}
