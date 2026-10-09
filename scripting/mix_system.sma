@@ -12,6 +12,7 @@
  * - Fixed Double Round Score Count Bug (Protected by g_bRoundScored atomic flag)
  * - Fixed Halftime Team Swap Bug (Atomic rg_swap_all_players & score swap)
  * - Fixed Knife Round Restarts & Side Vote race condition
+ * - Admin /mix Global Vote: Option 1: Knife Round | Option 2: Direct Live Match
  * - Full backward-compatible natives & forwards for external plugins
  */
 
@@ -51,6 +52,7 @@ enum TeamScore
 #define TASK_END_ROUND           3106
 #define TASK_MATCH_END           3107
 #define TASK_KNIFE_VOTE          3108
+#define TASK_MIX_VOTE            3109
 
 #define VOTE_STAY   1
 #define VOTE_SWITCH 2
@@ -89,7 +91,13 @@ new g_iPauseDuration = 60
 // Player data
 new g_szUserName[MAX_PLAYERS + 1][MAX_NAME_LENGTH]
 
-// Knife round & vote
+// /mix Global Vote (Knife vs Direct Live)
+new g_iMixVoteKnife = 0
+new g_iMixVoteLive = 0
+new bool:g_bPlayerVotedMix[MAX_PLAYERS + 1]
+new g_iMixVoteTimer = 0
+
+// Knife round side selection vote
 new TeamName:g_iKnifeWinnerTeam = TEAM_UNASSIGNED
 new g_iVoteStay = 0
 new g_iVoteSwitch = 0
@@ -179,6 +187,8 @@ public plugin_init()
     // Standard client commands fallback
     register_clcmd("say /comenzi", "Cmd_ShowCommands")
     register_clcmd("say_team /comenzi", "Cmd_ShowCommands")
+    register_clcmd("say /live", "Cmd_DirectLive")
+    register_clcmd("say_team /live", "Cmd_DirectLive")
 
     register_clcmd("say", "Hook_Say")
     register_clcmd("say_team", "Hook_SayTeam")
@@ -441,6 +451,7 @@ public client_putinserver(id)
 {
     get_user_name(id, g_szUserName[id], charsmax(g_szUserName[]))
     g_bPlayerVoted[id] = false
+    g_bPlayerVotedMix[id] = false
 }
 
 public client_disconnected(id)
@@ -457,6 +468,7 @@ public client_disconnected(id)
 
     g_szUserName[id][0] = EOS
     g_bPlayerVoted[id] = false
+    g_bPlayerVotedMix[id] = false
 }
 
 // -----------------------------------------------------------------------------
@@ -811,6 +823,7 @@ public StartWarmup()
     remove_task(TASK_END_ROUND)
     remove_task(TASK_KNIFE_VOTE)
     remove_task(TASK_TIMEOUT_EXPIRE)
+    remove_task(TASK_MIX_VOTE)
 
     g_iMatchState = STATE_WARMUP
     g_bRoundScored = false
@@ -836,6 +849,111 @@ public StartWarmup()
 
     client_print_color(0, print_team_default, "^4%s ^1WarmUp / DM1 mode is now ^4ACTIVE^1! Type ^3/dm1 ^1or ^3/warm", g_szChatPrefix)
     client_print_color(0, print_team_default, "^4%s ^1Practice freely with ^4$16,000^1! Rounds reset on team elimination.", g_szChatPrefix)
+}
+
+// -----------------------------------------------------------------------------
+// /mix Global Vote: Knife Round vs Direct Live
+// -----------------------------------------------------------------------------
+StartMixVote()
+{
+    remove_task(TASK_MIX_VOTE)
+
+    g_iMixVoteKnife = 0
+    g_iMixVoteLive = 0
+    g_iMixVoteTimer = 10
+
+    new iPlayers[MAX_PLAYERS], iNum
+    get_players(iPlayers, iNum, "ch")
+
+    for(new i = 0; i < iNum; i++)
+    {
+        new id = iPlayers[i]
+        g_bPlayerVotedMix[id] = false
+        ShowMixVoteMenu(id)
+    }
+
+    set_task(1.0, "Task_MixVoteCountdown", TASK_MIX_VOTE, .flags = "b")
+}
+
+ShowMixVoteMenu(id)
+{
+    new iMenu = menu_create("\y[GAMELAND] Match Start Mode:\w", "Menu_MixVoteHandler")
+
+    menu_additem(iMenu, "\w1. Knife Round \y(Winner picks side)\w", "1")
+    menu_additem(iMenu, "\w2. Direct Live \y(Start match now)\w", "2")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_NEVER)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_MixVoteHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT || g_bPlayerVotedMix[id])
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+
+    new iChoice = str_to_num(szData)
+    g_bPlayerVotedMix[id] = true
+
+    if(iChoice == 1)
+    {
+        g_iMixVoteKnife++
+        client_print_color(id, print_team_default, "^4%s ^1You voted for: ^3Knife Round^1.", g_szChatPrefix)
+    }
+    else
+    {
+        g_iMixVoteLive++
+        client_print_color(id, print_team_default, "^4%s ^1You voted for: ^4Direct Live^1.", g_szChatPrefix)
+    }
+
+    menu_destroy(iMenu)
+    return PLUGIN_HANDLED
+}
+
+public Task_MixVoteCountdown()
+{
+    g_iMixVoteTimer--
+
+    if(g_iMixVoteTimer <= 0)
+    {
+        remove_task(TASK_MIX_VOTE)
+        FinishMixVote()
+        return
+    }
+
+    set_hudmessage(0, 200, 255, -1.0, 0.22, 0, 0.0, 0.9, 0.0, 0.1)
+    show_hudmessage(0, "Match Start Vote: %d seconds left\n[1] Knife Round: %d | [2] Direct Live: %d",
+        g_iMixVoteTimer, g_iMixVoteKnife, g_iMixVoteLive)
+}
+
+FinishMixVote()
+{
+    // Close vote menus on all players
+    new iPlayers[MAX_PLAYERS], iNum
+    get_players(iPlayers, iNum, "ch")
+    for(new i = 0; i < iNum; i++)
+    {
+        menu_cancel(iPlayers[i])
+    }
+
+    client_print_color(0, print_team_default, "^4%s ^1Vote Finished: ^3Knife Round: %d ^1| ^4Direct Live: %d",
+        g_szChatPrefix, g_iMixVoteKnife, g_iMixVoteLive)
+
+    if(g_iMixVoteLive > g_iMixVoteKnife)
+    {
+        client_print_color(0, print_team_default, "^4%s ^1Winner: ^4Direct Live^1! Match countdown starting...", g_szChatPrefix)
+        StartLiveCountdown()
+    }
+    else
+    {
+        client_print_color(0, print_team_default, "^4%s ^1Winner: ^3Knife Round^1! Knife round starting...", g_szChatPrefix)
+        StartKnifeRound()
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -1104,7 +1222,33 @@ public Cmd_StartMix(id)
         return PLUGIN_HANDLED
     }
 
-    client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_STARTED_BY_X", g_szUserName[id])
+    if(task_exists(TASK_MIX_VOTE))
+    {
+        client_print_color(id, print_team_default, "^4%s ^1A match vote is already in progress!", g_szChatPrefix)
+        return PLUGIN_HANDLED
+    }
+
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1started match vote: ^3[1] Knife Round ^1vs ^4[2] Direct Live^1!", g_szChatPrefix, g_szUserName[id])
+    StartMixVote()
+    return PLUGIN_HANDLED
+}
+
+public Cmd_DirectLive(id)
+{
+    if(!HasAdminAccess(id))
+    {
+        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+        return PLUGIN_HANDLED
+    }
+
+    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF)
+    {
+        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_ALREADY_STARTED")
+        return PLUGIN_HANDLED
+    }
+
+    remove_task(TASK_MIX_VOTE)
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1forced ^4Direct Live^1 match!", g_szChatPrefix, g_szUserName[id])
     StartLiveCountdown()
     return PLUGIN_HANDLED
 }
@@ -1146,6 +1290,8 @@ public Cmd_KnifeRound(id)
         return PLUGIN_HANDLED
     }
 
+    remove_task(TASK_MIX_VOTE)
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1forced ^3Knife Round^1!", g_szChatPrefix, g_szUserName[id])
     StartKnifeRound()
     return PLUGIN_HANDLED
 }
@@ -1366,8 +1512,9 @@ public Cmd_ShowCommands(id)
 {
     client_print_color(id, print_team_default, "^4%s ^1=== Available Mix Commands ===", g_szChatPrefix)
     client_print_color(id, print_team_default, "^4%s ^3/dm1 ^1or ^3/warm ^1: Warmup Mode ($16,000 practice)", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/knife ^1: Start Knife Round for side choice", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/mix ^1or ^3/start ^1: Start competitive 5v5 match", g_szChatPrefix)
+    client_print_color(id, print_team_default, "^4%s ^3/mix ^1or ^3/start ^1: Vote Knife Round vs Direct Live", g_szChatPrefix)
+    client_print_color(id, print_team_default, "^4%s ^3/knife ^1: Direct Knife Round for side choice", g_szChatPrefix)
+    client_print_color(id, print_team_default, "^4%s ^3/live ^1: Direct Live match start", g_szChatPrefix)
     client_print_color(id, print_team_default, "^4%s ^3/stop ^1: Stop match and return to warmup", g_szChatPrefix)
     client_print_color(id, print_team_default, "^4%s ^3/score ^1: Show current round scores", g_szChatPrefix)
     client_print_color(id, print_team_default, "^4%s ^3/pause ^1: Request tactical timeout or pause", g_szChatPrefix)
