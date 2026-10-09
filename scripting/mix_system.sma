@@ -13,6 +13,12 @@
  * - Fixed Halftime Team Swap Bug (Atomic rg_swap_all_players & score swap)
  * - Fixed Knife Round Restarts & Side Vote race condition
  * - Admin /mix Global Vote: Option 1: Knife Round | Option 2: Direct Live Match
+ * - Professional /a Master Admin Menu:
+ *     1. Admin Manager (Add Admin with presets/flags directly to users.ini + auto reload)
+ *     2. Match / Mix Control (Vote Start, Direct Live, Knife, Warmup, Pause)
+ *     3. Team Control (Swap Teams, Move CT/TR/SPEC, Spec All)
+ *     4. Server Control (Restart 1s, Alltalk ON/OFF, Chat Mute, Password)
+ *     5. Map & Moderation shortcuts (Kick, Ban, Slap, Maps)
  * - Full backward-compatible natives & forwards for external plugins
  */
 
@@ -22,7 +28,7 @@
 #include <mix_system>
 
 #define PLUGIN_NAME        "GAMELAND Mix System"
-#define PLUGIN_VERSION     "2.0.0-ReAPI"
+#define PLUGIN_VERSION     "2.1.0-ReAPI"
 #define PLUGIN_AUTHOR      "GAMELAND"
 
 // -----------------------------------------------------------------------------
@@ -56,6 +62,21 @@ enum TeamScore
 
 #define VOTE_STAY   1
 #define VOTE_SWITCH 2
+
+// -----------------------------------------------------------------------------
+// Admin Manager Data Structure
+// -----------------------------------------------------------------------------
+enum AdminAddSession
+{
+    SessionTargetId,
+    SessionAuth[64],
+    SessionName[32],
+    SessionFlags[36],
+    SessionAccountFlags[8],
+    SessionPassword[32]
+}
+
+new g_eAdminSession[MAX_PLAYERS + 1][AdminAddSession]
 
 // -----------------------------------------------------------------------------
 // Global Variables
@@ -189,6 +210,14 @@ public plugin_init()
     register_clcmd("say_team /comenzi", "Cmd_ShowCommands")
     register_clcmd("say /live", "Cmd_DirectLive")
     register_clcmd("say_team /live", "Cmd_DirectLive")
+
+    // Master /a Admin Menu commands
+    register_clcmd("say /a", "Cmd_AdminDashboard")
+    register_clcmd("say_team /a", "Cmd_AdminDashboard")
+    register_clcmd("a", "Cmd_AdminDashboard")
+    register_clcmd("amx_a", "Cmd_AdminDashboard")
+    register_clcmd("say /adminmenu", "Cmd_AdminDashboard")
+    register_clcmd("say_team /adminmenu", "Cmd_AdminDashboard")
 
     register_clcmd("say", "Hook_Say")
     register_clcmd("say_team", "Hook_SayTeam")
@@ -1164,7 +1193,7 @@ public Task_HudDisplay()
     {
         case STATE_WARMUP:
         {
-            formatex(szMsg, charsmax(szMsg), "[ WARMUP / DM1 ]\nSpawn Money: $16,000 | Type /mix or /knife to start")
+            formatex(szMsg, charsmax(szMsg), "[ WARMUP / DM1 ]\nSpawn Money: $16,000 | Type /mix or /a to start");
             set_hudmessage(0, 200, 255, 0.02, 0.20, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
@@ -1206,6 +1235,14 @@ bool:HasAdminAccess(id)
     if(!id)
         return true
     return bool:(get_user_flags(id) & read_flags(g_szAdminAccess))
+}
+
+bool:HasRconOrBanAccess(id)
+{
+    if(!id)
+        return true
+    new iFlags = get_user_flags(id)
+    return bool:(iFlags & ADMIN_RCON || iFlags & ADMIN_BAN || iFlags & ADMIN_IMMUNITY)
 }
 
 public Cmd_StartMix(id)
@@ -1511,6 +1548,7 @@ public Cmd_Overtime(id)
 public Cmd_ShowCommands(id)
 {
     client_print_color(id, print_team_default, "^4%s ^1=== Available Mix Commands ===", g_szChatPrefix)
+    client_print_color(id, print_team_default, "^4%s ^3/a ^1: Master Admin Control Panel", g_szChatPrefix)
     client_print_color(id, print_team_default, "^4%s ^3/dm1 ^1or ^3/warm ^1: Warmup Mode ($16,000 practice)", g_szChatPrefix)
     client_print_color(id, print_team_default, "^4%s ^3/mix ^1or ^3/start ^1: Vote Knife Round vs Direct Live", g_szChatPrefix)
     client_print_color(id, print_team_default, "^4%s ^3/knife ^1: Direct Knife Round for side choice", g_szChatPrefix)
@@ -1521,7 +1559,577 @@ public Cmd_ShowCommands(id)
     return PLUGIN_HANDLED
 }
 
+// -----------------------------------------------------------------------------
+// MASTER /a ADMIN CONTROL PANEL & ADMIN MANAGER
+// -----------------------------------------------------------------------------
+public Cmd_AdminDashboard(id)
+{
+    if(!HasAdminAccess(id))
+    {
+        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+        return PLUGIN_HANDLED
+    }
+
+    new iMenu = menu_create("\y[GAMELAND] Master Admin Panel\w", "Menu_DashboardHandler")
+
+    menu_additem(iMenu, "\rAdmin Manager \y(Add Admins to users.ini)\w", "1")
+    menu_additem(iMenu, "\yMatch & Mix Controls\w", "2")
+    menu_additem(iMenu, "\wTeam Management \y(Swap / Move / Spec)\w", "3")
+    menu_additem(iMenu, "\wServer Settings \y(Restart, Alltalk, Pass)\w", "4")
+    menu_additem(iMenu, "\wMap Controls \y(Map Menu / Vote Map)\w", "5")
+    menu_additem(iMenu, "\wPlayer Moderation \y(Kick / Ban / Slap)\w", "6")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+    return PLUGIN_HANDLED
+}
+
+public Menu_DashboardHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    switch(str_to_num(szData))
+    {
+        case 1: ShowAdminManagerMenu(id)
+        case 2: ShowMatchControlMenu(id)
+        case 3: ShowTeamControlMenu(id)
+        case 4: ShowServerControlMenu(id)
+        case 5: ShowMapControlMenu(id)
+        case 6: ShowModerationMenu(id)
+    }
+    return PLUGIN_HANDLED
+}
+
+// --- 1. ADMIN MANAGER WIZARD ---
+ShowAdminManagerMenu(id)
+{
+    if(!HasRconOrBanAccess(id))
+    {
+        client_print_color(id, print_team_default, "^4%s ^1You need ^4RCON / High Admin^1 privilege to access Admin Manager!", g_szChatPrefix)
+        Cmd_AdminDashboard(id)
+        return
+    }
+
+    new iMenu = menu_create("\y[GAMELAND] Admin Manager:\w", "Menu_AdminManagerHandler")
+
+    menu_additem(iMenu, "\wAdd Admin from \yConnected Players\w", "1")
+    menu_additem(iMenu, "\wReload Admins from \yusers.ini\w", "2")
+    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_AdminManagerHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    switch(str_to_num(szData))
+    {
+        case 1: ShowSelectPlayerForAdmin(id)
+        case 2:
+        {
+            server_cmd("amx_reloadadmins")
+            client_print_color(id, print_team_default, "^4%s ^1Admins reloaded successfully from ^4users.ini^1!", g_szChatPrefix)
+            ShowAdminManagerMenu(id)
+        }
+        case 9: Cmd_AdminDashboard(id)
+    }
+    return PLUGIN_HANDLED
+}
+
+ShowSelectPlayerForAdmin(id)
+{
+    new iMenu = menu_create("\ySelect Player to Make Admin:\w", "Menu_SelectPlayerAdminHandler")
+
+    new iPlayers[MAX_PLAYERS], iNum
+    get_players(iPlayers, iNum, "ch")
+
+    for(new i = 0; i < iNum; i++)
+    {
+        new player = iPlayers[i]
+        new szInfo[6], szDisplay[96], szAuth[36]
+        num_to_str(player, szInfo, charsmax(szInfo))
+        get_user_authid(player, szAuth, charsmax(szAuth))
+
+        formatex(szDisplay, charsmax(szDisplay), "\w%s \d[%s]", g_szUserName[player], szAuth)
+        menu_additem(iMenu, szDisplay, szInfo)
+    }
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_SelectPlayerAdminHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        ShowAdminManagerMenu(id)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    new iTarget = str_to_num(szData)
+    if(!is_user_connected(iTarget))
+    {
+        client_print_color(id, print_team_default, "^4%s ^1Selected player is no longer connected.", g_szChatPrefix)
+        ShowAdminManagerMenu(id)
+        return PLUGIN_HANDLED
+    }
+
+    g_eAdminSession[id][SessionTargetId] = iTarget
+    copy(g_eAdminSession[id][SessionName], charsmax(g_eAdminSession[][SessionName]), g_szUserName[iTarget])
+    get_user_authid(iTarget, g_eAdminSession[id][SessionAuth], charsmax(g_eAdminSession[][SessionAuth]))
+
+    ShowAdminPresetMenu(id)
+    return PLUGIN_HANDLED
+}
+
+ShowAdminPresetMenu(id)
+{
+    new szTitle[96]
+    formatex(szTitle, charsmax(szTitle), "\yAssign Permissions for: \w%s", g_eAdminSession[id][SessionName])
+    new iMenu = menu_create(szTitle, "Menu_AdminPresetHandler")
+
+    menu_additem(iMenu, "\rFull Owner \d[abcdefghijklmnopqrstu]", "1")
+    menu_additem(iMenu, "\yHead Admin \d[abcdefghijklmnopqrst]", "2")
+    menu_additem(iMenu, "\wMatch Admin \d[bcdefij]", "3")
+    menu_additem(iMenu, "\wBasic Admin \d[cdeij]", "4")
+    menu_additem(iMenu, "\wVIP Member \d[bit]", "5")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_AdminPresetHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        ShowAdminManagerMenu(id)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    switch(str_to_num(szData))
+    {
+        case 1: copy(g_eAdminSession[id][SessionFlags], charsmax(g_eAdminSession[][SessionFlags]), "abcdefghijklmnopqrstu")
+        case 2: copy(g_eAdminSession[id][SessionFlags], charsmax(g_eAdminSession[][SessionFlags]), "abcdefghijklmnopqrst")
+        case 3: copy(g_eAdminSession[id][SessionFlags], charsmax(g_eAdminSession[][SessionFlags]), "bcdefij")
+        case 4: copy(g_eAdminSession[id][SessionFlags], charsmax(g_eAdminSession[][SessionFlags]), "cdeij")
+        case 5: copy(g_eAdminSession[id][SessionFlags], charsmax(g_eAdminSession[][SessionFlags]), "bit")
+    }
+
+    ShowAdminAuthTypeMenu(id)
+    return PLUGIN_HANDLED
+}
+
+ShowAdminAuthTypeMenu(id)
+{
+    new iMenu = menu_create("\ySelect Authentication Method:\w", "Menu_AdminAuthTypeHandler")
+
+    new szItem1[96]
+    formatex(szItem1, charsmax(szItem1), "\wSteamID Auth \y[%s] \d(flag 'ce')", g_eAdminSession[id][SessionAuth])
+    menu_additem(iMenu, szItem1, "1")
+
+    new szItem2[96]
+    formatex(szItem2, charsmax(szItem2), "\wNickname Auth \y[%s] \d(pass: 123456, flag 'a')", g_eAdminSession[id][SessionName])
+    menu_additem(iMenu, szItem2, "2")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_AdminAuthTypeHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        ShowAdminManagerMenu(id)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    if(str_to_num(szData) == 1)
+    {
+        // SteamID Auth
+        copy(g_eAdminSession[id][SessionAccountFlags], charsmax(g_eAdminSession[][SessionAccountFlags]), "ce")
+        copy(g_eAdminSession[id][SessionPassword], charsmax(g_eAdminSession[][SessionPassword]), "")
+        CommitAdminToFile(id, false)
+    }
+    else
+    {
+        // Nickname Auth
+        copy(g_eAdminSession[id][SessionAccountFlags], charsmax(g_eAdminSession[][SessionAccountFlags]), "a")
+        copy(g_eAdminSession[id][SessionPassword], charsmax(g_eAdminSession[][SessionPassword]), "123456")
+        CommitAdminToFile(id, true)
+    }
+    return PLUGIN_HANDLED
+}
+
+CommitAdminToFile(id, bool:bUseNick)
+{
+    new szConfigDir[128], szUsersFile[128]
+    get_configsdir(szConfigDir, charsmax(szConfigDir))
+    formatex(szUsersFile, charsmax(szUsersFile), "%s/users.ini", szConfigDir)
+
+    new iFile = fopen(szUsersFile, "at")
+    if(!iFile)
+    {
+        client_print_color(id, print_team_default, "^4%s ^1Failed to open ^4users.ini^1 for writing!", g_szChatPrefix)
+        return
+    }
+
+    new szAuthIdentifier[64]
+    if(bUseNick)
+    {
+        copy(szAuthIdentifier, charsmax(szAuthIdentifier), g_eAdminSession[id][SessionName])
+    }
+    else
+    {
+        copy(szAuthIdentifier, charsmax(szAuthIdentifier), g_eAdminSession[id][SessionAuth])
+    }
+
+    fprintf(iFile, "^n^"%s^" ^"%s^" ^"%s^" ^"%s^" ; Added by %s via /a menu^n",
+        szAuthIdentifier,
+        g_eAdminSession[id][SessionPassword],
+        g_eAdminSession[id][SessionFlags],
+        g_eAdminSession[id][SessionAccountFlags],
+        g_szUserName[id])
+
+    fclose(iFile)
+
+    // Reload admins into memory
+    server_cmd("amx_reloadadmins")
+
+    client_print_color(id, print_team_default, "^4%s ^1Successfully added ^4%s ^1as Admin!", g_szChatPrefix, g_eAdminSession[id][SessionName])
+    client_print_color(id, print_team_default, "^4%s ^1Flags: ^3%s ^1| Auth: ^3%s ^1| Type: ^3%s",
+        g_szChatPrefix,
+        g_eAdminSession[id][SessionFlags],
+        szAuthIdentifier,
+        bUseNick ? "Name (pass: 123456)" : "SteamID (ce)")
+
+    // Notify player if connected
+    new iTarget = g_eAdminSession[id][SessionTargetId]
+    if(is_user_connected(iTarget))
+    {
+        client_print_color(iTarget, print_team_default, "^4[GAMELAND] ^1You have been granted Admin rights by ^3%s^1! Reconnect to apply.", g_szUserName[id])
+    }
+}
+
+// --- 2. MATCH & MIX CONTROLS ---
+ShowMatchControlMenu(id)
+{
+    new iMenu = menu_create("\y[GAMELAND] Match & Mix Control:\w", "Menu_MatchControlHandler")
+
+    menu_additem(iMenu, "\wStart Match \y(Trigger Global Vote)\w", "1")
+    menu_additem(iMenu, "\rForce Direct Live \y(Skip Knife/Vote)\w", "2")
+    menu_additem(iMenu, "\yForce Knife Round \y(Side selection)\w", "3")
+    menu_additem(iMenu, "\wWarmup / DM1 Mode \y($16,000 practice)\w", "4")
+    menu_additem(iMenu, "\wStop Match \y(Return to Warmup)\w", "5")
+    menu_additem(iMenu, "\wPause / Unpause Match\w", "6")
+    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_MatchControlHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    switch(str_to_num(szData))
+    {
+        case 1: Cmd_StartMix(id)
+        case 2: Cmd_DirectLive(id)
+        case 3: Cmd_KnifeRound(id)
+        case 4: Cmd_Warmup(id)
+        case 5: Cmd_StopMix(id)
+        case 6: Cmd_Pause(id)
+        case 9: Cmd_AdminDashboard(id)
+    }
+    return PLUGIN_HANDLED
+}
+
+// --- 3. TEAM CONTROLS ---
+ShowTeamControlMenu(id)
+{
+    new iMenu = menu_create("\y[GAMELAND] Team Management:\w", "Menu_TeamControlHandler")
+
+    menu_additem(iMenu, "\ySwap All Teams \w(CT <-> TR)", "1")
+    menu_additem(iMenu, "\wMove All Players to \ySpectator\w", "2")
+    menu_additem(iMenu, "\wMove Single Player to \yCT\w", "3")
+    menu_additem(iMenu, "\wMove Single Player to \yTERRORIST\w", "4")
+    menu_additem(iMenu, "\wMove Single Player to \ySPECTATOR\w", "5")
+    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_TeamControlHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    switch(str_to_num(szData))
+    {
+        case 1:
+        {
+            rg_swap_all_players()
+            client_print_color(0, print_team_default, "^4%s ^1Teams swapped by Admin ^4%s^1.", g_szChatPrefix, g_szUserName[id])
+            ShowTeamControlMenu(id)
+        }
+        case 2:
+        {
+            Cmd_SpecAll(id)
+            ShowTeamControlMenu(id)
+        }
+        case 3: ShowMovePlayerMenu(id, TEAM_CT)
+        case 4: ShowMovePlayerMenu(id, TEAM_TERRORIST)
+        case 5: ShowMovePlayerMenu(id, TEAM_SPECTATOR)
+        case 9: Cmd_AdminDashboard(id)
+    }
+    return PLUGIN_HANDLED
+}
+
+ShowMovePlayerMenu(id, TeamName:targetTeam)
+{
+    new szTitle[64]
+    formatex(szTitle, charsmax(szTitle), "\yMove Player to %s:\w", targetTeam == TEAM_CT ? "CT" : (targetTeam == TEAM_TERRORIST ? "TERRORIST" : "SPECTATOR"))
+    new iMenu = menu_create(szTitle, "Menu_MovePlayerTargetHandler")
+
+    new iPlayers[MAX_PLAYERS], iNum
+    get_players(iPlayers, iNum, "ch")
+
+    for(new i = 0; i < iNum; i++)
+    {
+        new player = iPlayers[i]
+        new szInfo[12], szDisplay[64]
+        formatex(szInfo, charsmax(szInfo), "%d %d", player, _:targetTeam)
+        formatex(szDisplay, charsmax(szDisplay), "\w%s", g_szUserName[player])
+        menu_additem(iMenu, szDisplay, szInfo)
+    }
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_MovePlayerTargetHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        ShowTeamControlMenu(id)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[12], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    new szPlayer[6], szTeam[6]
+    strtok(szData, szPlayer, charsmax(szPlayer), szTeam, charsmax(szTeam), ' ')
+
+    new iTarget = str_to_num(szPlayer)
+    new TeamName:team = TeamName:str_to_num(szTeam)
+
+    if(is_user_connected(iTarget))
+    {
+        rg_set_user_team(iTarget, team)
+        client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^3%s ^1by ^4%s^1.",
+            g_szChatPrefix, g_szUserName[iTarget],
+            team == TEAM_CT ? "CT" : (team == TEAM_TERRORIST ? "TERRORIST" : "SPECTATOR"),
+            g_szUserName[id])
+    }
+    ShowTeamControlMenu(id)
+    return PLUGIN_HANDLED
+}
+
+// --- 4. SERVER & AUDIO CONTROLS ---
+ShowServerControlMenu(id)
+{
+    new iMenu = menu_create("\y[GAMELAND] Server & Audio Controls:\w", "Menu_ServerControlHandler")
+
+    menu_additem(iMenu, "\wRestart Round 1s \y(/rr)\w", "1")
+    menu_additem(iMenu, "\wAlltalk \yON \d(sv_alltalk 1)\w", "2")
+    menu_additem(iMenu, "\wAlltalk \yOFF \d(sv_alltalk 0)\w", "3")
+    menu_additem(iMenu, "\wMute Chat \yON \d(/off)\w", "4")
+    menu_additem(iMenu, "\wMute Chat \yOFF \d(/on)\w", "5")
+    menu_additem(iMenu, "\wSet Server Password \y(/passon)\w", "6")
+    menu_additem(iMenu, "\wRemove Server Password \y(/passoff)\w", "7")
+    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_ServerControlHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    switch(str_to_num(szData))
+    {
+        case 1: Cmd_Restart(id)
+        case 2:
+        {
+            set_cvar_num("sv_alltalk", 1)
+            client_print_color(0, print_team_default, "^4%s ^1sv_alltalk set to ^41 (ON)^1 by ^4%s^1.", g_szChatPrefix, g_szUserName[id])
+            ShowServerControlMenu(id)
+        }
+        case 3:
+        {
+            set_cvar_num("sv_alltalk", 0)
+            client_print_color(0, print_team_default, "^4%s ^1sv_alltalk set to ^40 (OFF)^1 by ^4%s^1.", g_szChatPrefix, g_szUserName[id])
+            ShowServerControlMenu(id)
+        }
+        case 4:
+        {
+            Cmd_ChatOff(id)
+            ShowServerControlMenu(id)
+        }
+        case 5:
+        {
+            Cmd_ChatOn(id)
+            ShowServerControlMenu(id)
+        }
+        case 6:
+        {
+            Cmd_PassOn(id)
+            ShowServerControlMenu(id)
+        }
+        case 7:
+        {
+            Cmd_PassOff(id)
+            ShowServerControlMenu(id)
+        }
+        case 9: Cmd_AdminDashboard(id)
+    }
+    return PLUGIN_HANDLED
+}
+
+// --- 5. MAP CONTROLS ---
+ShowMapControlMenu(id)
+{
+    new iMenu = menu_create("\y[GAMELAND] Map Management:\w", "Menu_MapControlHandler")
+
+    menu_additem(iMenu, "\wOpen Standard Map Menu \d(amx_mapmenu)\w", "1")
+    menu_additem(iMenu, "\wVote Map Menu \d(amx_votemap)\w", "2")
+    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_MapControlHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    switch(str_to_num(szData))
+    {
+        case 1: client_cmd(id, "amx_mapmenu")
+        case 2: client_cmd(id, "say /vm")
+        case 9: Cmd_AdminDashboard(id)
+    }
+    return PLUGIN_HANDLED
+}
+
+// --- 6. MODERATION CONTROLS ---
+ShowModerationMenu(id)
+{
+    new iMenu = menu_create("\y[GAMELAND] Player Moderation:\w", "Menu_ModerationHandler")
+
+    menu_additem(iMenu, "\wKick Player Menu \d(amx_kickmenu)\w", "1")
+    menu_additem(iMenu, "\wBan Player Menu \d(amx_banmenu)\w", "2")
+    menu_additem(iMenu, "\wSlap / Slay Menu \d(amx_slapmenu)\w", "3")
+    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_ModerationHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    switch(str_to_num(szData))
+    {
+        case 1: client_cmd(id, "amx_kickmenu")
+        case 2: client_cmd(id, "amx_banmenu")
+        case 3: client_cmd(id, "amx_slapmenu")
+        case 9: Cmd_AdminDashboard(id)
+    }
+    return PLUGIN_HANDLED
+}
+
+// -----------------------------------------------------------------------------
 // Chat management
+// -----------------------------------------------------------------------------
 public Hook_Say(id)
 {
     if(g_bChatMuted && !HasAdminAccess(id))
