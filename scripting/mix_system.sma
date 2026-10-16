@@ -1570,14 +1570,15 @@ public Cmd_AdminDashboard(id)
         return PLUGIN_HANDLED
     }
 
-    new iMenu = menu_create("\y[GAMELAND] Master Admin Panel\w", "Menu_DashboardHandler")
+    new iMenu = menu_create("\y[GAMELAND] Master Admin Panel (/a)\w", "Menu_DashboardHandler")
 
     menu_additem(iMenu, "\rAdmin Manager \y(Add Admins to users.ini)\w", "1")
-    menu_additem(iMenu, "\yMatch & Mix Controls\w", "2")
-    menu_additem(iMenu, "\wTeam Management \y(Swap / Move / Spec)\w", "3")
-    menu_additem(iMenu, "\wServer Settings \y(Restart, Alltalk, Pass)\w", "4")
-    menu_additem(iMenu, "\wMap Controls \y(Map Menu / Vote Map)\w", "5")
-    menu_additem(iMenu, "\wPlayer Moderation \y(Kick / Ban / Slap)\w", "6")
+    menu_additem(iMenu, "\yMatch & Mix Controls \d(/mix, /live, /dm1)\w", "2")
+    menu_additem(iMenu, "\wTeam Management \y(/st, /spec, /kspec)\w", "3")
+    menu_additem(iMenu, "\wVoice & Server Rules \y(/t1-/t3, /ff, /j0-/j2)\w", "4")
+    menu_additem(iMenu, "\wMap Browser & Vote \y(/map, /vm)\w", "5")
+    menu_additem(iMenu, "\wPlayer Moderation \y(/k, /b, /ub)\w", "6")
+    menu_additem(iMenu, "\wFast Server Tools \y(/r, /passon, /off)\w", "7")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
     menu_display(id, iMenu, 0)
@@ -1601,9 +1602,10 @@ public Menu_DashboardHandler(id, iMenu, iItem)
         case 1: ShowAdminManagerMenu(id)
         case 2: ShowMatchControlMenu(id)
         case 3: ShowTeamControlMenu(id)
-        case 4: ShowServerControlMenu(id)
+        case 4: ShowVoiceAndRulesMenu(id)
         case 5: ShowMapControlMenu(id)
         case 6: ShowModerationMenu(id)
+        case 7: ShowServerControlMenu(id)
     }
     return PLUGIN_HANDLED
 }
@@ -1890,11 +1892,12 @@ ShowTeamControlMenu(id)
 {
     new iMenu = menu_create("\y[GAMELAND] Team Management:\w", "Menu_TeamControlHandler")
 
-    menu_additem(iMenu, "\ySwap All Teams \w(CT <-> TR)", "1")
-    menu_additem(iMenu, "\wMove All Players to \ySpectator\w", "2")
-    menu_additem(iMenu, "\wMove Single Player to \yCT\w", "3")
-    menu_additem(iMenu, "\wMove Single Player to \yTERRORIST\w", "4")
-    menu_additem(iMenu, "\wMove Single Player to \ySPECTATOR\w", "5")
+    menu_additem(iMenu, "\ySwap All Teams \d(/st)\w", "1")
+    menu_additem(iMenu, "\wMove All Players to \ySpectator \d(/spec)\w", "2")
+    menu_additem(iMenu, "\wKick Spectators \d(/kspec)\w", "3")
+    menu_additem(iMenu, "\wMove Single Player to \yCT\w", "4")
+    menu_additem(iMenu, "\wMove Single Player to \yTERRORIST\w", "5")
+    menu_additem(iMenu, "\wMove Single Player to \ySPECTATOR\w", "6")
     menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
@@ -1917,18 +1920,22 @@ public Menu_TeamControlHandler(id, iMenu, iItem)
     {
         case 1:
         {
-            rg_swap_all_players()
-            client_print_color(0, print_team_default, "^4%s ^1Teams swapped by Admin ^4%s^1.", g_szChatPrefix, g_szUserName[id])
+            amxclient_cmd(id, "say", "/st")
             ShowTeamControlMenu(id)
         }
         case 2:
         {
-            Cmd_SpecAll(id)
+            amxclient_cmd(id, "say", "/spec")
             ShowTeamControlMenu(id)
         }
-        case 3: ShowMovePlayerMenu(id, TEAM_CT)
-        case 4: ShowMovePlayerMenu(id, TEAM_TERRORIST)
-        case 5: ShowMovePlayerMenu(id, TEAM_SPECTATOR)
+        case 3:
+        {
+            amxclient_cmd(id, "say", "/kspec")
+            ShowTeamControlMenu(id)
+        }
+        case 4: ShowMovePlayerMenu(id, TEAM_CT)
+        case 5: ShowMovePlayerMenu(id, TEAM_TERRORIST)
+        case 6: ShowMovePlayerMenu(id, TEAM_SPECTATOR)
         case 9: Cmd_AdminDashboard(id)
     }
     return PLUGIN_HANDLED
@@ -1987,25 +1994,26 @@ public Menu_MovePlayerTargetHandler(id, iMenu, iItem)
     return PLUGIN_HANDLED
 }
 
-// --- 4. SERVER & AUDIO CONTROLS ---
-ShowServerControlMenu(id)
+// --- 4. VOICE & SERVER RULES CONTROLS ---
+ShowVoiceAndRulesMenu(id)
 {
-    new iMenu = menu_create("\y[GAMELAND] Server & Audio Controls:\w", "Menu_ServerControlHandler")
+    new iMenu = menu_create("\y[GAMELAND] Voice & Server Rules:\w", "Menu_VoiceRulesHandler")
 
-    menu_additem(iMenu, "\wRestart Round 1s \y(/rr)\w", "1")
-    menu_additem(iMenu, "\wAlltalk \yON \d(sv_alltalk 1)\w", "2")
-    menu_additem(iMenu, "\wAlltalk \yOFF \d(sv_alltalk 0)\w", "3")
-    menu_additem(iMenu, "\wMute Chat \yON \d(/off)\w", "4")
-    menu_additem(iMenu, "\wMute Chat \yOFF \d(/on)\w", "5")
-    menu_additem(iMenu, "\wSet Server Password \y(/passon)\w", "6")
-    menu_additem(iMenu, "\wRemove Server Password \y(/passoff)\w", "7")
+    menu_additem(iMenu, "\wAlltalk \yON \d(sv_alltalk 1 / /t1)\w", "1")
+    menu_additem(iMenu, "\wAlltalk \yTeam-Only \d(sv_alltalk 2 / /t2)\w", "2")
+    menu_additem(iMenu, "\wAlltalk \yReHLDS Advanced \d(sv_alltalk 3 / /t3)\w", "3")
+    menu_additem(iMenu, "\wFriendly Fire \yON \d(/ff1)\w", "4")
+    menu_additem(iMenu, "\wFriendly Fire \yOFF \d(/ff0)\w", "5")
+    menu_additem(iMenu, "\wJoin Mode: \yOpen \d(/j1)\w", "6")
+    menu_additem(iMenu, "\wJoin Mode: \yLocked \d(/j0)\w", "7")
+    menu_additem(iMenu, "\wJoin Mode: \yBlack Screen \d(/j2)\w", "8")
     menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
     menu_display(id, iMenu, 0)
 }
 
-public Menu_ServerControlHandler(id, iMenu, iItem)
+public Menu_VoiceRulesHandler(id, iMenu, iItem)
 {
     if(iItem == MENU_EXIT)
     {
@@ -2019,39 +2027,14 @@ public Menu_ServerControlHandler(id, iMenu, iItem)
 
     switch(str_to_num(szData))
     {
-        case 1: Cmd_Restart(id)
-        case 2:
-        {
-            set_cvar_num("sv_alltalk", 1)
-            client_print_color(0, print_team_default, "^4%s ^1sv_alltalk set to ^41 (ON)^1 by ^4%s^1.", g_szChatPrefix, g_szUserName[id])
-            ShowServerControlMenu(id)
-        }
-        case 3:
-        {
-            set_cvar_num("sv_alltalk", 0)
-            client_print_color(0, print_team_default, "^4%s ^1sv_alltalk set to ^40 (OFF)^1 by ^4%s^1.", g_szChatPrefix, g_szUserName[id])
-            ShowServerControlMenu(id)
-        }
-        case 4:
-        {
-            Cmd_ChatOff(id)
-            ShowServerControlMenu(id)
-        }
-        case 5:
-        {
-            Cmd_ChatOn(id)
-            ShowServerControlMenu(id)
-        }
-        case 6:
-        {
-            Cmd_PassOn(id)
-            ShowServerControlMenu(id)
-        }
-        case 7:
-        {
-            Cmd_PassOff(id)
-            ShowServerControlMenu(id)
-        }
+        case 1: { amxclient_cmd(id, "say", "/t1"); ShowVoiceAndRulesMenu(id); }
+        case 2: { amxclient_cmd(id, "say", "/t2"); ShowVoiceAndRulesMenu(id); }
+        case 3: { amxclient_cmd(id, "say", "/t3"); ShowVoiceAndRulesMenu(id); }
+        case 4: { amxclient_cmd(id, "say", "/ff1"); ShowVoiceAndRulesMenu(id); }
+        case 5: { amxclient_cmd(id, "say", "/ff0"); ShowVoiceAndRulesMenu(id); }
+        case 6: { amxclient_cmd(id, "say", "/j1"); ShowVoiceAndRulesMenu(id); }
+        case 7: { amxclient_cmd(id, "say", "/j0"); ShowVoiceAndRulesMenu(id); }
+        case 8: { amxclient_cmd(id, "say", "/j2"); ShowVoiceAndRulesMenu(id); }
         case 9: Cmd_AdminDashboard(id)
     }
     return PLUGIN_HANDLED
@@ -2062,8 +2045,9 @@ ShowMapControlMenu(id)
 {
     new iMenu = menu_create("\y[GAMELAND] Map Management:\w", "Menu_MapControlHandler")
 
-    menu_additem(iMenu, "\wOpen Standard Map Menu \d(amx_mapmenu)\w", "1")
-    menu_additem(iMenu, "\wVote Map Menu \d(amx_votemap)\w", "2")
+    menu_additem(iMenu, "\wGameLand Map Browser \y(/map)\w", "1")
+    menu_additem(iMenu, "\wVote Map Menu \y(/vm)\w", "2")
+    menu_additem(iMenu, "\dStandard AMX Map Menu \d(amx_mapmenu)\w", "3")
     menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
@@ -2084,8 +2068,9 @@ public Menu_MapControlHandler(id, iMenu, iItem)
 
     switch(str_to_num(szData))
     {
-        case 1: client_cmd(id, "amx_mapmenu")
-        case 2: client_cmd(id, "say /vm")
+        case 1: amxclient_cmd(id, "say", "/map")
+        case 2: amxclient_cmd(id, "say", "/vm")
+        case 3: client_cmd(id, "amx_mapmenu")
         case 9: Cmd_AdminDashboard(id)
     }
     return PLUGIN_HANDLED
@@ -2096,9 +2081,10 @@ ShowModerationMenu(id)
 {
     new iMenu = menu_create("\y[GAMELAND] Player Moderation:\w", "Menu_ModerationHandler")
 
-    menu_additem(iMenu, "\wKick Player Menu \d(amx_kickmenu)\w", "1")
-    menu_additem(iMenu, "\wBan Player Menu \d(amx_banmenu)\w", "2")
-    menu_additem(iMenu, "\wSlap / Slay Menu \d(amx_slapmenu)\w", "3")
+    menu_additem(iMenu, "\wKick Player Menu \y(/k)\w", "1")
+    menu_additem(iMenu, "\wBan Player Menu \y(/b)\w", "2")
+    menu_additem(iMenu, "\wUnban Player Menu \y(/ub)\w", "3")
+    menu_additem(iMenu, "\dStandard Slap Menu \d(amx_slapmenu)\w", "4")
     menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
@@ -2119,9 +2105,50 @@ public Menu_ModerationHandler(id, iMenu, iItem)
 
     switch(str_to_num(szData))
     {
-        case 1: client_cmd(id, "amx_kickmenu")
-        case 2: client_cmd(id, "amx_banmenu")
-        case 3: client_cmd(id, "amx_slapmenu")
+        case 1: amxclient_cmd(id, "say", "/k")
+        case 2: amxclient_cmd(id, "say", "/b")
+        case 3: amxclient_cmd(id, "say", "/ub")
+        case 4: client_cmd(id, "amx_slapmenu")
+        case 9: Cmd_AdminDashboard(id)
+    }
+    return PLUGIN_HANDLED
+}
+
+// --- 7. FAST SERVER TOOLS ---
+ShowServerControlMenu(id)
+{
+    new iMenu = menu_create("\y[GAMELAND] Fast Server Controls:\w", "Menu_ServerControlHandler")
+
+    menu_additem(iMenu, "\wRestart Round 1s \y(/r)\w", "1")
+    menu_additem(iMenu, "\wSet Server Password \y(/passon)\w", "2")
+    menu_additem(iMenu, "\wRemove Server Password \y(/passoff)\w", "3")
+    menu_additem(iMenu, "\wMute All Chat \y(/off)\w", "4")
+    menu_additem(iMenu, "\wUnmute All Chat \y(/on)\w", "5")
+    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_ServerControlHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[6], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    switch(str_to_num(szData))
+    {
+        case 1: amxclient_cmd(id, "say", "/r")
+        case 2: { Cmd_PassOn(id); ShowServerControlMenu(id); }
+        case 3: { Cmd_PassOff(id); ShowServerControlMenu(id); }
+        case 4: { Cmd_ChatOff(id); ShowServerControlMenu(id); }
+        case 5: { Cmd_ChatOn(id); ShowServerControlMenu(id); }
         case 9: Cmd_AdminDashboard(id)
     }
     return PLUGIN_HANDLED
