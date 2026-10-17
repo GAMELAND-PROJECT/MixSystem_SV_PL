@@ -155,7 +155,7 @@ public plugin_init()
 	LoadMaps()
 	set_task(5.0, "TaskSpecGuard", TASK_SPEC_GUARD, _, _, "b")
 	RegisterHam(Ham_Weapon_SecondaryAttack, "weapon_famas", "Ham_FamasSecondaryAttack_Pre", 0)
-	set_task(1.0, "Task_EnsureFastDuckFixSourceUpdated")
+	// set_task(1.0, "Task_EnsureFastDuckFixSourceUpdated")
 }
 
 public client_putinserver(id)
