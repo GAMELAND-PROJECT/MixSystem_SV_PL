@@ -59,6 +59,8 @@ enum TeamScore
 #define TASK_MATCH_END           3107
 #define TASK_KNIFE_VOTE          3108
 #define TASK_MIX_VOTE            3109
+#define TASK_VICTORY_PULSE       3110
+#define TASK_SHOW_LEADERBOARD    3111
 
 #define VOTE_STAY   1
 #define VOTE_SWITCH 2
@@ -90,6 +92,19 @@ new g_iSavedFrags[MAX_PLAYERS + 1]
 new g_iSavedDeaths[MAX_PLAYERS + 1]
 new bool:g_bHalftimePendingSync = false
 
+// Competitive Match Statistics
+new g_iMatchKills[MAX_PLAYERS + 1]
+new g_iMatchDeaths[MAX_PLAYERS + 1]
+new g_iMatchHS[MAX_PLAYERS + 1]
+new g_iMatchKnifeKills[MAX_PLAYERS + 1]
+new g_iMatchPlants[MAX_PLAYERS + 1]
+new g_iMatchDefuses[MAX_PLAYERS + 1]
+
+// Victory Celebration State
+new TeamName:g_iVictoryWinnerTeam = TEAM_UNASSIGNED
+new g_iVictoryPulseCount = 0
+new g_iMsgScreenFade = 0
+
 new bool:g_bRoundScored = false
 new bool:g_bChatMuted = false
 new bool:g_bPaused = false
@@ -103,7 +118,7 @@ new g_iOvertimeTriggerScore = 15
 new g_iMixEndRound = 16
 new g_szAdminFlags[16] = "c"
 new g_szAdminAccess[16] = "c"
-new g_iFreezeTimeSwap = 10
+new g_iFreezeTimeSwap = 7
 new bool:g_bAutoOvertime = true
 new g_szStartConfig[64] = "start.cfg"
 new g_szStopConfig[64] = "stop.cfg"
@@ -181,6 +196,10 @@ public plugin_init()
     RegisterHookChain(RG_CBasePlayer_Killed, "RG_CBasePlayer_Killed_Post", .post = true)
     RegisterHookChain(RG_RoundEnd, "RG_RoundEnd_Post", .post = true)
     RegisterHookChain(RG_CSGameRules_RestartRound, "RG_CSGameRules_RestartRound_Post", .post = true)
+    RegisterHookChain(RG_PlantBomb, "RG_PlantBomb_Post", .post = true)
+    RegisterHookChain(RG_CGrenade_DefuseBombEnd, "RG_CGrenade_DefuseBombEnd_Post", .post = true)
+
+    g_iMsgScreenFade = get_user_msgid("ScreenFade")
 
     // Dynamic arrays for commands
     InitCommandArrays()
@@ -488,6 +507,12 @@ public client_putinserver(id)
     g_bPlayerVotedMix[id] = false
     g_iSavedFrags[id] = 0
     g_iSavedDeaths[id] = 0
+    g_iMatchKills[id] = 0
+    g_iMatchDeaths[id] = 0
+    g_iMatchHS[id] = 0
+    g_iMatchKnifeKills[id] = 0
+    g_iMatchPlants[id] = 0
+    g_iMatchDefuses[id] = 0
 
     if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
        g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
@@ -521,6 +546,12 @@ public client_disconnected(id)
     g_bPlayerVotedMix[id] = false
     g_iSavedFrags[id] = 0
     g_iSavedDeaths[id] = 0
+    g_iMatchKills[id] = 0
+    g_iMatchDeaths[id] = 0
+    g_iMatchHS[id] = 0
+    g_iMatchKnifeKills[id] = 0
+    g_iMatchPlants[id] = 0
+    g_iMatchDefuses[id] = 0
 }
 
 // -----------------------------------------------------------------------------
@@ -572,9 +603,54 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
 
     new bool:bHeadshot = bool:get_member(iVictim, m_bHeadshotKilled)
 
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF)
+    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
+       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
     {
+        g_iMatchDeaths[iVictim]++
+
+        if(is_user_connected(iKiller) && iKiller != iVictim)
+        {
+            g_iMatchKills[iKiller]++
+            if(bHeadshot)
+            {
+                g_iMatchHS[iKiller]++
+            }
+
+            new iClip, iAmmo
+            if(get_user_weapon(iKiller, iClip, iAmmo) == 29 /* CSW_KNIFE */)
+            {
+                g_iMatchKnifeKills[iKiller]++
+            }
+        }
+
         ExecuteForward(g_hFwdPlayerKilled, g_iRet, iKiller, iVictim, bHeadshot, szKillerName, szKillerAuth)
+    }
+}
+
+public RG_PlantBomb_Post(const index, Float:vecStart[3], Float:vecVelocity[3])
+{
+    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
+       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
+    {
+        if(is_user_connected(index))
+        {
+            g_iMatchPlants[index]++
+        }
+    }
+}
+
+public RG_CGrenade_DefuseBombEnd_Post(const this, const player, bool:bDefused)
+{
+    if(!bDefused)
+        return
+
+    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
+       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
+    {
+        if(is_user_connected(player))
+        {
+            g_iMatchDefuses[player]++
+        }
     }
 }
 
@@ -796,36 +872,69 @@ TriggerHalftime()
     }
     g_bHalftimePendingSync = true
 
-    // Apply configured freeze time for halftime swap
-    set_cvar_num("mp_freezetime", g_iFreezeTimeSwap)
-
     // Synchronize scores directly with ReGameDLL engine and scoreboard
     SyncTeamScores()
 
-    // Cleanly restart round into Second Half with swap freezetime (NO sv_restart 1)
-    rg_restart_round()
-
-    // Restore player stats and sync scores
-    RestoreHalftimePlayerStats()
-
+    // Announce Halftime and upcoming 3 restarts (7s -> 5s -> 3s)
     client_print_color(0, print_team_default, "^4%s ^1=== ^4HALF TIME ^1=== Teams Swapped!", g_szChatPrefix)
     client_print_color(0, print_team_default, "^4%s ^11st Half Finished: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE])
-    client_print_color(0, print_team_default, "^4%s ^1Transferred 2nd Half Starting Score: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+    client_print_color(0, print_team_default, "^4%s ^1Transferred Starting Score: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+    client_print_color(0, print_team_default, "^4%s ^3Halftime Restarts: ^11st in ^47s^1, 2nd in ^45s^1, 3rd in ^43s ^3(LIVE)", g_szChatPrefix)
 
-    set_dhudmessage(0, 150, 255, -1.0, 0.35, 2, 0.1, 4.0, 0.1, 1.0)
-    show_dhudmessage(0, "=== HALF TIME ===\nTeams Swapped!\nScore: CT %d - %d TR\nTarget: %d Rounds", g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iMixEndRound)
+    set_dhudmessage(0, 150, 255, -1.0, 0.35, 2, 0.1, 5.0, 0.1, 1.0)
+    show_dhudmessage(0, "=== HALF TIME ===\nTeams Swapped!\nScore: CT %d - %d TR\nRestarts: 7s -> 5s -> 3s (LIVE)", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
 
-    // Safety sync tasks during freeze time
-    set_task(1.0, "Task_PostHalftimeSync")
-    set_task(2.5, "Task_PostHalftimeSync")
+    // Initial clean round restart to move players to new spawn bases
+    new iFirstWait = (g_iFreezeTimeSwap > 0) ? g_iFreezeTimeSwap : 7
+    set_cvar_num("mp_freezetime", iFirstWait)
+    rg_restart_round()
+    RestoreHalftimePlayerStats()
+
+    // Triple restart sequence: 7 seconds -> 5 seconds -> 3 seconds -> LIVE!
+    remove_task(TASK_HALFTIME_LIVE)
+    set_task(float(iFirstWait), "Task_HalftimeRestart1", TASK_HALFTIME_LIVE)
 }
 
-public Task_HalftimeRestart()
+public Task_HalftimeRestart1()
 {
     rg_restart_round()
     SyncTeamScores()
     RestoreHalftimePlayerStats()
-    client_print_color(0, print_team_default, "^4%s ^1Second Half is now ^4LIVE! ^1Good Luck!", g_szChatPrefix)
+
+    client_print_color(0, print_team_default, "^4%s ^3[1/3] Restart 1/3 Completed! ^1Next restart in ^45s^1...", g_szChatPrefix)
+    set_dhudmessage(255, 200, 0, -1.0, 0.35, 0, 0.0, 3.0, 0.1, 0.5)
+    show_dhudmessage(0, "--- RESTART 1/3 ---\nNext restart in 5 seconds...")
+
+    set_cvar_num("mp_freezetime", 5)
+    set_task(5.0, "Task_HalftimeRestart2", TASK_HALFTIME_LIVE)
+}
+
+public Task_HalftimeRestart2()
+{
+    rg_restart_round()
+    SyncTeamScores()
+    RestoreHalftimePlayerStats()
+
+    client_print_color(0, print_team_default, "^4%s ^3[2/3] Restart 2/3 Completed! ^1Final restart in ^43s ^3(LIVE)^1...", g_szChatPrefix)
+    set_dhudmessage(255, 140, 0, -1.0, 0.35, 0, 0.0, 2.5, 0.1, 0.5)
+    show_dhudmessage(0, "--- RESTART 2/3 ---\nFinal restart in 3 seconds!")
+
+    set_cvar_num("mp_freezetime", 3)
+    set_task(3.0, "Task_HalftimeRestart3", TASK_HALFTIME_LIVE)
+}
+
+public Task_HalftimeRestart3()
+{
+    set_cvar_num("mp_freezetime", 15)
+    rg_restart_round()
+    SyncTeamScores()
+    RestoreHalftimePlayerStats()
+
+    client_print_color(0, print_team_default, "^4%s ^4=== [3/3] SECOND HALF IS LIVE! === ^1Good Luck & Have Fun!", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^1Current Score: ^4CT %d ^1- ^4%d TR ^1(Target: %d)", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iMixEndRound)
+
+    set_dhudmessage(0, 255, 0, -1.0, 0.35, 2, 0.1, 4.0, 0.1, 1.0)
+    show_dhudmessage(0, "=== SECOND HALF IS LIVE! ===\nScore: CT %d - %d TR\nTarget: %d Rounds", g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iMixEndRound)
 }
 
 public Task_PostHalftimeSync()
@@ -983,16 +1092,18 @@ TriggerOvertimeHalftime()
     }
     g_bHalftimePendingSync = true
 
+    new iFirstWait = (g_iFreezeTimeSwap > 0) ? g_iFreezeTimeSwap : 7
     SyncTeamScores()
-    set_cvar_num("mp_freezetime", g_iFreezeTimeSwap)
-
+    set_cvar_num("mp_freezetime", iFirstWait)
     rg_restart_round()
     RestoreHalftimePlayerStats()
 
+    client_print_color(0, print_team_default, "^4%s ^1=== ^4OVERTIME HALF TIME ^1=== Teams Swapped!", g_szChatPrefix)
     set_dhudmessage(255, 150, 0, -1.0, 0.35, 2, 0.1, 4.0, 0.1, 1.0)
-    show_dhudmessage(0, "=== OVERTIME HALF TIME ===\nTeams Swapped!\nScore: CT %d - %d TR", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+    show_dhudmessage(0, "=== OVERTIME HALF TIME ===\nTeams Swapped!\nScore: CT %d - %d TR\nRestarts: 7s -> 5s -> 3s (LIVE)", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
 
-    set_task(1.0, "Task_PostHalftimeSync")
+    remove_task(TASK_HALFTIME_LIVE)
+    set_task(float(iFirstWait), "Task_HalftimeRestart1", TASK_HALFTIME_LIVE)
 }
 
 // -----------------------------------------------------------------------------
@@ -1005,20 +1116,14 @@ EndMatch(TeamName:iWinnerTeam)
     if(iWinnerTeam == TEAM_CT)
     {
         client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_WON_BY_X_TEAM", "CT")
-        set_dhudmessage(0, 200, 0, -1.0, 0.35, 2, 0.1, 5.0, 0.1, 1.0)
-        show_dhudmessage(0, "=== MATCH FINISHED ===\nWinner: Counter-Terrorists (%d - %d)", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
     }
     else if(iWinnerTeam == TEAM_TERRORIST)
     {
         client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_WON_BY_X_TEAM", "TERRORIST")
-        set_dhudmessage(200, 0, 0, -1.0, 0.35, 2, 0.1, 5.0, 0.1, 1.0)
-        show_dhudmessage(0, "=== MATCH FINISHED ===\nWinner: Terrorists (%d - %d)", g_iScore[TERO_SCORE], g_iScore[CT_SCORE])
     }
     else
     {
         client_print_color(0, print_team_default, "^4%s ^1Match ended in a ^3DRAW ^1(%d - %d)!", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-        set_dhudmessage(255, 255, 0, -1.0, 0.35, 2, 0.1, 5.0, 0.1, 1.0)
-        show_dhudmessage(0, "=== MATCH FINISHED ===\nResult: DRAW (%d - %d)", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
     }
 
     client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_END_SCORE",
@@ -1039,8 +1144,224 @@ EndMatch(TeamName:iWinnerTeam)
 
     ExecuteForward(g_hFwdGameOver, g_iRet, 0, iDuration, iWinnerTeam == TEAM_CT ? 'C' : 'T', 0)
 
-    // Automatically transition to Warmup after 10 seconds
-    set_task(10.0, "StartWarmup", TASK_MATCH_END)
+    // Start Victory Heartbeat / Pulsing ScreenFade Celebration ("دل دل زدن")
+    g_iVictoryWinnerTeam = iWinnerTeam
+    g_iVictoryPulseCount = 0
+
+    remove_task(TASK_VICTORY_PULSE)
+    remove_task(TASK_SHOW_LEADERBOARD)
+    remove_task(TASK_MATCH_END)
+
+    Task_VictoryPulse()
+
+    // Automatically transition to Warmup after 14 seconds
+    set_task(14.0, "StartWarmup", TASK_MATCH_END)
+}
+
+public Task_VictoryPulse()
+{
+    g_iVictoryPulseCount++
+
+    new r, g, b
+    if(g_iVictoryWinnerTeam == TEAM_TERRORIST)
+    {
+        // Pulsing Crimson Red for Terrorists
+        r = 230
+        g = 25
+        b = 25
+    }
+    else if(g_iVictoryWinnerTeam == TEAM_CT)
+    {
+        // Pulsing Vibrant Blue for Counter-Terrorists
+        r = 25
+        g = 120
+        b = 245
+    }
+    else
+    {
+        // Draw: Golden Yellow
+        r = 240
+        g = 190
+        b = 20
+    }
+
+    // ScreenFade message (0.5s fade-in, 0.25s hold, FFADE_IN fade out to clear screen)
+    if(g_iMsgScreenFade > 0)
+    {
+        message_begin(MSG_ALL, g_iMsgScreenFade)
+        write_short((1<<12) / 2) // Duration: 0.5s
+        write_short((1<<12) / 4) // Hold: 0.25s
+        write_short(0x0000)      // FFADE_IN (fade back to normal screen)
+        write_byte(r)
+        write_byte(g)
+        write_byte(b)
+        write_byte(130)          // Alpha intensity
+        message_end()
+    }
+
+    // Play victory celebration audio hit on each pulse
+    client_cmd(0, "spk buttons/bell1")
+
+    // Dynamic congratulatory DHUD banner
+    if(g_iVictoryWinnerTeam == TEAM_TERRORIST)
+    {
+        set_dhudmessage(255, 40, 40, -1.0, 0.28, 2, 0.05, 0.7, 0.05, 0.1)
+        show_dhudmessage(0, "★ ★ ★ TERRORISTS VICTORY! ★ ★ ★\nScore: %d - %d\nCongratulations to Terrorists!", g_iScore[TERO_SCORE], g_iScore[CT_SCORE])
+    }
+    else if(g_iVictoryWinnerTeam == TEAM_CT)
+    {
+        set_dhudmessage(40, 140, 255, -1.0, 0.28, 2, 0.05, 0.7, 0.05, 0.1)
+        show_dhudmessage(0, "★ ★ ★ COUNTER-TERRORISTS VICTORY! ★ ★ ★\nScore: %d - %d\nCongratulations to Counter-Terrorists!", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+    }
+    else
+    {
+        set_dhudmessage(255, 215, 0, -1.0, 0.28, 2, 0.05, 0.7, 0.05, 0.1)
+        show_dhudmessage(0, "★ ★ ★ MATCH DRAW! ★ ★ ★\nScore: %d - %d\nWell Played Everyone!", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+    }
+
+    // Pulse 5 times (every 0.75 seconds = ~3.75s)
+    if(g_iVictoryPulseCount < 5)
+    {
+        set_task(0.75, "Task_VictoryPulse", TASK_VICTORY_PULSE)
+    }
+    else
+    {
+        // After pulsing completes, show leaderboard MOTD and print chat stats
+        set_task(0.5, "Task_ShowMatchLeaderboard", TASK_SHOW_LEADERBOARD)
+    }
+}
+
+public Task_ShowMatchLeaderboard()
+{
+    // Collect all participating human players
+    new iPlayerList[MAX_PLAYERS]
+    new iPlayerScores[MAX_PLAYERS]
+    new iTotalCount = 0
+
+    for(new id = 1; id <= MAX_PLAYERS; id++)
+    {
+        if(!is_user_connected(id) || is_user_bot(id))
+            continue
+
+        new TeamName:iTeam = get_member(id, m_iTeam)
+        if(iTeam != TEAM_TERRORIST && iTeam != TEAM_CT)
+            continue
+
+        iPlayerList[iTotalCount] = id
+        // Weighted Score: Kills*3 + HS*2 + Knife*5 + Plants*3 + Defuses*3 - Deaths
+        iPlayerScores[iTotalCount] = (g_iMatchKills[id] * 3) + (g_iMatchHS[id] * 2) + (g_iMatchKnifeKills[id] * 5) + (g_iMatchPlants[id] * 3) + (g_iMatchDefuses[id] * 3) - g_iMatchDeaths[id]
+        iTotalCount++
+    }
+
+    if(iTotalCount == 0)
+        return
+
+    // Sort descending by score
+    for(new i = 0; i < iTotalCount - 1; i++)
+    {
+        for(new j = i + 1; j < iTotalCount; j++)
+        {
+            if(iPlayerScores[j] > iPlayerScores[i] || (iPlayerScores[j] == iPlayerScores[i] && g_iMatchKills[iPlayerList[j]] > g_iMatchKills[iPlayerList[i]]))
+            {
+                new iTempScore = iPlayerScores[i]
+                iPlayerScores[i] = iPlayerScores[j]
+                iPlayerScores[j] = iTempScore
+
+                new iTempId = iPlayerList[i]
+                iPlayerList[i] = iPlayerList[j]
+                iPlayerList[j] = iTempId
+            }
+        }
+    }
+
+    // Winner details
+    new szWinnerTitle[32], szWinnerColor[16]
+    if(g_iVictoryWinnerTeam == TEAM_CT)
+    {
+        copy(szWinnerTitle, charsmax(szWinnerTitle), "Counter-Terrorists")
+        copy(szWinnerColor, charsmax(szWinnerColor), "#58a6ff")
+    }
+    else if(g_iVictoryWinnerTeam == TEAM_TERRORIST)
+    {
+        copy(szWinnerTitle, charsmax(szWinnerTitle), "Terrorists")
+        copy(szWinnerColor, charsmax(szWinnerColor), "#ff7b72")
+    }
+    else
+    {
+        copy(szWinnerTitle, charsmax(szWinnerTitle), "DRAW")
+        copy(szWinnerColor, charsmax(szWinnerColor), "#ffd700")
+    }
+
+    // Build ultra-compact, professional HTML table (under 1100 bytes for GoldSrc safety)
+    static szHtml[1500]
+    new iLen = 0
+
+    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+        "<body bgcolor='#0e1117' text='#c9d1d9' style='font-family:Tahoma,sans-serif;font-size:11px;margin:8px;text-align:center'>")
+    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+        "<h3 style='color:#f5a623;margin:2px'>* GAMELAND 5v5 MATCH MVP & STATS *</h3>")
+    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+        "<font color='#8b949e'>Winner: <b style='color:%s'>%s</b> | Score: <b>CT %d : %d TR</b></font><br><br>",
+        szWinnerColor, szWinnerTitle, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+
+    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+        "<table width='100%%' border='1' bordercolor='#30363d' cellpadding='3' cellspacing='0' style='font-size:10px;text-align:center'>")
+    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+        "<tr bgcolor='#161b22' style='color:#58a6ff'><th>#</th><th align='left'>Player</th><th>K</th><th>D</th><th>K/D</th><th>HS</th><th>Knf</th><th>Plt</th><th>Def</th><th>Pts</th></tr>")
+
+    new iMaxRows = min(10, iTotalCount)
+    for(new i = 0; i < iMaxRows; i++)
+    {
+        new id = iPlayerList[i]
+        new Float:flKD = (g_iMatchDeaths[id] > 0) ? (float(g_iMatchKills[id]) / float(g_iMatchDeaths[id])) : float(g_iMatchKills[id])
+
+        new szCleanName[20]
+        copy(szCleanName, charsmax(szCleanName), g_szUserName[id])
+        replace_all(szCleanName, charsmax(szCleanName), "<", "")
+        replace_all(szCleanName, charsmax(szCleanName), ">", "")
+        replace_all(szCleanName, charsmax(szCleanName), "'", "")
+
+        if(i == 0)
+        {
+            // MVP row highlighted in Gold!
+            iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+                "<tr bgcolor='#2e2305' style='color:#ffd700;font-weight:bold'><td>[MVP]</td><td align='left'>%s</td><td>%d</td><td>%d</td><td>%.2f</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td></tr>",
+                szCleanName, g_iMatchKills[id], g_iMatchDeaths[id], flKD, g_iMatchHS[id], g_iMatchKnifeKills[id], g_iMatchPlants[id], g_iMatchDefuses[id], iPlayerScores[i])
+        }
+        else
+        {
+            iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+                "<tr><td>%d</td><td align='left'>%s</td><td>%d</td><td>%d</td><td>%.2f</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td><td><b>%d</b></td></tr>",
+                i + 1, szCleanName, g_iMatchKills[id], g_iMatchDeaths[id], flKD, g_iMatchHS[id], g_iMatchKnifeKills[id], g_iMatchPlants[id], g_iMatchDefuses[id], iPlayerScores[i])
+        }
+    }
+
+    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen, "</table></body>")
+
+    // Show MOTD to each connected player
+    new iPlayers[MAX_PLAYERS], iNum
+    get_players(iPlayers, iNum, "ch")
+    for(new i = 0; i < iNum; i++)
+    {
+        show_motd(iPlayers[i], szHtml, "GAMELAND Match Summary")
+    }
+
+    // Broadcast colored chat summary with top players and MVP
+    new iMvpId = iPlayerList[0]
+    new Float:flMvpKD = (g_iMatchDeaths[iMvpId] > 0) ? (float(g_iMatchKills[iMvpId]) / float(g_iMatchDeaths[iMvpId])) : float(g_iMatchKills[iMvpId])
+
+    client_print_color(0, print_team_default, "^4%s ^3========================================", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^3★ MATCH MVP: ^4%s ^3(Score: %d | K/D: %d/%d [%.2f])",
+        g_szChatPrefix, g_szUserName[iMvpId], iPlayerScores[0], g_iMatchKills[iMvpId], g_iMatchDeaths[iMvpId], flMvpKD)
+
+    new iChatLimit = min(3, iTotalCount)
+    for(new i = 0; i < iChatLimit; i++)
+    {
+        new id = iPlayerList[i]
+        client_print_color(0, print_team_default, "^4%s ^3#%d ^4%s ^1- ^4%d K ^1/ ^3%d D ^1(HS: ^4%d^1, Knife: ^4%d^1, Plant: ^4%d^1, Defuse: ^4%d^1)",
+            g_szChatPrefix, i + 1, g_szUserName[id], g_iMatchKills[id], g_iMatchDeaths[id], g_iMatchHS[id], g_iMatchKnifeKills[id], g_iMatchPlants[id], g_iMatchDefuses[id])
+    }
+    client_print_color(0, print_team_default, "^4%s ^3========================================", g_szChatPrefix)
 }
 
 // -----------------------------------------------------------------------------
@@ -1055,6 +1376,9 @@ public StartWarmup()
     remove_task(TASK_KNIFE_VOTE)
     remove_task(TASK_TIMEOUT_EXPIRE)
     remove_task(TASK_MIX_VOTE)
+    remove_task(TASK_VICTORY_PULSE)
+    remove_task(TASK_SHOW_LEADERBOARD)
+    remove_task(TASK_MATCH_END)
 
     g_iMatchState = STATE_WARMUP
     g_bRoundScored = false
@@ -1070,6 +1394,12 @@ public StartWarmup()
     {
         g_iSavedFrags[i] = 0
         g_iSavedDeaths[i] = 0
+        g_iMatchKills[i] = 0
+        g_iMatchDeaths[i] = 0
+        g_iMatchHS[i] = 0
+        g_iMatchKnifeKills[i] = 0
+        g_iMatchPlants[i] = 0
+        g_iMatchDefuses[i] = 0
     }
 
     set_member_game(m_iNumCTWins, 0)
@@ -1417,49 +1747,41 @@ public Task_HudDisplay()
     {
         case STATE_WARMUP:
         {
-            formatex(szMsg, charsmax(szMsg), "== [ WARMUP / DM1 ] ==^nSpawn: $16,000 | Respawn: Instant^nType /mix or /a to start match")
+            formatex(szMsg, charsmax(szMsg), "== [ WARMUP / DM1 ] ==")
             set_hudmessage(0, 220, 255, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
         case STATE_KNIFE:
         {
-            formatex(szMsg, charsmax(szMsg), "== [ KNIFE ROUND ] ==^nFight for Side Selection!^nFirst team to eliminate opponents chooses Side")
+            formatex(szMsg, charsmax(szMsg), "== [ KNIFE ROUND ] ==")
             set_hudmessage(255, 170, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
         case STATE_FIRST_HALF:
         {
-            new iRoundNum = g_iScore[CT_SCORE] + g_iScore[TERO_SCORE] + 1
-            formatex(szMsg, charsmax(szMsg), "== [ 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR^nRound %d of 15",
-                g_iScore[CT_SCORE], g_iScore[TERO_SCORE], iRoundNum)
+            formatex(szMsg, charsmax(szMsg), "== [ 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR",
+                g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
             set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
         case STATE_SECOND_HALF:
         {
-            new iRoundNum = g_iScore[CT_SCORE] + g_iScore[TERO_SCORE] + 1
-            formatex(szMsg, charsmax(szMsg), "== [ 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR^nRound %d (Target: %d) | 1st Half: %d-%d",
-                g_iScore[CT_SCORE], g_iScore[TERO_SCORE],
-                iRoundNum, g_iMixEndRound,
-                g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE])
+            formatex(szMsg, charsmax(szMsg), "== [ 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR",
+                g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
             set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
         case STATE_OVERTIME_FIRST_HALF:
         {
-            formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR^nOT Score: %d - %d (MR%d)",
-                g_iScore[CT_SCORE], g_iScore[TERO_SCORE],
-                g_iOvertimeScore[CT_SCORE], g_iOvertimeScore[TERO_SCORE],
-                g_iOvertimeRounds)
+            formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR",
+                g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
             set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
         case STATE_OVERTIME_SECOND_HALF:
         {
-            formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR^nOT Score: %d - %d (MR%d)",
-                g_iScore[CT_SCORE], g_iScore[TERO_SCORE],
-                g_iOvertimeScore[CT_SCORE], g_iOvertimeScore[TERO_SCORE],
-                g_iOvertimeRounds)
+            formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR",
+                g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
             set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
