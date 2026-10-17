@@ -147,17 +147,20 @@ new g_iKnifeVoteTimer = 0
 // CS2-style round kill streak / cards
 new g_iRoundKills[MAX_PLAYERS + 1]
 
-// Warmup Deathmatch random spawns
-new Float:g_vecSpawns[128][3]
-new Float:g_vecAngles[128][3]
-new g_iTotalSpawns = 0
+// Warmup & Revive Team-Specific Spawns (CT & TR completely separated)
+new Float:g_vecSpawnsCT[64][3]
+new Float:g_vecAnglesCT[64][3]
+new g_iTotalSpawnsCT = 0
+
+new Float:g_vecSpawnsTR[64][3]
+new Float:g_vecAnglesTR[64][3]
+new g_iTotalSpawnsTR = 0
 
 // Infinite Revive Mode (/rev1 & /rev0)
 new bool:g_bReviveMode = false
 new g_iLivePulseCount = 0
 
 // Countdown
-new g_iLiveCountdown = 3
 new g_iMatchStartTime = 0
 
 // HUD Sync
@@ -258,6 +261,27 @@ public plugin_init()
     register_clcmd("say_team /comenzi", "Cmd_ShowCommands")
     register_clcmd("say /live", "Cmd_DirectLive")
     register_clcmd("say_team /live", "Cmd_DirectLive")
+    register_clcmd("say /lv", "Cmd_DirectLive")
+    register_clcmd("say_team /lv", "Cmd_DirectLive")
+    register_clcmd("live", "Cmd_DirectLive")
+    register_clcmd("lv", "Cmd_DirectLive")
+
+    // Voice & Spectator Commands (/t1, /t2, /t3, /s1, /s0)
+    register_clcmd("say /t1", "Cmd_Alltalk1")
+    register_clcmd("say_team /t1", "Cmd_Alltalk1")
+    register_clcmd("t1", "Cmd_Alltalk1")
+    register_clcmd("say /t2", "Cmd_Alltalk2")
+    register_clcmd("say_team /t2", "Cmd_Alltalk2")
+    register_clcmd("t2", "Cmd_Alltalk2")
+    register_clcmd("say /t3", "Cmd_Alltalk3")
+    register_clcmd("say_team /t3", "Cmd_Alltalk3")
+    register_clcmd("t3", "Cmd_Alltalk3")
+    register_clcmd("say /s1", "Cmd_Spec1")
+    register_clcmd("say_team /s1", "Cmd_Spec1")
+    register_clcmd("s1", "Cmd_Spec1")
+    register_clcmd("say /s0", "Cmd_Spec0")
+    register_clcmd("say_team /s0", "Cmd_Spec0")
+    register_clcmd("s0", "Cmd_Spec0")
     register_clcmd("say /halftime", "Cmd_Halftime")
     register_clcmd("say_team /halftime", "Cmd_Halftime")
 
@@ -859,46 +883,65 @@ public Task_RemoveSpawnProtection(id)
 
 stock LoadMapSpawns()
 {
-    g_iTotalSpawns = 0
+    g_iTotalSpawnsCT = 0
+    g_iTotalSpawnsTR = 0
 
+    // Load CT Spawns: info_player_start
     new iEnt = -1
     while((iEnt = rg_find_ent_by_class(iEnt, "info_player_start")) > 0)
     {
-        if(g_iTotalSpawns >= sizeof(g_vecSpawns))
+        if(g_iTotalSpawnsCT >= sizeof(g_vecSpawnsCT))
             break
-        get_entvar(iEnt, var_origin, g_vecSpawns[g_iTotalSpawns])
-        get_entvar(iEnt, var_angles, g_vecAngles[g_iTotalSpawns])
-        g_iTotalSpawns++
+        get_entvar(iEnt, var_origin, g_vecSpawnsCT[g_iTotalSpawnsCT])
+        get_entvar(iEnt, var_angles, g_vecAnglesCT[g_iTotalSpawnsCT])
+        g_iTotalSpawnsCT++
     }
 
+    // Load Terrorist Spawns: info_player_deathmatch
     iEnt = -1
     while((iEnt = rg_find_ent_by_class(iEnt, "info_player_deathmatch")) > 0)
     {
-        if(g_iTotalSpawns >= sizeof(g_vecSpawns))
+        if(g_iTotalSpawnsTR >= sizeof(g_vecSpawnsTR))
             break
-        get_entvar(iEnt, var_origin, g_vecSpawns[g_iTotalSpawns])
-        get_entvar(iEnt, var_angles, g_vecAngles[g_iTotalSpawns])
-        g_iTotalSpawns++
+        get_entvar(iEnt, var_origin, g_vecSpawnsTR[g_iTotalSpawnsTR])
+        get_entvar(iEnt, var_angles, g_vecAnglesTR[g_iTotalSpawnsTR])
+        g_iTotalSpawnsTR++
     }
 }
 
 stock TeleportToRandomSpawn(id)
 {
-    if(g_iTotalSpawns <= 0)
-        return
+    new TeamName:team = get_member(id, m_iTeam)
+    if(team == TEAM_CT && g_iTotalSpawnsCT > 0)
+    {
+        new iIndex = random_num(0, g_iTotalSpawnsCT - 1)
+        new Float:vecOrigin[3]
+        vecOrigin[0] = g_vecSpawnsCT[iIndex][0]
+        vecOrigin[1] = g_vecSpawnsCT[iIndex][1]
+        vecOrigin[2] = g_vecSpawnsCT[iIndex][2] + 10.0
 
-    new iIndex = random_num(0, g_iTotalSpawns - 1)
-    new Float:vecOrigin[3]
-    vecOrigin[0] = g_vecSpawns[iIndex][0]
-    vecOrigin[1] = g_vecSpawns[iIndex][1]
-    vecOrigin[2] = g_vecSpawns[iIndex][2] + 10.0
+        set_entvar(id, var_origin, vecOrigin)
+        set_entvar(id, var_angles, g_vecAnglesCT[iIndex])
+        set_entvar(id, var_v_angle, g_vecAnglesCT[iIndex])
+        set_entvar(id, var_fixangle, 1)
+        set_entvar(id, var_velocity, Float:{0.0, 0.0, 0.0})
+        rg_reset_maxspeed(id)
+    }
+    else if(team == TEAM_TERRORIST && g_iTotalSpawnsTR > 0)
+    {
+        new iIndex = random_num(0, g_iTotalSpawnsTR - 1)
+        new Float:vecOrigin[3]
+        vecOrigin[0] = g_vecSpawnsTR[iIndex][0]
+        vecOrigin[1] = g_vecSpawnsTR[iIndex][1]
+        vecOrigin[2] = g_vecSpawnsTR[iIndex][2] + 10.0
 
-    set_entvar(id, var_origin, vecOrigin)
-    set_entvar(id, var_angles, g_vecAngles[iIndex])
-    set_entvar(id, var_v_angle, g_vecAngles[iIndex])
-    set_entvar(id, var_fixangle, 1)
-    set_entvar(id, var_velocity, Float:{0.0, 0.0, 0.0})
-    rg_reset_maxspeed(id)
+        set_entvar(id, var_origin, vecOrigin)
+        set_entvar(id, var_angles, g_vecAnglesTR[iIndex])
+        set_entvar(id, var_v_angle, g_vecAnglesTR[iIndex])
+        set_entvar(id, var_fixangle, 1)
+        set_entvar(id, var_velocity, Float:{0.0, 0.0, 0.0})
+        rg_reset_maxspeed(id)
+    }
 }
 
 public RG_CSGameRules_RestartRound_Post()
@@ -1139,6 +1182,7 @@ TriggerHalftime()
     // Initial clean round restart to move players to new spawn bases
     new iFirstWait = (g_iFreezeTimeSwap > 0) ? g_iFreezeTimeSwap : 7
     set_cvar_num("mp_freezetime", iFirstWait)
+    set_cvar_num("sv_alltalk", 1) // Allow all players to chat during halftime swap
     rg_restart_round()
     RestoreHalftimePlayerStats()
 
@@ -1182,10 +1226,15 @@ public Task_HalftimeRestart3()
     SyncTeamScores()
     RestoreHalftimePlayerStats()
 
+    set_cvar_num("sv_alltalk", 3)
+    if(get_cvar_pointer("allow_spectators"))
+        set_cvar_num("allow_spectators", 1)
+
     // Green ScreenFade Heartbeat & Prominent LIVE notice
     StartLiveGreenPulse()
 
     client_print_color(0, print_team_default, "^4%s ^4★ ★ ★ LIVE! LIVE! LIVE! ★ ★ ★ ^1Good Luck & Have Fun!", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^1Voice mode set to ^3Team Talk (Dead+Alive) + Spec All ^4[/t3 /s1]^1.", g_szChatPrefix)
     client_print_color(0, print_team_default, "^4%s ^1Current Score: ^4CT %d ^1- ^4%d TR ^1(Target: %d)", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iMixEndRound)
 }
 
@@ -1681,7 +1730,7 @@ public StartWarmup()
     }
 
     // Cache map spawns for Deathmatch random respawning
-    if(g_iTotalSpawns == 0)
+    if(g_iTotalSpawnsCT == 0 && g_iTotalSpawnsTR == 0)
     {
         LoadMapSpawns()
     }
@@ -1692,6 +1741,9 @@ public StartWarmup()
     set_cvar_num("mp_startmoney", g_iWarmMoney)
     set_cvar_float("mp_roundtime", 9.0)
     set_cvar_num("mp_friendlyfire", 0)
+
+    // Voice mode: Warmup is always /t1 (Alltalk 1 - everyone hears everyone)
+    set_cvar_num("sv_alltalk", 1)
 
     if(get_cvar_pointer("mp_buy_anywhere"))
         set_cvar_num("mp_buy_anywhere", 1)
@@ -1704,8 +1756,8 @@ public StartWarmup()
 
     server_cmd("sv_restart 1")
 
-    client_print_color(0, print_team_default, "^4%s ^1WarmUp / DM1 mode is now ^4ACTIVE^1! Type ^3/dm1 ^1or ^3/warm", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^1Practice Deathmatch with ^4$16,000^1! Instant random respawns active.", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^1WarmUp mode is now ^4ACTIVE^1! Voice set to ^4AllTalk ON ^3[/t1]^1.", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^1Practice with ^4$16,000^1! For infinite instant respawns type ^3/rev1^1.", g_szChatPrefix)
 }
 
 // -----------------------------------------------------------------------------
@@ -1980,22 +2032,33 @@ FinishKnifeVote()
 // -----------------------------------------------------------------------------
 StartLiveCountdown()
 {
-    g_iLiveCountdown = 3
-    set_task(1.0, "Task_LiveCountdownLoop", TASK_LIVE_COUNTDOWN, .flags = "b")
+    remove_task(TASK_LIVE_COUNTDOWN)
+
+    set_cvar_num("mp_freezetime", 2)
+
+    // Restart 1
+    server_cmd("sv_restart 1")
+    set_dhudmessage(255, 140, 0, -1.0, 0.35, 1, 0.1, 2.0, 0.05, 0.1)
+    show_dhudmessage(0, "--- RESTART 1/3 ---^nMatch starting soon...")
+    client_cmd(0, "spk buttons/bell1")
+
+    set_task(2.5, "Task_LiveRestart2", TASK_LIVE_COUNTDOWN)
 }
 
-public Task_LiveCountdownLoop()
+public Task_LiveRestart2()
 {
-    if(g_iLiveCountdown > 0)
-    {
-        set_dhudmessage(255, 100, 0, -1.0, 0.35, 1, 0.1, 0.8, 0.1, 0.1)
-        show_dhudmessage(0, "Match Starting in %d...", g_iLiveCountdown)
-        server_cmd("sv_restart 1")
-        g_iLiveCountdown--
-        return
-    }
+    // Restart 2
+    server_cmd("sv_restart 1")
+    set_dhudmessage(255, 200, 0, -1.0, 0.35, 1, 0.1, 2.0, 0.05, 0.1)
+    show_dhudmessage(0, "--- RESTART 2/3 ---^nFinal restart in 2.5 seconds...")
+    client_cmd(0, "spk buttons/bell1")
 
-    remove_task(TASK_LIVE_COUNTDOWN)
+    set_task(2.5, "Task_LiveRestart3", TASK_LIVE_COUNTDOWN)
+}
+
+public Task_LiveRestart3()
+{
+    // Final Restart 3 -> Directly enters LIVE with Green ScreenFade Pulse!
     StartMatchLive()
 }
 
@@ -2078,6 +2141,11 @@ StartMatchLive()
 
     if(get_cvar_pointer("mp_auto_reload_weapons"))
         set_cvar_num("mp_auto_reload_weapons", 0)
+
+    // Voice mode: Competitive match is always /t3 (sv_alltalk 3: teammates hear each other, spec hears all)
+    set_cvar_num("sv_alltalk", 3)
+    if(get_cvar_pointer("allow_spectators"))
+        set_cvar_num("allow_spectators", 1)
 
     g_bReviveMode = false
     server_cmd("sv_restart 1")
@@ -2223,7 +2291,7 @@ public Cmd_ReviveOn(id)
 
     g_bReviveMode = true
 
-    if(g_iTotalSpawns == 0)
+    if(g_iTotalSpawnsCT == 0 && g_iTotalSpawnsTR == 0)
     {
         LoadMapSpawns()
     }
@@ -2357,15 +2425,71 @@ public Cmd_DirectLive(id)
         Cmd_ReviveOff(0)
     }
 
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF)
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_ALREADY_STARTED")
-        return PLUGIN_HANDLED
-    }
-
     remove_task(TASK_MIX_VOTE)
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1forced ^4Direct Live^1 match!", g_szChatPrefix, g_szUserName[id])
+    remove_task(TASK_LIVE_COUNTDOWN)
+
+    new szAdmin[MAX_NAME_LENGTH]
+    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
+    else copy(szAdmin, charsmax(szAdmin), "Server")
+
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1triggered ^4LIVE^1! Starting 3 Restarts...", g_szChatPrefix, szAdmin)
     StartLiveCountdown()
+    return PLUGIN_HANDLED
+}
+
+public Cmd_Alltalk1(id)
+{
+    if(!HasAdminAccess(id)) return PLUGIN_HANDLED
+    set_cvar_num("sv_alltalk", 1)
+    new szAdmin[MAX_NAME_LENGTH]
+    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
+    else copy(szAdmin, charsmax(szAdmin), "Server")
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1set Voice Chat to ^4AllTalk ON ^3[/t1]^1.", g_szChatPrefix, szAdmin)
+    return PLUGIN_HANDLED
+}
+
+public Cmd_Alltalk2(id)
+{
+    if(!HasAdminAccess(id)) return PLUGIN_HANDLED
+    set_cvar_num("sv_alltalk", 2)
+    new szAdmin[MAX_NAME_LENGTH]
+    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
+    else copy(szAdmin, charsmax(szAdmin), "Server")
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1set Voice Chat to ^4Team Only ^3[/t2]^1.", g_szChatPrefix, szAdmin)
+    return PLUGIN_HANDLED
+}
+
+public Cmd_Alltalk3(id)
+{
+    if(!HasAdminAccess(id)) return PLUGIN_HANDLED
+    set_cvar_num("sv_alltalk", 3)
+    new szAdmin[MAX_NAME_LENGTH]
+    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
+    else copy(szAdmin, charsmax(szAdmin), "Server")
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1set Voice Chat to ^4Team Talk (Dead+Alive) + Spec All ^3[/t3]^1.", g_szChatPrefix, szAdmin)
+    return PLUGIN_HANDLED
+}
+
+public Cmd_Spec1(id)
+{
+    if(!HasAdminAccess(id)) return PLUGIN_HANDLED
+    if(get_cvar_pointer("allow_spectators")) set_cvar_num("allow_spectators", 1)
+    set_cvar_num("sv_alltalk", 3)
+    new szAdmin[MAX_NAME_LENGTH]
+    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
+    else copy(szAdmin, charsmax(szAdmin), "Server")
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1enabled Spectators & Spec Voice ^4[/s1 /t3]^1.", g_szChatPrefix, szAdmin)
+    return PLUGIN_HANDLED
+}
+
+public Cmd_Spec0(id)
+{
+    if(!HasAdminAccess(id)) return PLUGIN_HANDLED
+    if(get_cvar_pointer("allow_spectators")) set_cvar_num("allow_spectators", 0)
+    new szAdmin[MAX_NAME_LENGTH]
+    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
+    else copy(szAdmin, charsmax(szAdmin), "Server")
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1disabled Spectators ^3[/s0]^1.", g_szChatPrefix, szAdmin)
     return PLUGIN_HANDLED
 }
 
@@ -2732,7 +2856,8 @@ ShowAdminManagerMenu(id)
     new iMenu = menu_create("\y[GAMELAND] Admin Manager:\w", "Menu_AdminManagerHandler")
 
     menu_additem(iMenu, "\wAdd Admin from \yConnected Players\w", "1")
-    menu_additem(iMenu, "\wReload Admins from \yusers.ini\w", "2")
+    menu_additem(iMenu, "\rRemove Admin \y(Revoke rights & remove from users.ini)\w", "2")
+    menu_additem(iMenu, "\wReload Admins from \yusers.ini\w", "3")
     menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
@@ -2754,7 +2879,8 @@ public Menu_AdminManagerHandler(id, iMenu, iItem)
     switch(str_to_num(szData))
     {
         case 1: ShowSelectPlayerForAdmin(id)
-        case 2:
+        case 2: ShowRemoveAdminMenu(id)
+        case 3:
         {
             server_cmd("amx_reloadadmins")
             client_print_color(id, print_team_default, "^4%s ^1Admins reloaded successfully from ^4users.ini^1!", g_szChatPrefix)
@@ -2763,6 +2889,164 @@ public Menu_AdminManagerHandler(id, iMenu, iItem)
         case 9: Cmd_AdminDashboard(id)
     }
     return PLUGIN_HANDLED
+}
+
+ShowRemoveAdminMenu(id)
+{
+    new szConfigDir[128], szUsersFile[128]
+    get_configsdir(szConfigDir, charsmax(szConfigDir))
+    formatex(szUsersFile, charsmax(szUsersFile), "%s/users.ini", szConfigDir)
+
+    new iFile = fopen(szUsersFile, "rt")
+    if(!iFile)
+    {
+        client_print_color(id, print_team_default, "^4%s ^1Could not open ^4users.ini^1!", g_szChatPrefix)
+        ShowAdminManagerMenu(id)
+        return
+    }
+
+    new iMenu = menu_create("\r[GAMELAND] Select Admin to Remove:\w", "Menu_RemoveAdminHandler")
+    new szLine[256], szAuth[64], szPass[32], szFlags[36], szAccFlags[16]
+    new iCount = 0
+
+    while(!feof(iFile))
+    {
+        fgets(iFile, szLine, charsmax(szLine))
+        trim(szLine)
+
+        if(!szLine[0] || szLine[0] == ';' || szLine[0] == '#')
+            continue
+
+        szAuth[0] = EOS
+        szPass[0] = EOS
+        szFlags[0] = EOS
+        szAccFlags[0] = EOS
+
+        parse(szLine, szAuth, charsmax(szAuth), szPass, charsmax(szPass), szFlags, charsmax(szFlags), szAccFlags, charsmax(szAccFlags))
+
+        if(!szAuth[0])
+            continue
+
+        if(equal(szAuth, "loopback"))
+            continue
+
+        new szItemText[96]
+        formatex(szItemText, charsmax(szItemText), "\w%s \d[flags: %s]", szAuth, szFlags)
+        menu_additem(iMenu, szItemText, szAuth)
+        iCount++
+    }
+    fclose(iFile)
+
+    if(iCount == 0)
+    {
+        menu_destroy(iMenu)
+        client_print_color(id, print_team_default, "^4%s ^1No removable admins found in ^4users.ini^1!", g_szChatPrefix)
+        ShowAdminManagerMenu(id)
+        return
+    }
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public Menu_RemoveAdminHandler(id, iMenu, iItem)
+{
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        ShowAdminManagerMenu(id)
+        return PLUGIN_HANDLED
+    }
+
+    new szAuthToRemove[64], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szAuthToRemove, charsmax(szAuthToRemove), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    RemoveAdminFromFile(id, szAuthToRemove)
+    return PLUGIN_HANDLED
+}
+
+stock RemoveAdminFromFile(id, const szTargetAuth[])
+{
+    new szConfigDir[128], szUsersFile[128], szTempFile[128]
+    get_configsdir(szConfigDir, charsmax(szConfigDir))
+    formatex(szUsersFile, charsmax(szUsersFile), "%s/users.ini", szConfigDir)
+    formatex(szTempFile, charsmax(szTempFile), "%s/users_temp.ini", szConfigDir)
+
+    new iIn = fopen(szUsersFile, "rt")
+    if(!iIn)
+        return
+
+    new iOut = fopen(szTempFile, "wt")
+    if(!iOut)
+    {
+        fclose(iIn)
+        return
+    }
+
+    new szLine[256], szAuth[64], szPass[32], szFlags[36], szAccFlags[16]
+    new bool:bFound = false
+
+    while(!feof(iIn))
+    {
+        fgets(iIn, szLine, charsmax(szLine))
+        new szTrimmed[256]
+        copy(szTrimmed, charsmax(szTrimmed), szLine)
+        trim(szTrimmed)
+
+        if(szTrimmed[0] && szTrimmed[0] != ';' && szTrimmed[0] != '#')
+        {
+            parse(szTrimmed, szAuth, charsmax(szAuth), szPass, charsmax(szPass), szFlags, charsmax(szFlags), szAccFlags, charsmax(szAccFlags))
+            if(equal(szAuth, szTargetAuth))
+            {
+                bFound = true
+                fprintf(iOut, "; [REMOVED by %s] %s^n", g_szUserName[id], szTrimmed)
+                continue
+            }
+        }
+        fputs(iOut, szLine)
+    }
+
+    fclose(iIn)
+    fclose(iOut)
+
+    if(bFound)
+    {
+        delete_file(szUsersFile)
+        while(!rename_file(szTempFile, szUsersFile, 1) && file_exists(szTempFile))
+        {
+            break
+        }
+
+        // Reload admins
+        server_cmd("amx_reloadadmins")
+
+        // If target is connected, strip their in-memory admin flags
+        new iPlayers[MAX_PLAYERS], iNum
+        get_players(iPlayers, iNum, "ch")
+        for(new i = 0; i < iNum; i++)
+        {
+            new p = iPlayers[i]
+            new szPAuth[36], szPName[MAX_NAME_LENGTH]
+            get_user_authid(p, szPAuth, charsmax(szPAuth))
+            get_user_name(p, szPName, charsmax(szPName))
+
+            if(equal(szPAuth, szTargetAuth) || equal(szPName, szTargetAuth))
+            {
+                remove_user_flags(p, read_flags("abcdefghijklmnopqrstuv"))
+                client_print_color(p, print_team_default, "^4[GAMELAND] ^1Your Admin rights were ^3revoked^1 by ^4%s^1.", g_szUserName[id])
+            }
+        }
+
+        client_print_color(id, print_team_default, "^4%s ^1Successfully removed admin ^4%s^1 from ^3users.ini^1!", g_szChatPrefix, szTargetAuth)
+    }
+    else
+    {
+        delete_file(szTempFile)
+        client_print_color(id, print_team_default, "^4%s ^1Admin ^3%s ^1was not found in users.ini.", g_szChatPrefix, szTargetAuth)
+    }
+
+    ShowAdminManagerMenu(id)
 }
 
 ShowSelectPlayerForAdmin(id)
