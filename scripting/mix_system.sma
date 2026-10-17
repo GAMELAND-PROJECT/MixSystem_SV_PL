@@ -421,6 +421,9 @@ InitBaseHostname()
     iPos = containi(szCurrentHost, " [Knife]")
     if(iPos != -1) szCurrentHost[iPos] = EOS
 
+    new iPos2 = containi(szCurrentHost, " | CT [")
+    if(iPos2 != -1) szCurrentHost[iPos2] = EOS
+
     iPos = containi(szCurrentHost, " CT [")
     if(iPos != -1) szCurrentHost[iPos] = EOS
 
@@ -462,7 +465,7 @@ UpdateServerHostname()
     else // Match live (STATE_FIRST_HALF, STATE_SECOND_HALF, OVERTIME_FIRST_HALF, OVERTIME_SECOND_HALF)
     {
         // Exact live score format: GAMELAND CT [5] TR [7]
-        formatex(szNewHostname, charsmax(szNewHostname), "%s CT [%d] TR [%d]", 
+        formatex(szNewHostname, charsmax(szNewHostname), "%s | CT [%d] TR [%d]", 
             g_szBaseHostname, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
     }
 
@@ -3168,6 +3171,34 @@ public Menu_RemoveAdminHandler(id, iMenu, iItem)
     return PLUGIN_HANDLED
 }
 
+stock CopyFile(const szSource[], const szDest[])
+{
+    new iIn = fopen(szSource, "rt")
+    if(!iIn) return 0
+
+    new iOut = fopen(szDest, "wt")
+    if(!iOut)
+    {
+        fclose(iIn)
+        return 0
+    }
+
+    new szLine[256]
+    while(!feof(iIn))
+    {
+        szLine[0] = EOS
+        fgets(iIn, szLine, charsmax(szLine))
+        if(szLine[0])
+        {
+            fputs(iOut, szLine)
+        }
+    }
+
+    fclose(iIn)
+    fclose(iOut)
+    return 1
+}
+
 stock RemoveAdminFromFile(id, const szTargetAuth[])
 {
     new szConfigDir[128], szUsersFile[128], szTempFile[128]
@@ -3222,6 +3253,13 @@ stock RemoveAdminFromFile(id, const szTargetAuth[])
 
         // Reload admins
         server_cmd("amx_reloadadmins")
+
+        // Persist admin backup to /opt/gameland/persistent/users.ini
+        if(dir_exists("/opt/gameland/persistent"))
+        {
+            new szPersistPath[128] = "/opt/gameland/persistent/users.ini"
+            CopyFile(szUsersFile, szPersistPath)
+        }
 
         // If target is connected, strip their in-memory admin flags
         new iPlayers[MAX_PLAYERS], iNum
@@ -3424,6 +3462,13 @@ CommitAdminToFile(id, bool:bUseNick)
 
     // Reload admins into memory
     server_cmd("amx_reloadadmins")
+
+    // Persist admin backup to /opt/gameland/persistent/users.ini
+    if(dir_exists("/opt/gameland/persistent"))
+    {
+        new szPersistPath[128] = "/opt/gameland/persistent/users.ini"
+        CopyFile(szUsersFile, szPersistPath)
+    }
 
     client_print_color(id, print_team_default, "^4%s ^1Successfully added ^4%s ^1as Admin!", g_szChatPrefix, g_eAdminSession[id][SessionName])
     client_print_color(id, print_team_default, "^4%s ^1Flags: ^3%s ^1| Auth: ^3%s ^1| Type: ^3%s",
