@@ -78,9 +78,10 @@ public plugin_init()
 	register_clcmd("say_team /vm", "CmdVoteMapMenu", ADMIN_MAP)
 	register_clcmd("vm", "CmdVoteMapMenu", ADMIN_MAP)
 
-	register_clcmd("say /spec", "CmdMoveAllToSpec", ADMIN_CVAR)
-	register_clcmd("say_team /spec", "CmdMoveAllToSpec", ADMIN_CVAR)
-	register_clcmd("spec", "CmdMoveAllToSpec", ADMIN_CVAR)
+	// Handled by mix_system.sma for [Pick] hostname management
+	// register_clcmd("say /spec", "CmdMoveAllToSpec", ADMIN_CVAR)
+	// register_clcmd("say_team /spec", "CmdMoveAllToSpec", ADMIN_CVAR)
+	// register_clcmd("spec", "CmdMoveAllToSpec", ADMIN_CVAR)
 	register_clcmd("say /st", "CmdSwapTeams", ADMIN_CVAR)
 	register_clcmd("say_team /st", "CmdSwapTeams", ADMIN_CVAR)
 	register_clcmd("st", "CmdSwapTeams", ADMIN_CVAR)

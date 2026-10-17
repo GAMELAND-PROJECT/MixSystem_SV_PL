@@ -158,6 +158,10 @@ new g_iTotalSpawnsTR = 0
 
 // Infinite Revive Mode (/rev1 & /rev0)
 new bool:g_bReviveMode = false
+
+// Dynamic Hostname & Captain Pick Mode Management
+new g_szBaseHostname[64] = "GAMELAND"
+new bool:g_bPickMode = false
 new g_iLivePulseCount = 0
 
 // Countdown
@@ -243,8 +247,28 @@ public plugin_init()
 
     g_iHudSync = CreateHudSyncObj()
 
+    // Initialize Server Hostname State
+    InitBaseHostname()
+    UpdateServerHostname()
+    set_task(0.5, "Task_InitHostname")
+
     // Register HUD task
     set_task(1.0, "Task_HudDisplay", TASK_HUD_STATUS, .flags = "b")
+
+    // Mass Instant Revive All Dead Players Command (/rev)
+    register_clcmd("say /rev", "Cmd_ReviveAll")
+    register_clcmd("say_team /rev", "Cmd_ReviveAll")
+    register_clcmd("rev", "Cmd_ReviveAll")
+    register_concmd("amx_rev", "Cmd_ReviveAll", ADMIN_CFG, "- Revive all dead players immediately")
+
+    // Spectator & Captain Pick Mode (/spec)
+    register_clcmd("say /spec", "Cmd_SpecAll")
+    register_clcmd("say_team /spec", "Cmd_SpecAll")
+    register_clcmd("say /specall", "Cmd_SpecAll")
+    register_clcmd("say_team /specall", "Cmd_SpecAll")
+    register_clcmd("spec", "Cmd_SpecAll")
+    register_clcmd("specall", "Cmd_SpecAll")
+    register_concmd("amx_specall", "Cmd_SpecAll", ADMIN_CFG, "- Move all players to spectator (Captain Pick)")
 
     // Infinite Revive Mode Commands (/rev1, /rev0, /dm1)
     register_clcmd("say /rev1", "Cmd_ReviveOn")
@@ -370,6 +394,85 @@ DestroyCommandArrays()
     ArrayDestroy(g_aMoveTCmds)
     ArrayDestroy(g_aMoveSpecCmds)
     ArrayDestroy(g_aPauseCmds)
+}
+
+// -----------------------------------------------------------------------------
+// Server Hostname State Management
+// -----------------------------------------------------------------------------
+InitBaseHostname()
+{
+    new szCurrentHost[64]
+    get_cvar_string("hostname", szCurrentHost, charsmax(szCurrentHost))
+    trim(szCurrentHost)
+
+    if(!szCurrentHost[0])
+    {
+        copy(g_szBaseHostname, charsmax(g_szBaseHostname), "GAMELAND")
+        return
+    }
+
+    // Strip dynamic tags: " [WarmUp]", " [Pick]", " [Knife]", " CT ["
+    new iPos = containi(szCurrentHost, " [WarmUp]")
+    if(iPos != -1) szCurrentHost[iPos] = EOS
+
+    iPos = containi(szCurrentHost, " [Pick]")
+    if(iPos != -1) szCurrentHost[iPos] = EOS
+
+    iPos = containi(szCurrentHost, " [Knife]")
+    if(iPos != -1) szCurrentHost[iPos] = EOS
+
+    iPos = containi(szCurrentHost, " CT [")
+    if(iPos != -1) szCurrentHost[iPos] = EOS
+
+    trim(szCurrentHost)
+    if(szCurrentHost[0])
+    {
+        copy(g_szBaseHostname, charsmax(g_szBaseHostname), szCurrentHost)
+    }
+    else
+    {
+        copy(g_szBaseHostname, charsmax(g_szBaseHostname), "GAMELAND")
+    }
+}
+
+UpdateServerHostname()
+{
+    if(!g_szBaseHostname[0])
+    {
+        InitBaseHostname()
+    }
+
+    new szNewHostname[128]
+
+    if(g_bPickMode)
+    {
+        // Captain Pick Mode active (/spec triggered)
+        formatex(szNewHostname, charsmax(szNewHostname), "%s [Pick]", g_szBaseHostname)
+    }
+    else if(g_iMatchState == STATE_WARMUP)
+    {
+        // WarmUp Mode active
+        formatex(szNewHostname, charsmax(szNewHostname), "%s [WarmUp]", g_szBaseHostname)
+    }
+    else if(g_iMatchState == STATE_KNIFE)
+    {
+        // Knife Round active
+        formatex(szNewHostname, charsmax(szNewHostname), "%s [Knife]", g_szBaseHostname)
+    }
+    else // Match live (STATE_FIRST_HALF, STATE_SECOND_HALF, OVERTIME_FIRST_HALF, OVERTIME_SECOND_HALF)
+    {
+        // Exact live score format: GAMELAND CT [5] TR [7]
+        formatex(szNewHostname, charsmax(szNewHostname), "%s CT [%d] TR [%d]", 
+            g_szBaseHostname, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+    }
+
+    set_cvar_string("hostname", szNewHostname)
+}
+
+public Task_InitHostname()
+{
+    InitBaseHostname()
+    UpdateServerHostname()
 }
 
 // -----------------------------------------------------------------------------
@@ -777,7 +880,7 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
             }
             else if(g_iRoundKills[iKiller] >= 5)
             {
-                client_print_color(0, print_team_default, "^4%s ^3* * * ^4%s ^3SCORED AN ACE! * * * [ ★ ACE ★ ]", g_szChatPrefix, szKillerName)
+                client_print_color(0, print_team_default, "^4%s ^3* * * ^4%s ^3SCORED AN ACE! * * * [ * ACE * ]", g_szChatPrefix, szKillerName)
             }
 
             if(bHeadshot)
@@ -1233,7 +1336,7 @@ public Task_HalftimeRestart3()
     // Green ScreenFade Heartbeat & Prominent LIVE notice
     StartLiveGreenPulse()
 
-    client_print_color(0, print_team_default, "^4%s ^4★ ★ ★ LIVE! LIVE! LIVE! ★ ★ ★ ^1Good Luck & Have Fun!", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^4* * * LIVE! LIVE! LIVE! * * * ^1Good Luck & Have Fun!", g_szChatPrefix)
     client_print_color(0, print_team_default, "^4%s ^1Voice mode set to ^3Team Talk (Dead+Alive) + Spec All ^4[/t3 /s1]^1.", g_szChatPrefix)
     client_print_color(0, print_team_default, "^4%s ^1Current Score: ^4CT %d ^1- ^4%d TR ^1(Target: %d)", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iMixEndRound)
 }
@@ -1279,6 +1382,8 @@ stock SyncTeamScores()
         write_short(g_iScore[TERO_SCORE])
         message_end()
     }
+
+    UpdateServerHostname()
 }
 
 stock SyncPlayerScore(id)
@@ -1447,7 +1552,7 @@ EndMatch(TeamName:iWinnerTeam)
 
     ExecuteForward(g_hFwdGameOver, g_iRet, 0, iDuration, iWinnerTeam == TEAM_CT ? 'C' : 'T', 0)
 
-    // Start Victory Heartbeat / Pulsing ScreenFade Celebration ("دل دل زدن")
+    // Start Victory Heartbeat / Pulsing ScreenFade Celebration ("Heartbeat Pulse")
     g_iVictoryWinnerTeam = iWinnerTeam
     g_iVictoryPulseCount = 0
 
@@ -1523,17 +1628,17 @@ public Task_VictoryPulse()
     if(g_iVictoryWinnerTeam == TEAM_TERRORIST)
     {
         set_dhudmessage(255, 40, 40, -1.0, 0.28, 2, 0.05, 0.7, 0.05, 0.1)
-        show_dhudmessage(0, "★ ★ ★ TERRORISTS VICTORY! ★ ★ ★\nScore: %d - %d\nCongratulations to Terrorists!", g_iScore[TERO_SCORE], g_iScore[CT_SCORE])
+        show_dhudmessage(0, "* * * TERRORISTS VICTORY! * * *\nScore: %d - %d\nCongratulations to Terrorists!", g_iScore[TERO_SCORE], g_iScore[CT_SCORE])
     }
     else if(g_iVictoryWinnerTeam == TEAM_CT)
     {
         set_dhudmessage(40, 140, 255, -1.0, 0.28, 2, 0.05, 0.7, 0.05, 0.1)
-        show_dhudmessage(0, "★ ★ ★ COUNTER-TERRORISTS VICTORY! ★ ★ ★\nScore: %d - %d\nCongratulations to Counter-Terrorists!", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+        show_dhudmessage(0, "* * * COUNTER-TERRORISTS VICTORY! * * *\nScore: %d - %d\nCongratulations to Counter-Terrorists!", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
     }
     else
     {
         set_dhudmessage(255, 215, 0, -1.0, 0.28, 2, 0.05, 0.7, 0.05, 0.1)
-        show_dhudmessage(0, "★ ★ ★ MATCH DRAW! ★ ★ ★\nScore: %d - %d\nWell Played Everyone!", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+        show_dhudmessage(0, "* * * MATCH DRAW! * * *\nScore: %d - %d\nWell Played Everyone!", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
     }
 
     // Pulse 5 times (every 0.75 seconds = ~3.75s)
@@ -1668,7 +1773,7 @@ public Task_ShowMatchLeaderboard()
     new Float:flMvpKD = (g_iMatchDeaths[iMvpId] > 0) ? (float(g_iMatchKills[iMvpId]) / float(g_iMatchDeaths[iMvpId])) : float(g_iMatchKills[iMvpId])
 
     client_print_color(0, print_team_default, "^4%s ^3========================================", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^3★ MATCH MVP: ^4%s ^3(Score: %d | K/D: %d/%d [%.2f])",
+    client_print_color(0, print_team_default, "^4%s ^3* MATCH MVP: ^4%s ^3(Score: %d | K/D: %d/%d [%.2f])",
         g_szChatPrefix, g_szUserName[iMvpId], iPlayerScores[0], g_iMatchKills[iMvpId], g_iMatchDeaths[iMvpId], flMvpKD)
 
     new iChatLimit = min(3, iTotalCount)
@@ -1698,6 +1803,8 @@ public StartWarmup()
     remove_task(TASK_MATCH_END)
 
     g_iMatchState = STATE_WARMUP
+    g_bPickMode = false
+    UpdateServerHostname()
     g_bRoundScored = false
     g_bHalftimePendingSync = false
     g_iScore[CT_SCORE] = 0
@@ -1871,6 +1978,8 @@ FinishMixVote()
 public StartKnifeRound()
 {
     g_iMatchState = STATE_KNIFE
+    g_bPickMode = false
+    UpdateServerHostname()
     g_bRoundScored = false
     g_iKnifeWinnerTeam = TEAM_UNASSIGNED
     g_iVoteTR = 0
@@ -2032,6 +2141,8 @@ FinishKnifeVote()
 // -----------------------------------------------------------------------------
 StartLiveCountdown()
 {
+    g_bPickMode = false
+    UpdateServerHostname()
     remove_task(TASK_LIVE_COUNTDOWN)
 
     set_cvar_num("mp_freezetime", 2)
@@ -2063,7 +2174,7 @@ public Task_LiveRestart3()
 }
 
 // -----------------------------------------------------------------------------
-// Live Pulsing Green ScreenFade & Announcement ("دل دل زدن سبز")
+// Live Pulsing Green ScreenFade & Announcement ("Green Heartbeat Pulse")
 // -----------------------------------------------------------------------------
 stock StartLiveGreenPulse()
 {
@@ -2093,7 +2204,7 @@ public Task_LiveGreenPulse()
     client_cmd(0, "spk buttons/bell1")
 
     set_dhudmessage(0, 255, 50, -1.0, 0.35, 2, 0.1, 0.7, 0.05, 0.1)
-    show_dhudmessage(0, "★ ★ ★ LIVE! LIVE! LIVE! ★ ★ ★^nGood Luck & Have Fun!")
+    show_dhudmessage(0, "* * * LIVE! LIVE! LIVE! * * *^nGood Luck & Have Fun!")
 
     if(g_iLivePulseCount < 4)
     {
@@ -2104,6 +2215,8 @@ public Task_LiveGreenPulse()
 StartMatchLive()
 {
     g_iMatchState = STATE_FIRST_HALF
+    g_bPickMode = false
+    UpdateServerHostname()
     g_iScore[CT_SCORE] = 0
     g_iScore[TERO_SCORE] = 0
     g_iFirstHalfScore[CT_SCORE] = 0
@@ -2153,7 +2266,7 @@ StartMatchLive()
     // Green ScreenFade Heartbeat & Prominent LIVE notice
     StartLiveGreenPulse()
 
-    client_print_color(0, print_team_default, "^4%s ^4★ ★ ★ LIVE! LIVE! LIVE! ★ ★ ★ ^1Good Luck & Have Fun!", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^4* * * LIVE! LIVE! LIVE! * * * ^1Good Luck & Have Fun!", g_szChatPrefix)
 
     ExecuteForward(g_hFwdGameBeginPre, g_iRet)
 
@@ -2175,6 +2288,14 @@ StartMatchLive()
 public Task_HudDisplay()
 {
     static szMsg[256]
+
+    if(g_bPickMode)
+    {
+        formatex(szMsg, charsmax(szMsg), "== [ CAPTAIN PICK ] ==^nPick Teams (/a, /st, /spec)")
+        set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+        ShowSyncHudMsg(0, g_iHudSync, szMsg)
+        return
+    }
 
     switch(g_iMatchState)
     {
@@ -2230,7 +2351,7 @@ public Task_HudDisplay()
                 else if(iKills == 4)
                     copy(szCards, charsmax(szCards), "^n[ 4 ]")
                 else if(iKills >= 5)
-                    copy(szCards, charsmax(szCards), "^n[ ★ ACE ★ ]")
+                    copy(szCards, charsmax(szCards), "^n[ * ACE * ]")
 
                 if(g_iMatchState == STATE_FIRST_HALF)
                 {
@@ -2279,6 +2400,65 @@ bool:HasRconOrBanAccess(id)
         return true
     new iFlags = get_user_flags(id)
     return bool:(iFlags & ADMIN_RCON || iFlags & ADMIN_BAN || iFlags & ADMIN_IMMUNITY)
+}
+
+public Cmd_ReviveAll(id)
+{
+    if(!HasAdminAccess(id))
+    {
+        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+        return PLUGIN_HANDLED
+    }
+
+    if(g_iTotalSpawnsCT == 0 && g_iTotalSpawnsTR == 0)
+    {
+        LoadMapSpawns()
+    }
+
+    new iPlayers[MAX_PLAYERS], iNum, iRevived = 0
+    get_players(iPlayers, iNum, "ch")
+
+    for(new i = 0; i < iNum; i++)
+    {
+        new p = iPlayers[i]
+        if(!is_user_alive(p))
+        {
+            new TeamName:team = get_member(p, m_iTeam)
+            if(team == TEAM_TERRORIST || team == TEAM_CT)
+            {
+                rg_round_respawn(p)
+                if(g_iMatchState == STATE_WARMUP)
+                {
+                    set_member(p, m_iAccount, 16000)
+                    rg_give_item(p, "item_kevlar")
+                    rg_give_item(p, "item_assaultsuit")
+                }
+                else if(g_iMatchState == STATE_KNIFE)
+                {
+                    rg_remove_all_items(p)
+                    rg_give_item(p, "weapon_knife")
+                    rg_give_item(p, "item_kevlar")
+                }
+                TeleportToRandomSpawn(p)
+                iRevived++
+            }
+        }
+    }
+
+    new szAdmin[MAX_NAME_LENGTH]
+    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
+    else copy(szAdmin, charsmax(szAdmin), "Server")
+
+    if(iRevived > 0)
+    {
+        client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1revived all dead players (^4%d revived^1) [/rev].", g_szChatPrefix, szAdmin, iRevived)
+    }
+    else
+    {
+        client_print_color(id, print_team_default, "^4%s ^1No dead players found to revive.", g_szChatPrefix)
+    }
+
+    return PLUGIN_HANDLED
 }
 
 public Cmd_ReviveOn(id)
@@ -2389,6 +2569,9 @@ public Cmd_StartMix(id)
         return PLUGIN_HANDLED
     }
 
+    g_bPickMode = false
+    UpdateServerHostname()
+
     // Automatically deactivate Revive mode if active
     if(g_bReviveMode)
     {
@@ -2419,6 +2602,9 @@ public Cmd_DirectLive(id)
         client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
         return PLUGIN_HANDLED
     }
+
+    g_bPickMode = false
+    UpdateServerHostname()
 
     if(g_bReviveMode)
     {
@@ -2642,17 +2828,33 @@ public Cmd_PassOff(id)
 public Cmd_SpecAll(id)
 {
     if(!HasAdminAccess(id))
+    {
+        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
         return PLUGIN_HANDLED
+    }
 
     new iPlayers[MAX_PLAYERS], iNum
     get_players(iPlayers, iNum, "ch")
 
     for(new i = 0; i < iNum; i++)
     {
-        rg_set_user_team(iPlayers[i], TEAM_SPECTATOR)
+        new p = iPlayers[i]
+        if(is_user_alive(p))
+        {
+            user_silentkill(p)
+        }
+        rg_set_user_team(p, TEAM_SPECTATOR)
     }
 
-    client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "PLAYERS_MOVED_SPEC_BY_X", g_szUserName[id])
+    g_bPickMode = true
+    UpdateServerHostname()
+
+    new szAdmin[MAX_NAME_LENGTH]
+    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
+    else copy(szAdmin, charsmax(szAdmin), "Server")
+
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1moved all players to Spectator.", g_szChatPrefix, szAdmin)
+    client_print_color(0, print_team_default, "^4%s ^1Server is now in ^3Captain Pick Mode ^1[[Pick]]. Pick your teams and start ^4/mix^1!", g_szChatPrefix)
     return PLUGIN_HANDLED
 }
 
@@ -3251,7 +3453,8 @@ ShowMatchControlMenu(id)
     menu_additem(iMenu, "\wPause / Unpause Match\w", "6")
     menu_additem(iMenu, "\yTrigger Halftime Swap \d(Score & Side Swap)\w", "7")
     menu_additem(iMenu, g_bReviveMode ? "\rInfinite Revive: \y[ ACTIVE - Turn OFF ]\w" : "\yInfinite Revive: \d[ INACTIVE - Turn ON ]\w", "8")
-    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
+    menu_additem(iMenu, "\wRevive All Dead Players \y(/rev)\w", "9")
+    menu_additem(iMenu, "\d<- Back to Main Menu\w", "0")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
     menu_display(id, iMenu, 0)
@@ -3284,7 +3487,12 @@ public Menu_MatchControlHandler(id, iMenu, iItem)
             else Cmd_ReviveOn(id)
             ShowMatchControlMenu(id)
         }
-        case 9: Cmd_AdminDashboard(id)
+        case 9:
+        {
+            Cmd_ReviveAll(id)
+            ShowMatchControlMenu(id)
+        }
+        case 0: Cmd_AdminDashboard(id)
     }
     return PLUGIN_HANDLED
 }
@@ -3296,10 +3504,11 @@ ShowTeamControlMenu(id)
 
     menu_additem(iMenu, "\ySwap All Teams \d(/st)\w", "1")
     menu_additem(iMenu, "\wMove All Players to \ySpectator \d(/spec)\w", "2")
-    menu_additem(iMenu, "\wKick Spectators \d(/kspec)\w", "3")
-    menu_additem(iMenu, "\wMove Single Player to \yCT\w", "4")
-    menu_additem(iMenu, "\wMove Single Player to \yTERRORIST\w", "5")
-    menu_additem(iMenu, "\wMove Single Player to \ySPECTATOR\w", "6")
+    menu_additem(iMenu, "\wRevive All Dead Players \y(/rev)\w", "3")
+    menu_additem(iMenu, "\wKick Spectators \d(/kspec)\w", "4")
+    menu_additem(iMenu, "\wMove Single Player to \yCT\w", "5")
+    menu_additem(iMenu, "\wMove Single Player to \yTERRORIST\w", "6")
+    menu_additem(iMenu, "\wMove Single Player to \ySPECTATOR\w", "7")
     menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
@@ -3327,17 +3536,22 @@ public Menu_TeamControlHandler(id, iMenu, iItem)
         }
         case 2:
         {
-            amxclient_cmd(id, "say", "/spec")
+            Cmd_SpecAll(id)
             ShowTeamControlMenu(id)
         }
         case 3:
         {
+            Cmd_ReviveAll(id)
+            ShowTeamControlMenu(id)
+        }
+        case 4:
+        {
             amxclient_cmd(id, "say", "/kspec")
             ShowTeamControlMenu(id)
         }
-        case 4: ShowMovePlayerMenu(id, TEAM_CT)
-        case 5: ShowMovePlayerMenu(id, TEAM_TERRORIST)
-        case 6: ShowMovePlayerMenu(id, TEAM_SPECTATOR)
+        case 5: ShowMovePlayerMenu(id, TEAM_CT)
+        case 6: ShowMovePlayerMenu(id, TEAM_TERRORIST)
+        case 7: ShowMovePlayerMenu(id, TEAM_SPECTATOR)
         case 9: Cmd_AdminDashboard(id)
     }
     return PLUGIN_HANDLED
