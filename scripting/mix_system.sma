@@ -136,12 +136,20 @@ new g_iMixVoteLive = 0
 new bool:g_bPlayerVotedMix[MAX_PLAYERS + 1]
 new g_iMixVoteTimer = 0
 
-// Knife round side selection vote
+// Knife round side selection vote (TR [Red] vs CT [Blue])
 new TeamName:g_iKnifeWinnerTeam = TEAM_UNASSIGNED
-new g_iVoteStay = 0
-new g_iVoteSwitch = 0
-new bool:g_bPlayerVoted[MAX_PLAYERS + 1]
+new g_iVoteTR = 0
+new g_iVoteCT = 0
+new g_iPlayerKnifeVote[MAX_PLAYERS + 1]
 new g_iKnifeVoteTimer = 0
+
+// CS2-style round kill streak / cards
+new g_iRoundKills[MAX_PLAYERS + 1]
+
+// Warmup Deathmatch random spawns
+new Float:g_vecSpawns[128][3]
+new Float:g_vecAngles[128][3]
+new g_iTotalSpawns = 0
 
 // Countdown
 new g_iLiveCountdown = 3
@@ -198,6 +206,7 @@ public plugin_init()
     RegisterHookChain(RG_CSGameRules_RestartRound, "RG_CSGameRules_RestartRound_Post", .post = true)
     RegisterHookChain(RG_PlantBomb, "RG_PlantBomb_Post", .post = true)
     RegisterHookChain(RG_CGrenade_DefuseBombEnd, "RG_CGrenade_DefuseBombEnd_Post", .post = true)
+    RegisterHookChain(RG_CBasePlayer_MakeBomber, "RG_CBasePlayer_MakeBomber_Pre", .post = false)
 
     g_iMsgScreenFade = get_user_msgid("ScreenFade")
 
@@ -503,10 +512,11 @@ RegisterDefaultCommands()
 public client_putinserver(id)
 {
     get_user_name(id, g_szUserName[id], charsmax(g_szUserName[]))
-    g_bPlayerVoted[id] = false
     g_bPlayerVotedMix[id] = false
     g_iSavedFrags[id] = 0
     g_iSavedDeaths[id] = 0
+    g_iPlayerKnifeVote[id] = 0
+    g_iRoundKills[id] = 0
     g_iMatchKills[id] = 0
     g_iMatchDeaths[id] = 0
     g_iMatchHS[id] = 0
@@ -542,8 +552,9 @@ public client_disconnected(id)
     ExecuteForward(g_hFwdUserSave, g_iRet, id)
 
     g_szUserName[id][0] = EOS
-    g_bPlayerVoted[id] = false
     g_bPlayerVotedMix[id] = false
+    g_iPlayerKnifeVote[id] = 0
+    g_iRoundKills[id] = 0
     g_iSavedFrags[id] = 0
     g_iSavedDeaths[id] = 0
     g_iMatchKills[id] = 0
@@ -566,17 +577,24 @@ public RG_CBasePlayer_Spawn_Post(id)
     {
         case STATE_WARMUP:
         {
-            // Give $16,000 spawn money for warmup practice
+            // Give $16,000 spawn money and scatter player across map
             rg_add_account(id, g_iWarmMoney, AS_SET)
             set_member(id, m_iAccount, g_iWarmMoney)
+            rg_set_user_armor(id, 100, ARMOR_VESTHELM)
+            rg_remove_item(id, "weapon_c4")
+
+            TeleportToRandomSpawn(id)
+            set_entvar(id, var_takedamage, DAMAGE_NO)
+            set_task(2.0, "Task_RemoveSpawnProtection", id)
         }
         case STATE_KNIFE:
         {
-            // Strip all weapons and give only knife + vesthelm
+            // Strip all weapons and give only knife + Kevlar (shield 1, NO helmet) & NO C4
             rg_remove_all_items(id)
             rg_give_item(id, "weapon_knife")
-            rg_set_user_armor(id, 100, ARMOR_VESTHELM)
+            rg_set_user_armor(id, 100, ARMOR_KEVLAR)
             rg_add_account(id, 0, AS_SET)
+            rg_remove_item(id, "weapon_c4")
         }
         case STATE_FIRST_HALF, STATE_SECOND_HALF, STATE_OVERTIME_FIRST_HALF, STATE_OVERTIME_SECOND_HALF:
         {
@@ -603,6 +621,13 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
 
     new bool:bHeadshot = bool:get_member(iVictim, m_bHeadshotKilled)
 
+    // Deathmatch / Warmup Instant Respawn
+    if(g_iMatchState == STATE_WARMUP)
+    {
+        set_task(1.2, "Task_WarmupRespawn", iVictim)
+        return
+    }
+
     if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
        g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
     {
@@ -611,6 +636,22 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
         if(is_user_connected(iKiller) && iKiller != iVictim)
         {
             g_iMatchKills[iKiller]++
+            g_iRoundKills[iKiller]++
+
+            // CS2-style announcements for high kill streaks
+            if(g_iRoundKills[iKiller] == 3)
+            {
+                client_print_color(0, print_team_default, "^4%s ^4%s ^3scored a ^4TRIPLE KILL^3! [ 1 ] [ 2 ] [ 3 ]", g_szChatPrefix, szKillerName)
+            }
+            else if(g_iRoundKills[iKiller] == 4)
+            {
+                client_print_color(0, print_team_default, "^4%s ^4%s ^3scored a ^4QUAD KILL^3! [ 1 ] [ 2 ] [ 3 ] [ 4 ]", g_szChatPrefix, szKillerName)
+            }
+            else if(g_iRoundKills[iKiller] >= 5)
+            {
+                client_print_color(0, print_team_default, "^4%s ^3* * * ^4%s ^3SCORED AN ACE! * * * [ 1 ] [ 2 ] [ 3 ] [ 4 ] [ 5 ]", g_szChatPrefix, szKillerName)
+            }
+
             if(bHeadshot)
             {
                 g_iMatchHS[iKiller]++
@@ -654,11 +695,91 @@ public RG_CGrenade_DefuseBombEnd_Post(const this, const player, bool:bDefused)
     }
 }
 
+public RG_CBasePlayer_MakeBomber_Pre(const this)
+{
+    // Never give C4 during Knife Round or Warmup/DM1!
+    if(g_iMatchState == STATE_KNIFE || g_iMatchState == STATE_WARMUP)
+    {
+        SetHookChainReturn(ATYPE_BOOL, false)
+        return HC_SUPERCEDE
+    }
+    return HC_CONTINUE
+}
+
+public Task_WarmupRespawn(id)
+{
+    if(!is_user_connected(id) || is_user_alive(id) || g_iMatchState != STATE_WARMUP)
+        return
+
+    new TeamName:iTeam = get_member(id, m_iTeam)
+    if(iTeam != TEAM_TERRORIST && iTeam != TEAM_CT)
+        return
+
+    rg_round_respawn(id)
+}
+
+public Task_RemoveSpawnProtection(id)
+{
+    if(is_user_connected(id) && is_user_alive(id) && g_iMatchState == STATE_WARMUP)
+    {
+        set_entvar(id, var_takedamage, DAMAGE_AIM)
+    }
+}
+
+stock LoadMapSpawns()
+{
+    g_iTotalSpawns = 0
+
+    new iEnt = -1
+    while((iEnt = rg_find_ent_by_class(iEnt, "info_player_start")) > 0)
+    {
+        if(g_iTotalSpawns >= sizeof(g_vecSpawns))
+            break
+        get_entvar(iEnt, var_origin, g_vecSpawns[g_iTotalSpawns])
+        get_entvar(iEnt, var_angles, g_vecAngles[g_iTotalSpawns])
+        g_iTotalSpawns++
+    }
+
+    iEnt = -1
+    while((iEnt = rg_find_ent_by_class(iEnt, "info_player_deathmatch")) > 0)
+    {
+        if(g_iTotalSpawns >= sizeof(g_vecSpawns))
+            break
+        get_entvar(iEnt, var_origin, g_vecSpawns[g_iTotalSpawns])
+        get_entvar(iEnt, var_angles, g_vecAngles[g_iTotalSpawns])
+        g_iTotalSpawns++
+    }
+}
+
+stock TeleportToRandomSpawn(id)
+{
+    if(g_iTotalSpawns <= 0)
+        return
+
+    new iIndex = random_num(0, g_iTotalSpawns - 1)
+    new Float:vecOrigin[3]
+    vecOrigin[0] = g_vecSpawns[iIndex][0]
+    vecOrigin[1] = g_vecSpawns[iIndex][1]
+    vecOrigin[2] = g_vecSpawns[iIndex][2] + 10.0
+
+    set_entvar(id, var_origin, vecOrigin)
+    set_entvar(id, var_angles, g_vecAngles[iIndex])
+    set_entvar(id, var_v_angle, g_vecAngles[iIndex])
+    set_entvar(id, var_fixangle, 1)
+    set_entvar(id, var_velocity, Float:{0.0, 0.0, 0.0})
+    rg_reset_maxspeed(id)
+}
+
 public RG_CSGameRules_RestartRound_Post()
 {
-    // Reset round score lock when new round starts!
+    // Reset round score lock and round kills when new round starts!
     g_bRoundScored = false
     remove_task(TASK_END_ROUND)
+
+    for(new i = 1; i <= MAX_PLAYERS; i++)
+    {
+        g_iRoundKills[i] = 0
+    }
 
     if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
        g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
@@ -1115,11 +1236,13 @@ EndMatch(TeamName:iWinnerTeam)
 
     if(iWinnerTeam == TEAM_CT)
     {
-        client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_WON_BY_X_TEAM", "CT")
+        client_print_color(0, print_team_default, "^4%s ^3* * * ^4CONGRATULATIONS TO COUNTER-TERRORISTS! ^3* * *", g_szChatPrefix)
+        client_print_color(0, print_team_default, "^4%s ^1Counter-Terrorists won the match with score ^4%d ^1- ^3%d^1! GG WP!", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
     }
     else if(iWinnerTeam == TEAM_TERRORIST)
     {
-        client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_WON_BY_X_TEAM", "TERRORIST")
+        client_print_color(0, print_team_default, "^4%s ^3* * * ^4CONGRATULATIONS TO TERRORISTS! ^3* * *", g_szChatPrefix)
+        client_print_color(0, print_team_default, "^4%s ^1Terrorists won the match with score ^4%d ^1- ^3%d^1! GG WP!", g_szChatPrefix, g_iScore[TERO_SCORE], g_iScore[CT_SCORE])
     }
     else
     {
@@ -1199,8 +1322,22 @@ public Task_VictoryPulse()
         message_end()
     }
 
-    // Play victory celebration audio hit on each pulse
-    client_cmd(0, "spk buttons/bell1")
+    // Play official victory sound on first pulse, and audio bells on remaining pulses
+    if(g_iVictoryPulseCount == 1)
+    {
+        if(g_iVictoryWinnerTeam == TEAM_TERRORIST)
+        {
+            rg_send_audio(0, "radio/terwin.wav")
+        }
+        else if(g_iVictoryWinnerTeam == TEAM_CT)
+        {
+            rg_send_audio(0, "radio/ctwin.wav")
+        }
+    }
+    else
+    {
+        client_cmd(0, "spk buttons/bell1")
+    }
 
     // Dynamic congratulatory DHUD banner
     if(g_iVictoryWinnerTeam == TEAM_TERRORIST)
@@ -1412,17 +1549,32 @@ public StartWarmup()
         server_cmd("exec %s", g_szStopConfig)
     }
 
-    // Warmup gameplay rules: normal rounds, $16,000, buy anytime
+    // Cache map spawns for Deathmatch random respawning
+    if(g_iTotalSpawns == 0)
+    {
+        LoadMapSpawns()
+    }
+
+    // Warmup gameplay rules: Deathmatch, continuous play, $16,000, buy anywhere, no friendly fire
     set_cvar_num("mp_freezetime", 0)
-    set_cvar_num("mp_round_infinite", 0)
-    set_cvar_num("mp_buytime", 99)
+    set_cvar_num("mp_buytime", 999)
     set_cvar_num("mp_startmoney", g_iWarmMoney)
-    set_cvar_float("mp_roundtime", 1.75)
+    set_cvar_float("mp_roundtime", 9.0)
+    set_cvar_num("mp_friendlyfire", 0)
+
+    if(get_cvar_pointer("mp_buy_anywhere"))
+        set_cvar_num("mp_buy_anywhere", 1)
+
+    if(get_cvar_pointer("mp_round_infinite"))
+        set_cvar_string("mp_round_infinite", "f")
+
+    if(get_cvar_pointer("mp_auto_reload_weapons"))
+        set_cvar_num("mp_auto_reload_weapons", 1)
 
     server_cmd("sv_restart 1")
 
     client_print_color(0, print_team_default, "^4%s ^1WarmUp / DM1 mode is now ^4ACTIVE^1! Type ^3/dm1 ^1or ^3/warm", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^1Practice freely with ^4$16,000^1! Rounds reset on team elimination.", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^1Practice Deathmatch with ^4$16,000^1! Instant random respawns active.", g_szChatPrefix)
 }
 
 // -----------------------------------------------------------------------------
@@ -1538,8 +1690,8 @@ public StartKnifeRound()
     g_iMatchState = STATE_KNIFE
     g_bRoundScored = false
     g_iKnifeWinnerTeam = TEAM_UNASSIGNED
-    g_iVoteStay = 0
-    g_iVoteSwitch = 0
+    g_iVoteTR = 0
+    g_iVoteCT = 0
 
     if(g_szStopConfig[0])
     {
@@ -1557,8 +1709,8 @@ public StartKnifeRound()
 
 StartKnifeVote()
 {
-    g_iVoteStay = 0
-    g_iVoteSwitch = 0
+    g_iVoteTR = 0
+    g_iVoteCT = 0
     g_iKnifeVoteTimer = g_iKnifeDelay > 0 ? g_iKnifeDelay : 10
 
     new iPlayers[MAX_PLAYERS], iNum
@@ -1567,7 +1719,7 @@ StartKnifeVote()
     for(new i = 0; i < iNum; i++)
     {
         new id = iPlayers[i]
-        g_bPlayerVoted[id] = false
+        g_iPlayerKnifeVote[id] = 0
 
         new TeamName:team = get_member(id, m_iTeam)
         if(team == g_iKnifeWinnerTeam)
@@ -1581,10 +1733,12 @@ StartKnifeVote()
 
 ShowKnifeSideMenu(id)
 {
-    new iMenu = menu_create("\yChoose Starting Side:\w", "Menu_KnifeSideHandler")
+    new szTitle[128]
+    formatex(szTitle, charsmax(szTitle), "\yChoose Starting Side:^n\d(Change your vote anytime)^n\r[1] Terrorist: %d \d| \w[2] CT: %d", g_iVoteTR, g_iVoteCT)
+    new iMenu = menu_create(szTitle, "Menu_KnifeSideHandler")
 
-    menu_additem(iMenu, "\wStay on current side", "1")
-    menu_additem(iMenu, "\wSwitch to other side", "2")
+    menu_additem(iMenu, "\r[ Terrorist ] \d(Red Side)", "1")
+    menu_additem(iMenu, "\w[ Counter-Terrorist ] \y(Blue Side)", "2")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_NEVER)
     menu_display(id, iMenu, 0)
@@ -1592,30 +1746,42 @@ ShowKnifeSideMenu(id)
 
 public Menu_KnifeSideHandler(id, iMenu, iItem)
 {
-    if(iItem == MENU_EXIT || g_bPlayerVoted[id])
+    menu_destroy(iMenu)
+
+    if(iItem == MENU_EXIT || g_iMatchState != STATE_KNIFE)
     {
-        menu_destroy(iMenu)
         return PLUGIN_HANDLED
     }
 
     new szData[6], szName[64], iAccess, iCallback
     menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-
     new iChoice = str_to_num(szData)
-    g_bPlayerVoted[id] = true
+
+    new iOldVote = g_iPlayerKnifeVote[id]
+    if(iOldVote == 1)
+        g_iVoteTR--
+    else if(iOldVote == 2)
+        g_iVoteCT--
 
     if(iChoice == 1)
     {
-        g_iVoteStay++
-        client_print_color(id, print_team_default, "^4%s ^1You voted to ^4STAY^1.", g_szChatPrefix)
+        g_iVoteTR++
+        g_iPlayerKnifeVote[id] = 1
+        client_print_color(id, print_team_default, "^4%s ^1You voted for ^3Terrorist ^1(Red Side). (TR: ^4%d ^1| CT: ^4%d^1)", g_szChatPrefix, g_iVoteTR, g_iVoteCT)
     }
     else
     {
-        g_iVoteSwitch++
-        client_print_color(id, print_team_default, "^4%s ^1You voted to ^4SWITCH^1.", g_szChatPrefix)
+        g_iVoteCT++
+        g_iPlayerKnifeVote[id] = 2
+        client_print_color(id, print_team_default, "^4%s ^1You voted for ^4Counter-Terrorist ^1(Blue Side). (TR: ^4%d ^1| CT: ^4%d^1)", g_szChatPrefix, g_iVoteTR, g_iVoteCT)
     }
 
-    menu_destroy(iMenu)
+    // Re-display menu so player can switch choice at any time
+    if(task_exists(TASK_KNIFE_VOTE))
+    {
+        ShowKnifeSideMenu(id)
+    }
+
     return PLUGIN_HANDLED
 }
 
@@ -1631,7 +1797,7 @@ public Task_KnifeVoteCountdown()
     }
 
     set_hudmessage(0, 200, 255, -1.0, 0.25, 0, 0.0, 0.9, 0.0, 0.1)
-    show_hudmessage(0, "Side Choice Vote: %d seconds left\nStay: %d | Switch: %d", g_iKnifeVoteTimer, g_iVoteStay, g_iVoteSwitch)
+    show_hudmessage(0, "Side Choice Vote: %d seconds left\nTerrorist (Red): %d | Counter-Terrorist (Blue): %d", g_iKnifeVoteTimer, g_iVoteTR, g_iVoteCT)
 }
 
 FinishKnifeVote()
@@ -1644,19 +1810,23 @@ FinishKnifeVote()
         menu_cancel(iPlayers[i])
     }
 
-    new bool:bDoSwitch = (g_iVoteSwitch > g_iVoteStay)
+    new TeamName:iChosenSide = (g_iVoteTR > g_iVoteCT) ? TEAM_TERRORIST : TEAM_CT
 
-    if(bDoSwitch)
+    client_print_color(0, print_team_default, "^4%s ^1Winning team chose: ^4%s^1! (TR: ^3%d ^1votes | CT: ^4%d ^1votes)",
+        g_szChatPrefix, (iChosenSide == TEAM_TERRORIST) ? "Terrorist" : "Counter-Terrorist", g_iVoteTR, g_iVoteCT)
+
+    // If the winning team selected a different side than their current one, swap!
+    if(g_iKnifeWinnerTeam != iChosenSide)
     {
-        client_print_color(0, print_team_default, "^4%s %L %L", g_szChatPrefix, LANG_SERVER, "TEAM_VOTED", LANG_SERVER, "SWITCH")
+        client_print_color(0, print_team_default, "^4%s ^1Swapping teams to match chosen side!", g_szChatPrefix)
         rg_swap_all_players()
     }
     else
     {
-        client_print_color(0, print_team_default, "^4%s %L %L", g_szChatPrefix, LANG_SERVER, "TEAM_VOTED", LANG_SERVER, "STAY")
+        client_print_color(0, print_team_default, "^4%s ^1Teams stay on their current sides!", g_szChatPrefix)
     }
 
-    // Direct transition into LIVE match countdown (ZERO demo menus)
+    // Direct transition into LIVE match countdown
     StartLiveCountdown()
 }
 
@@ -1714,6 +1884,16 @@ StartMatchLive()
     set_cvar_num("mp_buytime", 15)
     set_cvar_num("mp_startmoney", 800)
     set_cvar_float("mp_roundtime", 1.75)
+    set_cvar_num("mp_friendlyfire", 0)
+
+    if(get_cvar_pointer("mp_buy_anywhere"))
+        set_cvar_num("mp_buy_anywhere", 0)
+
+    if(get_cvar_pointer("mp_round_infinite"))
+        set_cvar_string("mp_round_infinite", "0")
+
+    if(get_cvar_pointer("mp_auto_reload_weapons"))
+        set_cvar_num("mp_auto_reload_weapons", 0)
 
     server_cmd("sv_restart 1")
 
@@ -1757,33 +1937,67 @@ public Task_HudDisplay()
             set_hudmessage(255, 170, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
-        case STATE_FIRST_HALF:
+        case STATE_FIRST_HALF, STATE_SECOND_HALF, STATE_OVERTIME_FIRST_HALF, STATE_OVERTIME_SECOND_HALF:
         {
-            formatex(szMsg, charsmax(szMsg), "== [ 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR",
-                g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-            set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-            ShowSyncHudMsg(0, g_iHudSync, szMsg)
-        }
-        case STATE_SECOND_HALF:
-        {
-            formatex(szMsg, charsmax(szMsg), "== [ 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR",
-                g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-            set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-            ShowSyncHudMsg(0, g_iHudSync, szMsg)
-        }
-        case STATE_OVERTIME_FIRST_HALF:
-        {
-            formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR",
-                g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-            set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-            ShowSyncHudMsg(0, g_iHudSync, szMsg)
-        }
-        case STATE_OVERTIME_SECOND_HALF:
-        {
-            formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR",
-                g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-            set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-            ShowSyncHudMsg(0, g_iHudSync, szMsg)
+            new iPlayers[MAX_PLAYERS], iNum
+            get_players(iPlayers, iNum, "ch")
+
+            for(new p = 0; p < iNum; p++)
+            {
+                new id = iPlayers[p]
+                new iTarget = id
+
+                if(!is_user_alive(id))
+                {
+                    new iSpec = get_entvar(id, var_iuser2)
+                    if(1 <= iSpec <= MAX_PLAYERS && is_user_alive(iSpec))
+                    {
+                        iTarget = iSpec
+                    }
+                }
+
+                new szCards[64] = ""
+                new iKills = (1 <= iTarget <= MAX_PLAYERS && is_user_alive(iTarget)) ? g_iRoundKills[iTarget] : 0
+
+                // CS2-style kill cards
+                if(iKills == 1)
+                    copy(szCards, charsmax(szCards), "^n[ 1 ]")
+                else if(iKills == 2)
+                    copy(szCards, charsmax(szCards), "^n[ 1 ] [ 2 ]")
+                else if(iKills == 3)
+                    copy(szCards, charsmax(szCards), "^n[ 1 ] [ 2 ] [ 3 ]  (TRIPLE)")
+                else if(iKills == 4)
+                    copy(szCards, charsmax(szCards), "^n[ 1 ] [ 2 ] [ 3 ] [ 4 ]  (MULTI)")
+                else if(iKills >= 5)
+                    copy(szCards, charsmax(szCards), "^n[ 1 ] [ 2 ] [ 3 ] [ 4 ] [ 5 ]  * ACE *")
+
+                if(g_iMatchState == STATE_FIRST_HALF)
+                {
+                    formatex(szMsg, charsmax(szMsg), "== [ 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
+                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
+                    set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+                }
+                else if(g_iMatchState == STATE_SECOND_HALF)
+                {
+                    formatex(szMsg, charsmax(szMsg), "== [ 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
+                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
+                    set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+                }
+                else if(g_iMatchState == STATE_OVERTIME_FIRST_HALF)
+                {
+                    formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
+                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
+                    set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+                }
+                else if(g_iMatchState == STATE_OVERTIME_SECOND_HALF)
+                {
+                    formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
+                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
+                    set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+                }
+
+                ShowSyncHudMsg(id, g_iHudSync, szMsg)
+            }
         }
     }
 }
