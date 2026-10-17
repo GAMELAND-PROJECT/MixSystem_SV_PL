@@ -59,6 +59,7 @@ enum TeamScore
 #define TASK_MATCH_END           3107
 #define TASK_KNIFE_VOTE          3108
 #define TASK_MIX_VOTE            3109
+#define TASK_LIVE_PULSE          3112
 #define TASK_VICTORY_PULSE       3110
 #define TASK_SHOW_LEADERBOARD    3111
 
@@ -151,6 +152,10 @@ new Float:g_vecSpawns[128][3]
 new Float:g_vecAngles[128][3]
 new g_iTotalSpawns = 0
 
+// Infinite Revive Mode (/rev1 & /rev0)
+new bool:g_bReviveMode = false
+new g_iLivePulseCount = 0
+
 // Countdown
 new g_iLiveCountdown = 3
 new g_iMatchStartTime = 0
@@ -202,7 +207,9 @@ public plugin_init()
     // ReAPI HookChains
     RegisterHookChain(RG_CBasePlayer_Spawn, "RG_CBasePlayer_Spawn_Post", .post = true)
     RegisterHookChain(RG_CBasePlayer_Killed, "RG_CBasePlayer_Killed_Post", .post = true)
+    RegisterHookChain(RG_RoundEnd, "RG_RoundEnd_Pre", .post = false)
     RegisterHookChain(RG_RoundEnd, "RG_RoundEnd_Post", .post = true)
+    RegisterHookChain(RG_CSGameRules_CheckWinConditions, "RG_CSGameRules_CheckWinConditions_Pre", .post = false)
     RegisterHookChain(RG_CSGameRules_RestartRound, "RG_CSGameRules_RestartRound_Post", .post = true)
     RegisterHookChain(RG_PlantBomb, "RG_PlantBomb_Post", .post = true)
     RegisterHookChain(RG_CGrenade_DefuseBombEnd, "RG_CGrenade_DefuseBombEnd_Post", .post = true)
@@ -235,6 +242,16 @@ public plugin_init()
 
     // Register HUD task
     set_task(1.0, "Task_HudDisplay", TASK_HUD_STATUS, .flags = "b")
+
+    // Infinite Revive Mode Commands (/rev1, /rev0, /dm1)
+    register_clcmd("say /rev1", "Cmd_ReviveOn")
+    register_clcmd("say_team /rev1", "Cmd_ReviveOn")
+    register_clcmd("say /rev0", "Cmd_ReviveOff")
+    register_clcmd("say_team /rev0", "Cmd_ReviveOff")
+    register_clcmd("say /dm1", "Cmd_LegacyDm")
+    register_clcmd("say_team /dm1", "Cmd_LegacyDm")
+    register_concmd("amx_rev1", "Cmd_ReviveOn", ADMIN_CFG, "- Enable Infinite Revive mode")
+    register_concmd("amx_rev0", "Cmd_ReviveOff", ADMIN_CFG, "- Disable Infinite Revive mode")
 
     // Standard client commands fallback
     register_clcmd("say /comenzi", "Cmd_ShowCommands")
@@ -457,9 +474,7 @@ LoadConfiguration()
     }
     fclose(iFile)
 
-    // Make sure /dm1 is always explicitly registered for Warmup
-    RegisterSingleCmd("say /dm1", "Cmd_Warmup", g_aWarmCmds)
-    RegisterSingleCmd("say_team /dm1", "Cmd_Warmup", g_aWarmCmds)
+    // Make sure /warm is always explicitly registered for Warmup
     RegisterSingleCmd("say /warm", "Cmd_Warmup", g_aWarmCmds)
     RegisterSingleCmd("say_team /warm", "Cmd_Warmup", g_aWarmCmds)
 }
@@ -488,8 +503,6 @@ RegisterSingleCmd(const szCmd[], const szFunction[], Array:aHolder)
 
 RegisterDefaultCommands()
 {
-    RegisterSingleCmd("say /dm1", "Cmd_Warmup", g_aWarmCmds)
-    RegisterSingleCmd("say_team /dm1", "Cmd_Warmup", g_aWarmCmds)
     RegisterSingleCmd("say /warm", "Cmd_Warmup", g_aWarmCmds)
     RegisterSingleCmd("say_team /warm", "Cmd_Warmup", g_aWarmCmds)
     RegisterSingleCmd("say /mix", "Cmd_StartMix", g_aStartCmds)
@@ -573,6 +586,18 @@ public RG_CBasePlayer_Spawn_Post(id)
     if(!is_user_alive(id))
         return
 
+    if(g_bReviveMode)
+    {
+        rg_add_account(id, 16000, AS_SET)
+        set_member(id, m_iAccount, 16000)
+        rg_set_user_armor(id, 100, ARMOR_VESTHELM)
+        rg_remove_item(id, "weapon_c4")
+        TeleportToRandomSpawn(id)
+        set_entvar(id, var_takedamage, DAMAGE_NO)
+        set_task(2.0, "Task_RemoveSpawnProtection", id)
+        return
+    }
+
     switch(g_iMatchState)
     {
         case STATE_WARMUP:
@@ -607,6 +632,32 @@ public RG_CBasePlayer_Spawn_Post(id)
     }
 }
 
+// -----------------------------------------------------------------------------
+// Win Condition & Round End Interceptors (Infinite Revive Protection)
+// -----------------------------------------------------------------------------
+public RG_CSGameRules_CheckWinConditions_Pre()
+{
+    // Supercede win condition checks completely during /rev1 mode (prevents 1v1 duel round ends!)
+    if(g_bReviveMode)
+    {
+        return HC_SUPERCEDE
+    }
+    return HC_CONTINUE
+}
+
+public RG_RoundEnd_Pre(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
+{
+    // Block any round ending during /rev1 mode unless an explicit server/game restart occurs
+    if(g_bReviveMode)
+    {
+        if(event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
+            return HC_CONTINUE
+
+        return HC_SUPERCEDE
+    }
+    return HC_CONTINUE
+}
+
 public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
 {
     if(!is_user_connected(iVictim))
@@ -621,10 +672,63 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
 
     new bool:bHeadshot = bool:get_member(iVictim, m_bHeadshotKilled)
 
-    // Deathmatch / Warmup Instant Respawn
+    // 1. Infinite Revive Mode (/rev1): Instant respawn, round NEVER ends (even 1v1 duels)
+    if(g_bReviveMode)
+    {
+        set_task(1.0, "Task_RevivePlayer", iVictim)
+        return
+    }
+
+    // 2. Standard Warmup Mode (/warm)
     if(g_iMatchState == STATE_WARMUP)
     {
         set_task(1.2, "Task_WarmupRespawn", iVictim)
+        return
+    }
+
+    // 3. Knife Round Elimination Detection: Instant winner detection & menu trigger
+    if(g_iMatchState == STATE_KNIFE)
+    {
+        new iAliveCT = 0, iAliveTR = 0
+        new iPlayers[MAX_PLAYERS], iNum
+        get_players(iPlayers, iNum, "a")
+
+        for(new i = 0; i < iNum; i++)
+        {
+            new id = iPlayers[i]
+            if(id == iVictim)
+                continue
+
+            new TeamName:team = get_member(id, m_iTeam)
+            if(team == TEAM_CT)
+                iAliveCT++
+            else if(team == TEAM_TERRORIST)
+                iAliveTR++
+        }
+
+        if(iAliveCT == 0 || iAliveTR == 0)
+        {
+            if(!g_bRoundScored)
+            {
+                g_bRoundScored = true
+                if(iAliveCT > 0)
+                    g_iKnifeWinnerTeam = TEAM_CT
+                else if(iAliveTR > 0)
+                    g_iKnifeWinnerTeam = TEAM_TERRORIST
+                else
+                    g_iKnifeWinnerTeam = TEAM_CT
+
+                client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "KNIFE_ROUND_WON_BY_X_TEAM", g_iKnifeWinnerTeam == TEAM_CT ? "CT" : "TERRORIST")
+
+                if(g_iKnifeWinnerTeam == TEAM_CT)
+                    rg_send_audio(0, "radio/ctwin.wav")
+                else
+                    rg_send_audio(0, "radio/terwin.wav")
+
+                rg_round_end(4.0, g_iKnifeWinnerTeam == TEAM_CT ? WINSTATUS_CTS : WINSTATUS_TERRORISTS, ROUND_TERRORISTS_ESCAPED, "Knife Round Finished", "")
+                set_task(0.8, "Task_StartKnifeVoteDelayed")
+            }
+        }
         return
     }
 
@@ -641,15 +745,15 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
             // CS2-style announcements for high kill streaks
             if(g_iRoundKills[iKiller] == 3)
             {
-                client_print_color(0, print_team_default, "^4%s ^4%s ^3scored a ^4TRIPLE KILL^3! [ 1 ] [ 2 ] [ 3 ]", g_szChatPrefix, szKillerName)
+                client_print_color(0, print_team_default, "^4%s ^4%s ^3scored a ^4TRIPLE KILL^3! [ 3 ]", g_szChatPrefix, szKillerName)
             }
             else if(g_iRoundKills[iKiller] == 4)
             {
-                client_print_color(0, print_team_default, "^4%s ^4%s ^3scored a ^4QUAD KILL^3! [ 1 ] [ 2 ] [ 3 ] [ 4 ]", g_szChatPrefix, szKillerName)
+                client_print_color(0, print_team_default, "^4%s ^4%s ^3scored a ^4QUAD KILL^3! [ 4 ]", g_szChatPrefix, szKillerName)
             }
             else if(g_iRoundKills[iKiller] >= 5)
             {
-                client_print_color(0, print_team_default, "^4%s ^3* * * ^4%s ^3SCORED AN ACE! * * * [ 1 ] [ 2 ] [ 3 ] [ 4 ] [ 5 ]", g_szChatPrefix, szKillerName)
+                client_print_color(0, print_team_default, "^4%s ^3* * * ^4%s ^3SCORED AN ACE! * * * [ ★ ACE ★ ]", g_szChatPrefix, szKillerName)
             }
 
             if(bHeadshot)
@@ -697,13 +801,40 @@ public RG_CGrenade_DefuseBombEnd_Post(const this, const player, bool:bDefused)
 
 public RG_CBasePlayer_MakeBomber_Pre(const this)
 {
-    // Never give C4 during Knife Round or Warmup/DM1!
-    if(g_iMatchState == STATE_KNIFE || g_iMatchState == STATE_WARMUP)
+    // Never give C4 during Knife Round, Warmup, or Infinite Revive!
+    if(g_iMatchState == STATE_KNIFE || g_iMatchState == STATE_WARMUP || g_bReviveMode)
     {
         SetHookChainReturn(ATYPE_BOOL, false)
         return HC_SUPERCEDE
     }
     return HC_CONTINUE
+}
+
+public Task_RevivePlayer(id)
+{
+    if(!g_bReviveMode)
+        return
+
+    if(!is_user_connected(id) || is_user_alive(id))
+        return
+
+    new TeamName:iTeam = get_member(id, m_iTeam)
+    if(iTeam != TEAM_TERRORIST && iTeam != TEAM_CT)
+        return
+
+    rg_round_respawn(id)
+    set_member(id, m_iAccount, 16000)
+    rg_give_item(id, "item_kevlar")
+    rg_give_item(id, "item_assaultsuit")
+    TeleportToRandomSpawn(id)
+}
+
+public Task_StartKnifeVoteDelayed()
+{
+    if(g_iMatchState == STATE_KNIFE)
+    {
+        StartKnifeVote()
+    }
 }
 
 public Task_WarmupRespawn(id)
@@ -1051,11 +1182,11 @@ public Task_HalftimeRestart3()
     SyncTeamScores()
     RestoreHalftimePlayerStats()
 
-    client_print_color(0, print_team_default, "^4%s ^4=== [3/3] SECOND HALF IS LIVE! === ^1Good Luck & Have Fun!", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^1Current Score: ^4CT %d ^1- ^4%d TR ^1(Target: %d)", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iMixEndRound)
+    // Green ScreenFade Heartbeat & Prominent LIVE notice
+    StartLiveGreenPulse()
 
-    set_dhudmessage(0, 255, 0, -1.0, 0.35, 2, 0.1, 4.0, 0.1, 1.0)
-    show_dhudmessage(0, "=== SECOND HALF IS LIVE! ===\nScore: CT %d - %d TR\nTarget: %d Rounds", g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iMixEndRound)
+    client_print_color(0, print_team_default, "^4%s ^4★ ★ ★ LIVE! LIVE! LIVE! ★ ★ ★ ^1Good Luck & Have Fun!", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^1Current Score: ^4CT %d ^1- ^4%d TR ^1(Target: %d)", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iMixEndRound)
 }
 
 public Task_PostHalftimeSync()
@@ -1692,6 +1823,7 @@ public StartKnifeRound()
     g_iKnifeWinnerTeam = TEAM_UNASSIGNED
     g_iVoteTR = 0
     g_iVoteCT = 0
+    g_bReviveMode = false
 
     if(g_szStopConfig[0])
     {
@@ -1701,6 +1833,18 @@ public StartKnifeRound()
     set_cvar_num("mp_freezetime", 3)
     set_cvar_num("mp_buytime", 0)
     set_cvar_float("mp_roundtime", 35.0)
+
+    if(get_cvar_pointer("mp_round_infinite"))
+        set_cvar_string("mp_round_infinite", "0")
+
+    if(get_cvar_pointer("mp_buy_anywhere"))
+        set_cvar_num("mp_buy_anywhere", 0)
+
+    if(get_cvar_pointer("mp_auto_reload_weapons"))
+        set_cvar_num("mp_auto_reload_weapons", 0)
+
+    remove_task(TASK_KNIFE_VOTE)
+    remove_task(TASK_LIVE_PULSE)
 
     server_cmd("sv_restart 1")
 
@@ -1746,15 +1890,16 @@ ShowKnifeSideMenu(id)
 
 public Menu_KnifeSideHandler(id, iMenu, iItem)
 {
-    menu_destroy(iMenu)
-
     if(iItem == MENU_EXIT || g_iMatchState != STATE_KNIFE)
     {
+        menu_destroy(iMenu)
         return PLUGIN_HANDLED
     }
 
     new szData[6], szName[64], iAccess, iCallback
     menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
     new iChoice = str_to_num(szData)
 
     new iOldVote = g_iPlayerKnifeVote[id]
@@ -1854,6 +1999,45 @@ public Task_LiveCountdownLoop()
     StartMatchLive()
 }
 
+// -----------------------------------------------------------------------------
+// Live Pulsing Green ScreenFade & Announcement ("دل دل زدن سبز")
+// -----------------------------------------------------------------------------
+stock StartLiveGreenPulse()
+{
+    g_iLivePulseCount = 0
+    remove_task(TASK_LIVE_PULSE)
+    Task_LiveGreenPulse()
+}
+
+public Task_LiveGreenPulse()
+{
+    g_iLivePulseCount++
+
+    // Neon Green pulsing ScreenFade
+    if(g_iMsgScreenFade > 0)
+    {
+        message_begin(MSG_ALL, g_iMsgScreenFade)
+        write_short((1<<12) / 2) // Duration: 0.5s fade
+        write_short((1<<12) / 4) // Hold: 0.25s
+        write_short(0x0000)      // FFADE_IN (fade back to normal)
+        write_byte(20)           // R
+        write_byte(235)          // G
+        write_byte(40)           // B
+        write_byte(125)          // Alpha intensity
+        message_end()
+    }
+
+    client_cmd(0, "spk buttons/bell1")
+
+    set_dhudmessage(0, 255, 50, -1.0, 0.35, 2, 0.1, 0.7, 0.05, 0.1)
+    show_dhudmessage(0, "★ ★ ★ LIVE! LIVE! LIVE! ★ ★ ★^nGood Luck & Have Fun!")
+
+    if(g_iLivePulseCount < 4)
+    {
+        set_task(0.75, "Task_LiveGreenPulse", TASK_LIVE_PULSE)
+    }
+}
+
 StartMatchLive()
 {
     g_iMatchState = STATE_FIRST_HALF
@@ -1895,12 +2079,13 @@ StartMatchLive()
     if(get_cvar_pointer("mp_auto_reload_weapons"))
         set_cvar_num("mp_auto_reload_weapons", 0)
 
+    g_bReviveMode = false
     server_cmd("sv_restart 1")
 
-    set_dhudmessage(0, 255, 0, -1.0, 0.30, 2, 0.1, 4.0, 0.1, 1.0)
-    show_dhudmessage(0, "=== MATCH IS LIVE! ===\nGL & HF!")
+    // Green ScreenFade Heartbeat & Prominent LIVE notice
+    StartLiveGreenPulse()
 
-    client_print_color(0, print_team_default, "^4%s ^1=== MATCH IS ^4LIVE^1! Good Luck & Have Fun! ===", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^4★ ★ ★ LIVE! LIVE! LIVE! ★ ★ ★ ^1Good Luck & Have Fun!", g_szChatPrefix)
 
     ExecuteForward(g_hFwdGameBeginPre, g_iRet)
 
@@ -1927,8 +2112,16 @@ public Task_HudDisplay()
     {
         case STATE_WARMUP:
         {
-            formatex(szMsg, charsmax(szMsg), "== [ WARMUP / DM1 ] ==")
-            set_hudmessage(0, 220, 255, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+            if(g_bReviveMode)
+            {
+                formatex(szMsg, charsmax(szMsg), "== [ WARMUP - REVIVE ON ] ==")
+                set_hudmessage(0, 255, 120, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+            }
+            else
+            {
+                formatex(szMsg, charsmax(szMsg), "== [ WARMUP ] ==")
+                set_hudmessage(0, 220, 255, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+            }
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
         case STATE_KNIFE:
@@ -1959,17 +2152,17 @@ public Task_HudDisplay()
                 new szCards[64] = ""
                 new iKills = (1 <= iTarget <= MAX_PLAYERS && is_user_alive(iTarget)) ? g_iRoundKills[iTarget] : 0
 
-                // CS2-style kill cards
+                // Single dynamic kill badge replacing itself in place: 1 -> 2 -> 3 -> 4 -> ACE
                 if(iKills == 1)
                     copy(szCards, charsmax(szCards), "^n[ 1 ]")
                 else if(iKills == 2)
-                    copy(szCards, charsmax(szCards), "^n[ 1 ] [ 2 ]")
+                    copy(szCards, charsmax(szCards), "^n[ 2 ]")
                 else if(iKills == 3)
-                    copy(szCards, charsmax(szCards), "^n[ 1 ] [ 2 ] [ 3 ]  (TRIPLE)")
+                    copy(szCards, charsmax(szCards), "^n[ 3 ]")
                 else if(iKills == 4)
-                    copy(szCards, charsmax(szCards), "^n[ 1 ] [ 2 ] [ 3 ] [ 4 ]  (MULTI)")
+                    copy(szCards, charsmax(szCards), "^n[ 4 ]")
                 else if(iKills >= 5)
-                    copy(szCards, charsmax(szCards), "^n[ 1 ] [ 2 ] [ 3 ] [ 4 ] [ 5 ]  * ACE *")
+                    copy(szCards, charsmax(szCards), "^n[ ★ ACE ★ ]")
 
                 if(g_iMatchState == STATE_FIRST_HALF)
                 {
@@ -2020,12 +2213,118 @@ bool:HasRconOrBanAccess(id)
     return bool:(iFlags & ADMIN_RCON || iFlags & ADMIN_BAN || iFlags & ADMIN_IMMUNITY)
 }
 
+public Cmd_ReviveOn(id)
+{
+    if(!HasAdminAccess(id))
+    {
+        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+        return PLUGIN_HANDLED
+    }
+
+    g_bReviveMode = true
+
+    if(g_iTotalSpawns == 0)
+    {
+        LoadMapSpawns()
+    }
+
+    if(get_cvar_pointer("mp_round_infinite"))
+        set_cvar_string("mp_round_infinite", "abcdef")
+
+    if(get_cvar_pointer("mp_buy_anywhere"))
+        set_cvar_num("mp_buy_anywhere", 1)
+
+    if(get_cvar_pointer("mp_auto_reload_weapons"))
+        set_cvar_num("mp_auto_reload_weapons", 1)
+
+    set_cvar_num("mp_freezetime", 0)
+    set_cvar_num("mp_buytime", 999)
+    set_cvar_num("mp_startmoney", 16000)
+    set_cvar_float("mp_roundtime", 99.0)
+
+    // Respawn all dead players immediately
+    new iPlayers[MAX_PLAYERS], iNum
+    get_players(iPlayers, iNum, "ch")
+    for(new i = 0; i < iNum; i++)
+    {
+        new p = iPlayers[i]
+        if(!is_user_alive(p))
+        {
+            new TeamName:team = get_member(p, m_iTeam)
+            if(team == TEAM_TERRORIST || team == TEAM_CT)
+            {
+                rg_round_respawn(p)
+                set_member(p, m_iAccount, 16000)
+                rg_give_item(p, "item_kevlar")
+                rg_give_item(p, "item_assaultsuit")
+                TeleportToRandomSpawn(p)
+            }
+        }
+    }
+
+    new szAdmin[MAX_NAME_LENGTH]
+    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
+    else copy(szAdmin, charsmax(szAdmin), "Server")
+
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1enabled ^4Infinite Revive Mode ^3[/rev1]^1!", g_szChatPrefix, szAdmin)
+    client_print_color(0, print_team_default, "^4%s ^1Instant Respawn ON | 1v1 Round End Blocked | $16,000 & Buy Anywhere!", g_szChatPrefix)
+
+    return PLUGIN_HANDLED
+}
+
+public Cmd_ReviveOff(id)
+{
+    if(!HasAdminAccess(id))
+    {
+        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+        return PLUGIN_HANDLED
+    }
+
+    if(!g_bReviveMode)
+    {
+        if(id)
+            client_print_color(id, print_team_default, "^4%s ^1Infinite Revive mode is already ^3inactive^1.", g_szChatPrefix)
+        return PLUGIN_HANDLED
+    }
+
+    g_bReviveMode = false
+
+    if(get_cvar_pointer("mp_round_infinite"))
+        set_cvar_string("mp_round_infinite", "0")
+
+    if(get_cvar_pointer("mp_buy_anywhere"))
+        set_cvar_num("mp_buy_anywhere", 0)
+
+    if(get_cvar_pointer("mp_auto_reload_weapons"))
+        set_cvar_num("mp_auto_reload_weapons", 0)
+
+    new szAdmin[MAX_NAME_LENGTH]
+    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
+    else copy(szAdmin, charsmax(szAdmin), "Server")
+
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1disabled ^3Infinite Revive Mode ^1[/rev0]. Normal rules restored.", g_szChatPrefix, szAdmin)
+    return PLUGIN_HANDLED
+}
+
+public Cmd_LegacyDm(id)
+{
+    client_print_color(id, print_team_default, "^4%s ^1Note: ^3/dm1 ^1was replaced! Use ^4/rev1 ^1(Infinite Revive) or ^4/rev0 ^1(Turn Off).", g_szChatPrefix)
+    client_print_color(id, print_team_default, "^4%s ^1For standard competitive warmup, use ^3/warm^1.", g_szChatPrefix)
+    return PLUGIN_HANDLED
+}
+
 public Cmd_StartMix(id)
 {
     if(!HasAdminAccess(id))
     {
         client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
         return PLUGIN_HANDLED
+    }
+
+    // Automatically deactivate Revive mode if active
+    if(g_bReviveMode)
+    {
+        Cmd_ReviveOff(0)
     }
 
     if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF)
@@ -2051,6 +2350,11 @@ public Cmd_DirectLive(id)
     {
         client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
         return PLUGIN_HANDLED
+    }
+
+    if(g_bReviveMode)
+    {
+        Cmd_ReviveOff(0)
     }
 
     if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF)
@@ -2100,6 +2404,11 @@ public Cmd_KnifeRound(id)
     {
         client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
         return PLUGIN_HANDLED
+    }
+
+    if(g_bReviveMode)
+    {
+        Cmd_ReviveOff(0)
     }
 
     remove_task(TASK_MIX_VOTE)
@@ -2348,7 +2657,8 @@ public Cmd_ShowCommands(id)
 {
     client_print_color(id, print_team_default, "^4%s ^1=== Available Mix Commands ===", g_szChatPrefix)
     client_print_color(id, print_team_default, "^4%s ^3/a ^1: Master Admin Control Panel", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/dm1 ^1or ^3/warm ^1: Warmup Mode ($16,000 practice)", g_szChatPrefix)
+    client_print_color(id, print_team_default, "^4%s ^3/warm ^1: Warmup Mode ($16,000 practice)", g_szChatPrefix)
+    client_print_color(id, print_team_default, "^4%s ^3/rev1 ^1/ ^3/rev0 ^1: Infinite Revive (instant respawn, round never ends)", g_szChatPrefix)
     client_print_color(id, print_team_default, "^4%s ^3/mix ^1or ^3/start ^1: Vote Knife Round vs Direct Live", g_szChatPrefix)
     client_print_color(id, print_team_default, "^4%s ^3/knife ^1: Direct Knife Round for side choice", g_szChatPrefix)
     client_print_color(id, print_team_default, "^4%s ^3/live ^1: Direct Live match start", g_szChatPrefix)
@@ -2372,7 +2682,7 @@ public Cmd_AdminDashboard(id)
     new iMenu = menu_create("\y[GAMELAND] Master Admin Panel (/a)\w", "Menu_DashboardHandler")
 
     menu_additem(iMenu, "\rAdmin Manager \y(Add Admins to users.ini)\w", "1")
-    menu_additem(iMenu, "\yMatch & Mix Controls \d(/mix, /live, /dm1)\w", "2")
+    menu_additem(iMenu, "\yMatch & Mix Controls \d(/mix, /live, /rev1)\w", "2")
     menu_additem(iMenu, "\wTeam Management \y(/st, /spec, /kspec)\w", "3")
     menu_additem(iMenu, "\wVoice & Server Rules \y(/t1-/t3, /ff, /j0-/j2)\w", "4")
     menu_additem(iMenu, "\wMap Browser & Vote \y(/map, /vm)\w", "5")
@@ -2652,10 +2962,11 @@ ShowMatchControlMenu(id)
     menu_additem(iMenu, "\wStart Match \y(Trigger Global Vote)\w", "1")
     menu_additem(iMenu, "\rForce Direct Live \y(Skip Knife/Vote)\w", "2")
     menu_additem(iMenu, "\yForce Knife Round \y(Side selection)\w", "3")
-    menu_additem(iMenu, "\wWarmup / DM1 Mode \y($16,000 practice)\w", "4")
+    menu_additem(iMenu, "\wWarmup Mode \y($16,000 practice)\w", "4")
     menu_additem(iMenu, "\wStop Match \y(Return to Warmup)\w", "5")
     menu_additem(iMenu, "\wPause / Unpause Match\w", "6")
     menu_additem(iMenu, "\yTrigger Halftime Swap \d(Score & Side Swap)\w", "7")
+    menu_additem(iMenu, g_bReviveMode ? "\rInfinite Revive: \y[ ACTIVE - Turn OFF ]\w" : "\yInfinite Revive: \d[ INACTIVE - Turn ON ]\w", "8")
     menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
@@ -2683,6 +2994,12 @@ public Menu_MatchControlHandler(id, iMenu, iItem)
         case 5: Cmd_StopMix(id)
         case 6: Cmd_Pause(id)
         case 7: Cmd_Halftime(id)
+        case 8:
+        {
+            if(g_bReviveMode) Cmd_ReviveOff(id)
+            else Cmd_ReviveOn(id)
+            ShowMatchControlMenu(id)
+        }
         case 9: Cmd_AdminDashboard(id)
     }
     return PLUGIN_HANDLED
