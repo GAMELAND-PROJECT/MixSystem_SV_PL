@@ -221,6 +221,9 @@ public plugin_init()
     RegisterHookChain(RG_PlantBomb, "RG_PlantBomb_Post", .post = true)
     RegisterHookChain(RG_CGrenade_DefuseBombEnd, "RG_CGrenade_DefuseBombEnd_Post", .post = true)
     RegisterHookChain(RG_CBasePlayer_MakeBomber, "RG_CBasePlayer_MakeBomber_Pre", .post = false)
+    RegisterHookChain(RG_CBasePlayer_Observer_IsValidTarget, "RG_Observer_IsValidTarget_Pre", .post = false)
+
+    ApplySpectatorCameraSettings()
 
     g_iMsgScreenFade = get_user_msgid("ScreenFade")
 
@@ -816,6 +819,9 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
         return
     }
 
+    // In competitive modes (Knife & Match Live), enforce that the dead player's camera switches to a teammate (never enemy)
+    set_task(0.1, "Task_EnforceTeammateObserver", iVictim)
+
     // 3. Knife Round Elimination Detection: Instant winner detection & menu trigger
     if(g_iMatchState == STATE_KNIFE)
     {
@@ -899,6 +905,92 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
         }
 
         ExecuteForward(g_hFwdPlayerKilled, g_iRet, iKiller, iVictim, bHeadshot, szKillerName, szKillerAuth)
+    }
+}
+
+ApplySpectatorCameraSettings()
+{
+    if(g_iMatchState == STATE_WARMUP)
+    {
+        // Warmup: Allow players to spectate freely, any team, any mode
+        set_cvar_num("mp_forcecamera", 0)
+        set_cvar_num("mp_forcechasecam", 0)
+        set_cvar_num("mp_fadetoblack", 0)
+    }
+    else
+    {
+        // Competitive Match / Knife Round: Teammates only, locked in eye view, NO enemy spectating
+        set_cvar_num("mp_forcecamera", 2)
+        set_cvar_num("mp_forcechasecam", 2)
+        set_cvar_num("mp_fadetoblack", 0)
+    }
+}
+
+public RG_Observer_IsValidTarget_Pre(const id, iTargetIndex, bool:bSameTeam)
+{
+    // In WarmUp, dead players can spectate anyone (no restriction)
+    if(g_iMatchState == STATE_WARMUP)
+    {
+        return HC_CONTINUE
+    }
+
+    // In Mix Mode (Knife, Live match, Halftime, Overtime):
+    // If the spectator player is on CT or Terrorist, they can ONLY spectate their own team!
+    if(is_user_connected(id) && is_user_connected(iTargetIndex))
+    {
+        new TeamName:iMyTeam = get_member(id, m_iTeam)
+        if(iMyTeam == TEAM_TERRORIST || iMyTeam == TEAM_CT)
+        {
+            new TeamName:iTargetTeam = get_member(iTargetIndex, m_iTeam)
+            if(iMyTeam != iTargetTeam)
+            {
+                SetHookChainReturn(ATYPE_INTEGER, 0)
+                return HC_SUPERCEDE
+            }
+        }
+    }
+
+    return HC_CONTINUE
+}
+
+public Task_EnforceTeammateObserver(id)
+{
+    if(!is_user_connected(id) || is_user_alive(id))
+        return
+
+    if(g_iMatchState == STATE_WARMUP)
+        return
+
+    new TeamName:iMyTeam = get_member(id, m_iTeam)
+    if(iMyTeam != TEAM_TERRORIST && iMyTeam != TEAM_CT)
+        return
+
+    new iTarget = get_member(id, m_hObserverTarget)
+    new bool:bNeedsFix = false
+
+    if(!iTarget || !is_user_connected(iTarget) || !is_user_alive(iTarget))
+    {
+        bNeedsFix = true
+    }
+    else if(get_member(iTarget, m_iTeam) != iMyTeam)
+    {
+        bNeedsFix = true
+    }
+
+    if(bNeedsFix)
+    {
+        new iPlayers[MAX_PLAYERS], iNum
+        get_players(iPlayers, iNum, "ae", iMyTeam == TEAM_CT ? "CT" : "TERRORIST")
+        for(new i = 0; i < iNum; i++)
+        {
+            new p = iPlayers[i]
+            if(p != id && is_user_alive(p))
+            {
+                set_member(id, m_hObserverTarget, p)
+                set_member(id, m_iObserverLastMode, 4) // OBS_IN_EYE
+                break
+            }
+        }
     }
 }
 
@@ -1060,6 +1152,8 @@ public RG_CSGameRules_RestartRound_Post()
     {
         g_iRoundKills[i] = 0
     }
+
+    ApplySpectatorCameraSettings()
 
     if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
        g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
@@ -1335,6 +1429,11 @@ public Task_HalftimeRestart3()
     set_cvar_num("sv_alltalk", 3)
     if(get_cvar_pointer("allow_spectators"))
         set_cvar_num("allow_spectators", 1)
+
+    // Competitive camera: dead players can ONLY spectate alive teammates (NO enemies)
+    set_cvar_num("mp_forcecamera", 2)
+    set_cvar_num("mp_forcechasecam", 2)
+    set_cvar_num("mp_fadetoblack", 0)
 
     // Green ScreenFade Heartbeat & Prominent LIVE notice
     StartLiveGreenPulse()
@@ -1852,6 +1951,11 @@ public StartWarmup()
     set_cvar_float("mp_roundtime", 9.0)
     set_cvar_num("mp_friendlyfire", 0)
 
+    // Warmup camera: Free spectating permitted
+    set_cvar_num("mp_forcecamera", 0)
+    set_cvar_num("mp_forcechasecam", 0)
+    set_cvar_num("mp_fadetoblack", 0)
+
     // Voice mode: Warmup is always /t1 (Alltalk 1 - everyone hears everyone)
     set_cvar_num("sv_alltalk", 1)
 
@@ -1997,6 +2101,11 @@ public StartKnifeRound()
     set_cvar_num("mp_freezetime", 3)
     set_cvar_num("mp_buytime", 0)
     set_cvar_float("mp_roundtime", 35.0)
+
+    // Competitive camera: dead players can ONLY spectate alive teammates (NO enemies)
+    set_cvar_num("mp_forcecamera", 2)
+    set_cvar_num("mp_forcechasecam", 2)
+    set_cvar_num("mp_fadetoblack", 0)
 
     if(get_cvar_pointer("mp_round_infinite"))
         set_cvar_string("mp_round_infinite", "0")
@@ -2150,6 +2259,11 @@ StartLiveCountdown()
 
     set_cvar_num("mp_freezetime", 2)
 
+    // Competitive camera: dead players can ONLY spectate alive teammates (NO enemies)
+    set_cvar_num("mp_forcecamera", 2)
+    set_cvar_num("mp_forcechasecam", 2)
+    set_cvar_num("mp_fadetoblack", 0)
+
     // Restart 1
     server_cmd("sv_restart 1")
     set_dhudmessage(255, 140, 0, -1.0, 0.35, 1, 0.1, 2.0, 0.05, 0.1)
@@ -2248,6 +2362,11 @@ StartMatchLive()
     set_cvar_num("mp_startmoney", 800)
     set_cvar_float("mp_roundtime", 1.75)
     set_cvar_num("mp_friendlyfire", 0)
+
+    // Competitive camera: dead players can ONLY spectate alive teammates (NO enemies)
+    set_cvar_num("mp_forcecamera", 2)
+    set_cvar_num("mp_forcechasecam", 2)
+    set_cvar_num("mp_fadetoblack", 0)
 
     if(get_cvar_pointer("mp_buy_anywhere"))
         set_cvar_num("mp_buy_anywhere", 0)
