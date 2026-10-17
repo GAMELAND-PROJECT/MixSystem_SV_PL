@@ -213,6 +213,8 @@ public plugin_init()
     register_clcmd("say_team /comenzi", "Cmd_ShowCommands")
     register_clcmd("say /live", "Cmd_DirectLive")
     register_clcmd("say_team /live", "Cmd_DirectLive")
+    register_clcmd("say /halftime", "Cmd_Halftime")
+    register_clcmd("say_team /halftime", "Cmd_Halftime")
 
     // Master /a Admin Menu commands
     register_clcmd("say /a", "Cmd_AdminDashboard")
@@ -486,6 +488,20 @@ public client_putinserver(id)
     g_bPlayerVotedMix[id] = false
     g_iSavedFrags[id] = 0
     g_iSavedDeaths[id] = 0
+
+    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
+       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
+    {
+        set_task(1.0, "Task_LateJoinScoreSync", id)
+    }
+}
+
+public Task_LateJoinScoreSync(id)
+{
+    if(is_user_connected(id))
+    {
+        SyncPlayerScore(id)
+    }
 }
 
 public client_disconnected(id)
@@ -533,7 +549,11 @@ public RG_CBasePlayer_Spawn_Post(id)
         }
         case STATE_FIRST_HALF, STATE_SECOND_HALF, STATE_OVERTIME_FIRST_HALF, STATE_OVERTIME_SECOND_HALF:
         {
-            // Standard competitive match spawn
+            SyncPlayerScore(id)
+            if(g_bHalftimePendingSync && (g_iMatchState == STATE_SECOND_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF))
+            {
+                rg_add_account(id, 800, AS_SET, true)
+            }
         }
     }
 }
@@ -560,21 +580,18 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
 
 public RG_CSGameRules_RestartRound_Post()
 {
-    // BUGFIX: Reset round score lock when new round starts!
+    // Reset round score lock when new round starts!
     g_bRoundScored = false
     remove_task(TASK_END_ROUND)
 
     if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
        g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
     {
+        SyncTeamScores()
         if(g_bHalftimePendingSync)
         {
             g_bHalftimePendingSync = false
             RestoreHalftimePlayerStats()
-        }
-        else
-        {
-            SyncTeamScores()
         }
     }
 }
@@ -750,7 +767,7 @@ public Task_CheckMatchProgress()
 }
 
 // -----------------------------------------------------------------------------
-// Halftime Execution (BUGFIX: Clean atomic swap, stat & score preservation)
+// Halftime Execution (Clean atomic swap, stat & score preservation)
 // -----------------------------------------------------------------------------
 TriggerHalftime()
 {
@@ -782,26 +799,38 @@ TriggerHalftime()
     // Apply configured freeze time for halftime swap
     set_cvar_num("mp_freezetime", g_iFreezeTimeSwap)
 
+    // Synchronize scores directly with ReGameDLL engine and scoreboard
+    SyncTeamScores()
+
+    // Cleanly restart round into Second Half with swap freezetime (NO sv_restart 1)
+    rg_restart_round()
+
+    // Restore player stats and sync scores
+    RestoreHalftimePlayerStats()
+
     client_print_color(0, print_team_default, "^4%s ^1=== ^4HALF TIME ^1=== Teams Swapped!", g_szChatPrefix)
     client_print_color(0, print_team_default, "^4%s ^11st Half Finished: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE])
-    client_print_color(0, print_team_default, "^4%s ^1Transferred 2nd Half Score: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+    client_print_color(0, print_team_default, "^4%s ^1Transferred 2nd Half Starting Score: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
 
     set_dhudmessage(0, 150, 255, -1.0, 0.35, 2, 0.1, 4.0, 0.1, 1.0)
     show_dhudmessage(0, "=== HALF TIME ===\nTeams Swapped!\nScore: CT %d - %d TR\nTarget: %d Rounds", g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iMixEndRound)
 
-    // Delay before restarting into Second Half
-    set_task(4.0, "Task_HalftimeRestart")
+    // Safety sync tasks during freeze time
+    set_task(1.0, "Task_PostHalftimeSync")
+    set_task(2.5, "Task_PostHalftimeSync")
 }
 
 public Task_HalftimeRestart()
 {
-    server_cmd("sv_restart 1")
-    set_task(1.1, "Task_PostHalftimeSync")
+    rg_restart_round()
+    SyncTeamScores()
+    RestoreHalftimePlayerStats()
     client_print_color(0, print_team_default, "^4%s ^1Second Half is now ^4LIVE! ^1Good Luck!", g_szChatPrefix)
 }
 
 public Task_PostHalftimeSync()
 {
+    SyncTeamScores()
     RestoreHalftimePlayerStats()
 }
 
@@ -820,7 +849,7 @@ stock SyncTeamScores()
     set_member_game(m_iNumCTWins, g_iScore[CT_SCORE])
     set_member_game(m_iNumTerroristWins, g_iScore[TERO_SCORE])
 
-    // Update ReGameDLL engine scores
+    // Update ReGameDLL engine scores (bAdd = false -> direct assignment)
     rg_update_teamscores(g_iScore[CT_SCORE], g_iScore[TERO_SCORE], false)
 
     // Broadcast TeamScore network message to synchronize in-game TAB scoreboard
@@ -836,6 +865,29 @@ stock SyncTeamScores()
         message_end()
 
         message_begin(MSG_ALL, iMsgTeamScore)
+        write_string("TERRORIST")
+        write_short(g_iScore[TERO_SCORE])
+        message_end()
+    }
+}
+
+stock SyncPlayerScore(id)
+{
+    if(!is_user_connected(id))
+        return
+
+    static iMsgTeamScore
+    if(!iMsgTeamScore)
+        iMsgTeamScore = get_user_msgid("TeamScore")
+
+    if(iMsgTeamScore > 0)
+    {
+        message_begin(MSG_ONE, iMsgTeamScore, _, id)
+        write_string("CT")
+        write_short(g_iScore[CT_SCORE])
+        message_end()
+
+        message_begin(MSG_ONE, iMsgTeamScore, _, id)
         write_string("TERRORIST")
         write_short(g_iScore[TERO_SCORE])
         message_end()
@@ -858,9 +910,12 @@ stock RestoreHalftimePlayerStats()
         if(!is_user_connected(id))
             continue
 
-        // Restore saved player frags and deaths from before restart
-        set_entvar(id, var_frags, float(g_iSavedFrags[id]))
-        set_member(id, m_iDeaths, g_iSavedDeaths[id])
+        // Restore saved player frags and deaths from before restart if saved
+        if(g_iSavedFrags[id] > 0 || g_iSavedDeaths[id] > 0)
+        {
+            set_entvar(id, var_frags, float(g_iSavedFrags[id]))
+            set_member(id, m_iDeaths, g_iSavedDeaths[id])
+        }
 
         // Ensure pistol round starting money ($800)
         rg_add_account(id, 800, AS_SET, true)
@@ -898,8 +953,9 @@ public StartOvertime()
     }
     g_bHalftimePendingSync = true
 
-    server_cmd("sv_restart 1")
-    set_task(1.1, "Task_PostHalftimeSync")
+    rg_restart_round()
+    SyncTeamScores()
+    set_task(1.0, "Task_PostHalftimeSync")
     client_print_color(0, print_team_default, "^4%s ^1Overtime First Half is ^4LIVE! ^1MR%d (Score: CT %d - %d TR)", g_szChatPrefix, g_iOvertimeRounds, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
 }
 
@@ -927,19 +983,16 @@ TriggerOvertimeHalftime()
     }
     g_bHalftimePendingSync = true
 
+    SyncTeamScores()
     set_cvar_num("mp_freezetime", g_iFreezeTimeSwap)
+
+    rg_restart_round()
+    RestoreHalftimePlayerStats()
 
     set_dhudmessage(255, 150, 0, -1.0, 0.35, 2, 0.1, 4.0, 0.1, 1.0)
     show_dhudmessage(0, "=== OVERTIME HALF TIME ===\nTeams Swapped!\nScore: CT %d - %d TR", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
 
-    set_task(3.0, "Task_OvertimeRestart")
-}
-
-public Task_OvertimeRestart()
-{
-    server_cmd("sv_restart 1")
-    set_task(1.1, "Task_PostHalftimeSync")
-    client_print_color(0, print_team_default, "^4%s ^1Overtime Second Half is ^4LIVE!", g_szChatPrefix)
+    set_task(1.0, "Task_PostHalftimeSync")
 }
 
 // -----------------------------------------------------------------------------
@@ -1364,37 +1417,50 @@ public Task_HudDisplay()
     {
         case STATE_WARMUP:
         {
-            formatex(szMsg, charsmax(szMsg), "[ WARMUP / DM1 ]\nSpawn Money: $16,000 | Type /mix or /a to start");
-            set_hudmessage(0, 200, 255, 0.02, 0.20, 0, 0.0, 1.1, 0.0, 0.0)
+            formatex(szMsg, charsmax(szMsg), "== [ WARMUP / DM1 ] ==^nSpawn: $16,000 | Respawn: Instant^nType /mix or /a to start match")
+            set_hudmessage(0, 220, 255, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
         case STATE_KNIFE:
         {
-            formatex(szMsg, charsmax(szMsg), "[ KNIFE ROUND ]\nFight for side selection!")
-            set_hudmessage(255, 150, 0, 0.02, 0.20, 0, 0.0, 1.1, 0.0, 0.0)
+            formatex(szMsg, charsmax(szMsg), "== [ KNIFE ROUND ] ==^nFight for Side Selection!^nFirst team to eliminate opponents chooses Side")
+            set_hudmessage(255, 170, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
         case STATE_FIRST_HALF:
         {
-            formatex(szMsg, charsmax(szMsg), "[ 1st Half ] Score: CT %d - %d TR\nRound %d of 15",
-                g_iScore[CT_SCORE], g_iScore[TERO_SCORE], (g_iScore[CT_SCORE] + g_iScore[TERO_SCORE] + 1))
-            set_hudmessage(100, 255, 100, 0.02, 0.20, 0, 0.0, 1.1, 0.0, 0.0)
+            new iRoundNum = g_iScore[CT_SCORE] + g_iScore[TERO_SCORE] + 1
+            formatex(szMsg, charsmax(szMsg), "== [ 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR^nRound %d of 15",
+                g_iScore[CT_SCORE], g_iScore[TERO_SCORE], iRoundNum)
+            set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
         case STATE_SECOND_HALF:
         {
-            formatex(szMsg, charsmax(szMsg), "[ 2nd Half ] Score: CT %d - %d TR\n(1st Half: CT %d - %d TR) | Target: %d",
+            new iRoundNum = g_iScore[CT_SCORE] + g_iScore[TERO_SCORE] + 1
+            formatex(szMsg, charsmax(szMsg), "== [ 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR^nRound %d (Target: %d) | 1st Half: %d-%d",
                 g_iScore[CT_SCORE], g_iScore[TERO_SCORE],
-                g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE],
-                g_iMixEndRound)
-            set_hudmessage(100, 255, 100, 0.02, 0.20, 0, 0.0, 1.1, 0.0, 0.0)
+                iRoundNum, g_iMixEndRound,
+                g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE])
+            set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
-        case STATE_OVERTIME_FIRST_HALF, STATE_OVERTIME_SECOND_HALF:
+        case STATE_OVERTIME_FIRST_HALF:
         {
-            formatex(szMsg, charsmax(szMsg), "[ OVERTIME ] Score: CT %d - %d TR",
-                g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-            set_hudmessage(255, 200, 0, 0.02, 0.20, 0, 0.0, 1.1, 0.0, 0.0)
+            formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR^nOT Score: %d - %d (MR%d)",
+                g_iScore[CT_SCORE], g_iScore[TERO_SCORE],
+                g_iOvertimeScore[CT_SCORE], g_iOvertimeScore[TERO_SCORE],
+                g_iOvertimeRounds)
+            set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+            ShowSyncHudMsg(0, g_iHudSync, szMsg)
+        }
+        case STATE_OVERTIME_SECOND_HALF:
+        {
+            formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR^nOT Score: %d - %d (MR%d)",
+                g_iScore[CT_SCORE], g_iScore[TERO_SCORE],
+                g_iOvertimeScore[CT_SCORE], g_iOvertimeScore[TERO_SCORE],
+                g_iOvertimeRounds)
+            set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
     }
@@ -1503,6 +1569,19 @@ public Cmd_KnifeRound(id)
     remove_task(TASK_MIX_VOTE)
     client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1forced ^3Knife Round^1!", g_szChatPrefix, g_szUserName[id])
     StartKnifeRound()
+    return PLUGIN_HANDLED
+}
+
+public Cmd_Halftime(id)
+{
+    if(!HasAdminAccess(id))
+    {
+        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+        return PLUGIN_HANDLED
+    }
+
+    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1triggered ^3Halftime Team Swap^1!", g_szChatPrefix, g_szUserName[id])
+    TriggerHalftime()
     return PLUGIN_HANDLED
 }
 
@@ -2040,6 +2119,7 @@ ShowMatchControlMenu(id)
     menu_additem(iMenu, "\wWarmup / DM1 Mode \y($16,000 practice)\w", "4")
     menu_additem(iMenu, "\wStop Match \y(Return to Warmup)\w", "5")
     menu_additem(iMenu, "\wPause / Unpause Match\w", "6")
+    menu_additem(iMenu, "\yTrigger Halftime Swap \d(Score & Side Swap)\w", "7")
     menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
@@ -2066,6 +2146,7 @@ public Menu_MatchControlHandler(id, iMenu, iItem)
         case 4: Cmd_Warmup(id)
         case 5: Cmd_StopMix(id)
         case 6: Cmd_Pause(id)
+        case 7: Cmd_Halftime(id)
         case 9: Cmd_AdminDashboard(id)
     }
     return PLUGIN_HANDLED
