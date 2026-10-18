@@ -147,6 +147,7 @@ new g_iCurrentDraftTurn = 1 // 1: CT, 2: TR
 new g_iPickTimer = 15
 new g_iDraftRound = 1
 new bool:g_bAdminForceStarted = false
+new bool:g_bFastTestMode = false
 new g_szUserName[MAX_PLAYERS + 1][MAX_NAME_LENGTH]
 
 // /mix Global Vote (Knife vs Direct Live)
@@ -793,7 +794,7 @@ public client_disconnected(id)
     }
     if(g_iMatchState == STATE_CAPTAIN_COUNTDOWN)
     {
-        if(!g_bAdminForceStarted && GetActiveInGamePlayerCount() < 10)
+        if(!g_bAdminForceStarted && !g_bFastTestMode && GetActiveInGamePlayerCount() < 10)
         {
             remove_task(TASK_CW_COUNTDOWN)
             g_iMatchState = STATE_WARMUP
@@ -803,16 +804,19 @@ public client_disconnected(id)
     }
     else if(g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING)
     {
-        new iConnectedHumans = 0
-        for(new p = 1; p <= MaxClients; p++)
+        if(!is_user_bot(id))
         {
-            if(is_user_connected(p) && !is_user_bot(p) && !is_user_hltv(p) && p != id)
-                iConnectedHumans++
-        }
-        if(iConnectedHumans < 10)
-        {
-            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3Player disconnected during election/draft! ^1Resetting to WarmUp...")
-            StartWarmup()
+            new iTotalActive = 0
+            for(new p = 1; p <= MaxClients; p++)
+            {
+                if(is_user_connected(p) && !is_user_hltv(p) && p != id)
+                    iTotalActive++
+            }
+            if(!g_bAdminForceStarted && !g_bFastTestMode && iTotalActive < 10)
+            {
+                client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3Player disconnected during election/draft! ^1Resetting to WarmUp...")
+                StartWarmup()
+            }
         }
     }
     g_iPlayerMixVote[id] = 0
@@ -2025,7 +2029,7 @@ public StartWarmup()
     remove_task(TASK_CW_CAPTAIN_VOTE)
     remove_task(TASK_CW_PICK_TIMER)
 
-    g_iCwReadyTimer = 30
+    g_iCwReadyTimer = g_bFastTestMode ? 5 : 30
     g_iCaptainCT = 0
     g_iCaptainTR = 0
     g_iCurrentDraftTurn = 1
@@ -4360,7 +4364,7 @@ stock GetActiveInGamePlayerCount()
     new iCount = 0
     for(new id = 1; id <= MaxClients; id++)
     {
-        if(is_user_connected(id) && !is_user_bot(id) && !is_user_hltv(id))
+        if(is_user_connected(id) && !is_user_hltv(id))
         {
             new TeamName:team = get_member(id, m_iTeam)
             if(team == TEAM_CT || team == TEAM_TERRORIST)
@@ -4377,7 +4381,7 @@ stock GetTeamPlayerCount(TeamName:team)
     new iCount = 0
     for(new id = 1; id <= MaxClients; id++)
     {
-        if(is_user_connected(id) && !is_user_bot(id) && !is_user_hltv(id))
+        if(is_user_connected(id) && !is_user_hltv(id))
         {
             if(get_member(id, m_iTeam) == team)
             {
@@ -4414,7 +4418,7 @@ public StartCaptainCountdown()
         return
 
     g_iMatchState = STATE_CAPTAIN_COUNTDOWN
-    g_iCwReadyTimer = 30
+    g_iCwReadyTimer = g_bFastTestMode ? 5 : 30
     UpdateServerHostname()
 
     remove_task(TASK_CW_COUNTDOWN)
@@ -4443,7 +4447,7 @@ public Task_CaptainCountdown()
     }
 
     new iInGame = GetActiveInGamePlayerCount()
-    if(!g_bAdminForceStarted && iInGame < 10)
+    if(!g_bAdminForceStarted && !g_bFastTestMode && iInGame < 10)
     {
         remove_task(TASK_CW_COUNTDOWN)
         g_iMatchState = STATE_WARMUP
@@ -4479,8 +4483,10 @@ public StartCaptainElection()
     g_bPickMode = true
     UpdateServerHostname()
 
-    // 1. Gather up to 10 players in game
+    // 1. Gather up to 10 players in game: Prioritize HUMANS first, then BOTS
     g_iEligibleVoterCount = 0
+
+    // Add humans first
     for(new id = 1; id <= MaxClients; id++)
     {
         if(is_user_connected(id) && !is_user_bot(id) && !is_user_hltv(id))
@@ -4490,13 +4496,29 @@ public StartCaptainElection()
             {
                 if(g_iEligibleVoterCount < 10)
                 {
-                    g_iEligibleVoters[g_iEligoterIndex(id)] = id
+                    g_iEligibleVoters[g_iEligibleVoterCount++] = id
                 }
             }
         }
     }
 
-    // 2. Move all 10 players to Spectator & reset votes
+    // Add bots to fill up to 10 if present
+    for(new id = 1; id <= MaxClients; id++)
+    {
+        if(is_user_connected(id) && is_user_bot(id) && !is_user_hltv(id))
+        {
+            new TeamName:team = get_member(id, m_iTeam)
+            if(team == TEAM_CT || team == TEAM_TERRORIST || (g_bAdminForceStarted && team == TEAM_SPECTATOR))
+            {
+                if(g_iEligibleVoterCount < 10)
+                {
+                    g_iEligibleVoters[g_iEligibleVoterCount++] = id
+                }
+            }
+        }
+    }
+
+    // 2. Move all gathered players to Spectator & reset votes
     for(new i = 0; i < g_iEligibleVoterCount; i++)
     {
         new id = g_iEligibleVoters[i]
@@ -4509,20 +4531,36 @@ public StartCaptainElection()
         g_iVotedForCapt[id] = 0
     }
 
-    g_iCaptVoteTimer = 20
+    // 3. Simulate bot votes for top candidates so dynamic vote numbers are seen
+    for(new i = 0; i < g_iEligibleVoterCount; i++)
+    {
+        new voterId = g_iEligibleVoters[i]
+        if(is_user_bot(voterId) && g_iEligibleVoterCount >= 2)
+        {
+            new randCandidate = g_iEligibleVoters[random_num(0, min(1, g_iEligibleVoterCount - 1))]
+            g_iVotedForCapt[voterId] = randCandidate
+            g_iPlayerCaptVotes[randCandidate]++
+        }
+    }
+
+    g_iCaptVoteTimer = g_bFastTestMode ? 10 : 20
     set_task(1.0, "Task_CaptVoteTimer", TASK_CW_CAPTAIN_VOTE, .flags = "b")
 
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
-    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3CAPTAIN ELECTION HAS STARTED! ^1(20 Seconds)")
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3CAPTAIN ELECTION HAS STARTED! ^1(%d Seconds)", g_iCaptVoteTimer)
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Vote for the player you want as your Team Captain!")
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^4Top 2 players ^1with most votes become Captain CT & Captain TR.")
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
     client_cmd(0, "spk buttons/bell1")
 
-    // Open Vote Menu for all eligible voters
+    // Open Vote Menu for all human eligible voters
     for(new i = 0; i < g_iEligibleVoterCount; i++)
     {
-        ShowCaptainVoteMenu(g_iEligibleVoters[i])
+        new id = g_iEligibleVoters[i]
+        if(!is_user_bot(id))
+        {
+            ShowCaptainVoteMenu(id)
+        }
     }
 }
 
@@ -4619,18 +4657,22 @@ public HandleCaptainVoteMenu(id, iMenu, iItem)
     client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1You voted for ^4%s ^1as Captain! (Total votes: ^3%d^1)", g_szUserName[candidateId], g_iPlayerCaptVotes[candidateId])
     client_cmd(id, "spk buttons/blip1")
 
-    // Check if everyone has voted
-    new iTotalVoted = 0
+    // Check if all connected human voters have cast their votes
+    new iTotalHumanVoted = 0, iTotalHumans = 0
     for(new i = 0; i < g_iEligibleVoterCount; i++)
     {
         new p = g_iEligibleVoters[i]
-        if(is_user_connected(p) && g_iVotedForCapt[p] > 0)
+        if(is_user_connected(p) && !is_user_bot(p))
         {
-            iTotalVoted++
+            iTotalHumans++
+            if(g_iVotedForCapt[p] > 0)
+            {
+                iTotalHumanVoted++
+            }
         }
     }
 
-    if(iTotalVoted >= g_iEligibleVoterCount && g_iEligibleVoterCount > 0)
+    if(iTotalHumanVoted >= iTotalHumans && iTotalHumans > 0)
     {
         remove_task(TASK_CW_CAPTAIN_VOTE)
         FinishCaptainElection()
@@ -4784,11 +4826,11 @@ public TriggerNextPickTurn()
     if(g_iMatchState != STATE_PICKING)
         return
 
-    // Gather spectators
+    // Gather spectators (humans and bots)
     new iPool[MAX_PLAYERS], iPoolCount = 0
     for(new id = 1; id <= MaxClients; id++)
     {
-        if(is_user_connected(id) && !is_user_bot(id) && !is_user_hltv(id))
+        if(is_user_connected(id) && !is_user_hltv(id))
         {
             if(get_member(id, m_iTeam) == TEAM_SPECTATOR)
             {
@@ -4799,7 +4841,15 @@ public TriggerNextPickTurn()
 
     if(iPoolCount == 0)
     {
-        FinishDraftPhase()
+        if(GetTeamPlayerCount(TEAM_CT) + GetTeamPlayerCount(TEAM_TERRORIST) >= 2)
+        {
+            FinishDraftPhase()
+        }
+        else
+        {
+            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3No spectators available in draft pool! ^1Add bots with ^4/cw bots^1.")
+            StartWarmup()
+        }
         return
     }
 
@@ -4837,20 +4887,61 @@ public TriggerNextPickTurn()
         return
     }
 
-    g_iPickTimer = 15
+    // Check if active captain is a bot -> auto pick after 2 seconds!
+    if(is_user_bot(activeCaptain))
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^4Round %d ^1| Turn: Bot Captain ^3%s ^1(%s) is picking... (2s)",
+            g_iDraftRound, g_szUserName[activeCaptain], szTeamName)
+        set_task(2.0, "Task_BotCaptainPick", TASK_CW_PICK_TIMER)
+        return
+    }
+
+    g_iPickTimer = g_bFastTestMode ? 10 : 15
     set_task(1.0, "Task_PickTimerCountdown", TASK_CW_PICK_TIMER, .flags = "b")
 
-    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^4Round %d ^1| Turn: Captain ^3%s ^1(%s) is picking! (15s)",
-        g_iDraftRound, g_szUserName[activeCaptain], szTeamName)
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^4Round %d ^1| Turn: Captain ^3%s ^1(%s) is picking! (%ds)",
+        g_iDraftRound, g_szUserName[activeCaptain], szTeamName, g_iPickTimer)
 
     ShowPickMenu(activeCaptain)
+}
+
+public Task_BotCaptainPick()
+{
+    if(g_iMatchState != STATE_PICKING)
+        return
+
+    new activeCaptain = (g_iCurrentDraftTurn == 1) ? g_iCaptainCT : g_iCaptainTR
+    if(!is_user_connected(activeCaptain))
+        return
+
+    new iPool[MAX_PLAYERS], iPoolCount = 0
+    for(new id = 1; id <= MaxClients; id++)
+    {
+        if(is_user_connected(id) && !is_user_hltv(id))
+        {
+            if(get_member(id, m_iTeam) == TEAM_SPECTATOR)
+            {
+                iPool[iPoolCount++] = id
+            }
+        }
+    }
+
+    if(iPoolCount > 0)
+    {
+        new pickedPlayer = iPool[random_num(0, iPoolCount - 1)]
+        ApplyDraftPick(activeCaptain, pickedPlayer)
+    }
+    else
+    {
+        FinishDraftPhase()
+    }
 }
 
 stock FindFallbackCaptain(TeamName:targetTeam)
 {
     for(new id = 1; id <= MaxClients; id++)
     {
-        if(is_user_connected(id) && !is_user_bot(id) && !is_user_hltv(id))
+        if(is_user_connected(id) && !is_user_hltv(id))
         {
             if(get_member(id, m_iTeam) == targetTeam)
                 return id
@@ -4870,13 +4961,13 @@ public ShowPickMenu(id)
 
     for(new p = 1; p <= MaxClients; p++)
     {
-        if(is_user_connected(p) && !is_user_bot(p) && !is_user_hltv(p))
+        if(is_user_connected(p) && !is_user_hltv(p))
         {
             if(get_member(p, m_iTeam) == TEAM_SPECTATOR)
             {
                 new szData[8], szItem[64]
                 num_to_str(p, szData, charsmax(szData))
-                formatex(szItem, charsmax(szItem), "\w%s", g_szUserName[p])
+                formatex(szItem, charsmax(szItem), "\w%s%s", g_szUserName[p], is_user_bot(p) ? " \d[BOT]" : "")
                 menu_additem(iMenu, szItem, szData)
             }
         }
@@ -4930,8 +5021,8 @@ ApplyDraftPick(captainId, pickedId)
 
     client_cmd(0, "spk buttons/bell1")
 
-    // Flash green ScreenFade on drafted player
-    if(g_iMsgScreenFade > 0)
+    // Flash green ScreenFade on drafted player if human
+    if(g_iMsgScreenFade > 0 && !is_user_bot(pickedId))
     {
         message_begin(MSG_ONE_UNRELIABLE, g_iMsgScreenFade, _, pickedId)
         write_short((1<<12) / 2)
@@ -4973,7 +5064,7 @@ public Task_PickTimerCountdown()
         new autoPick = 0
         for(new id = 1; id <= MaxClients; id++)
         {
-            if(is_user_connected(id) && !is_user_bot(id) && !is_user_hltv(id))
+            if(is_user_connected(id) && !is_user_hltv(id))
             {
                 if(get_member(id, m_iTeam) == TEAM_SPECTATOR)
                 {
@@ -5032,9 +5123,23 @@ public Cmd_ClanWarAdmin(id)
     if(equali(szArg, "start") || equali(szArg, "force"))
     {
         g_bAdminForceStarted = true
-        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started the 30-second countdown!", g_szUserName[id])
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started the countdown!", g_szUserName[id])
         StartCaptainCountdown()
         return PLUGIN_HANDLED
+    }
+    else if(equali(szArg, "fast") || equali(szArg, "speed"))
+    {
+        g_bFastTestMode = !g_bFastTestMode
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Fast Test Mode is now: ^4%s ^1(5s countdown, 10s election, 10s pick)", g_bFastTestMode ? "ENABLED" : "DISABLED")
+        return PLUGIN_HANDLED
+    }
+    else if(equali(szArg, "bots") || equali(szArg, "bot") || equali(szArg, "addbots"))
+    {
+        return Cmd_AddTestBots(id)
+    }
+    else if(equali(szArg, "kickbots") || equali(szArg, "nobot") || equali(szArg, "rembots"))
+    {
+        return Cmd_KickTestBots(id)
     }
     else if(equali(szArg, "vote") || equali(szArg, "elect"))
     {
@@ -5061,6 +5166,40 @@ public Cmd_ClanWarAdmin(id)
     return PLUGIN_HANDLED
 }
 
+public Cmd_AddTestBots(id)
+{
+    new iCurrent = 0
+    for(new p = 1; p <= MaxClients; p++)
+    {
+        if(is_user_connected(p) && !is_user_hltv(p))
+            iCurrent++
+    }
+
+    new iNeeded = 10 - iCurrent
+    if(iNeeded <= 0)
+    {
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Server already has ^310 players^1! No bots needed.")
+        return PLUGIN_HANDLED
+    }
+
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1spawning ^3%d test bots ^1to test Clan War Mode (10 slots)!", g_szUserName[id], iNeeded)
+
+    server_cmd("bot_stop 1; bot_quota_mode fill; bot_join_after_player 0; bot_quota 10")
+    for(new i = 0; i < iNeeded; i++)
+    {
+        server_cmd("bot_add")
+    }
+
+    return PLUGIN_HANDLED
+}
+
+public Cmd_KickTestBots(id)
+{
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1removed all test bots.", g_szUserName[id])
+    server_cmd("bot_quota 0; bot_kick")
+    return PLUGIN_HANDLED
+}
+
 public ShowClanWarAdminMenu(id)
 {
     if(!is_user_connected(id) || !HasAdminAccess(id))
@@ -5070,14 +5209,18 @@ public ShowClanWarAdminMenu(id)
     GetMatchStateName(szState, charsmax(szState))
 
     new szTitle[128]
-    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND] Clan War Mode Control\w^n\dCurrent State: \r%s", szState)
+    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND] Clan War Mode Control\w^n\dState: \r%s \d| Fast: \y%s", 
+        szState, g_bFastTestMode ? "ON (5s)" : "OFF (30s)")
     new iMenu = menu_create(szTitle, "HandleClanWarAdminMenu")
 
-    menu_additem(iMenu, "Start 30s Countdown \y[/cw start]", "1")
-    menu_additem(iMenu, "Start Captain Election Now \y[/cw vote]", "2")
-    menu_additem(iMenu, "Start Team Drafting Phase \y[/cw draft]", "3")
-    menu_additem(iMenu, "Start Match Vote (Knife vs Live) \y[/mix]", "4")
-    menu_additem(iMenu, "Reset to WarmUp \r[/cw stop]", "5")
+    menu_additem(iMenu, "Start Countdown \y[/cw start]", "1")
+    menu_additem(iMenu, g_bFastTestMode ? "Fast Test Mode: \r[ON - 5s] \y(Click to toggle)" : "Fast Test Mode: \d[OFF - 30s] \y(Click to toggle)", "2")
+    menu_additem(iMenu, "Add Test Bots (Fill to 10) \y[/cw bots]", "3")
+    menu_additem(iMenu, "Remove all Test Bots \r[/cw nobot]", "4")
+    menu_additem(iMenu, "Start Captain Election Now \y[/cw vote]", "5")
+    menu_additem(iMenu, "Start Team Drafting Phase \y[/cw draft]", "6")
+    menu_additem(iMenu, "Start Match Vote (Knife vs Live) \y[/mix]", "7")
+    menu_additem(iMenu, "Reset to WarmUp \r[/cw stop]", "8")
 
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
     menu_display(id, iMenu, 0)
@@ -5106,25 +5249,41 @@ public HandleClanWarAdminMenu(id, iMenu, iItem)
         case 1:
         {
             g_bAdminForceStarted = true
-            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started the 30-second countdown!", g_szUserName[id])
+            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started the countdown!", g_szUserName[id])
             StartCaptainCountdown()
         }
         case 2:
+        {
+            g_bFastTestMode = !g_bFastTestMode
+            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Fast Test Mode is now: ^4%s ^1(5s countdown, 10s election, 10s pick)", g_bFastTestMode ? "ENABLED" : "DISABLED")
+            ShowClanWarAdminMenu(id)
+        }
+        case 3:
+        {
+            Cmd_AddTestBots(id)
+            ShowClanWarAdminMenu(id)
+        }
+        case 4:
+        {
+            Cmd_KickTestBots(id)
+            ShowClanWarAdminMenu(id)
+        }
+        case 5:
         {
             g_bAdminForceStarted = true
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Captain Election!", g_szUserName[id])
             StartCaptainElection()
         }
-        case 3:
+        case 6:
         {
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Team Drafting!", g_szUserName[id])
             StartDraftPhase()
         }
-        case 4:
+        case 7:
         {
             StartMixVote()
         }
-        case 5:
+        case 8:
         {
             g_bAdminForceStarted = false
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1reset server to WarmUp!", g_szUserName[id])
