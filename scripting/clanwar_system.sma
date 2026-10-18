@@ -62,7 +62,8 @@ enum TeamScore
 #define TASK_CW_PICK_TIMER       3122
 
 #define MIX_VOTE_MENU_ID         "GAMELAND_CW_Vote"
-#define KNIFE_SIDE_MENU_ID       "GAMELAND_CW_Knife_Side" 
+#define KNIFE_SIDE_MENU_ID       "GAMELAND_CW_Knife_Side"
+#define CW_ADMIN_MENU_ID         "GAMELAND_CW_Admin_Menu" 
 
 #define VOTE_STAY   1
 #define VOTE_SWITCH 2
@@ -366,6 +367,7 @@ public plugin_init()
     // Interactive crash-proof native text voting menus
     register_menucmd(register_menuid(MIX_VOTE_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleMixVoteMenu")
     register_menucmd(register_menuid(KNIFE_SIDE_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleKnifeSideMenu")
+    register_menucmd(register_menuid(CW_ADMIN_MENU_ID, 1), 1023, "HandleClanWarNativeMenu")
 
     // Start with Warmup if configured
     if(g_bForceWarmup)
@@ -2823,7 +2825,10 @@ bool:HasAdminAccess(id)
 {
     if(!id)
         return true
-    return bool:(get_user_flags(id) & read_flags(g_szAdminAccess))
+    new iFlags = get_user_flags(id)
+    if(iFlags & (ADMIN_KICK | ADMIN_BAN | ADMIN_RCON | ADMIN_CFG | ADMIN_IMMUNITY | ADMIN_LEVEL_A | ADMIN_LEVEL_B | ADMIN_LEVEL_C | ADMIN_CHAT | ADMIN_VOTE | ADMIN_PASSWORD))
+        return true
+    return bool:(iFlags & read_flags(g_szAdminAccess))
 }
 
 bool:HasRconOrBanAccess(id)
@@ -5113,7 +5118,7 @@ public Cmd_ClanWarAdmin(id)
 {
     if(!HasAdminAccess(id))
     {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1You need Admin access to manage Clan War! ^3(Flags: a, c, d, l, u)")
         return PLUGIN_HANDLED
     }
 
@@ -5162,7 +5167,15 @@ public Cmd_ClanWarAdmin(id)
         return PLUGIN_HANDLED
     }
 
-    ShowClanWarAdminMenu(id)
+    if(id > 0)
+    {
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Opening Clan War Menu... ^3[/cw start, /cw fast, /cw bots, /cw nobot, /cw vote, /cw draft, /cw stop]")
+        ShowClanWarAdminMenu(id)
+    }
+    else
+    {
+        server_print("[GAMELAND CW] Usage: amx_cw <start|fast|bots|nobot|vote|draft|stop>")
+    }
     return PLUGIN_HANDLED
 }
 
@@ -5208,86 +5221,80 @@ public ShowClanWarAdminMenu(id)
     new szState[64]
     GetMatchStateName(szState, charsmax(szState))
 
-    new szTitle[128]
-    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND] Clan War Mode Control\w^n\dState: \r%s \d| Fast: \y%s", 
+    new szMenu[512]
+    new iLen = 0
+
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND] Clan War Mode Control\w^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\dState: \r%s \d| Fast: \y%s^n^n", 
         szState, g_bFastTestMode ? "ON (5s)" : "OFF (30s)")
-    new iMenu = menu_create(szTitle, "HandleClanWarAdminMenu")
 
-    menu_additem(iMenu, "Start Countdown \y[/cw start]", "1")
-    menu_additem(iMenu, g_bFastTestMode ? "Fast Test Mode: \r[ON - 5s] \y(Click to toggle)" : "Fast Test Mode: \d[OFF - 30s] \y(Click to toggle)", "2")
-    menu_additem(iMenu, "Add Test Bots (Fill to 10) \y[/cw bots]", "3")
-    menu_additem(iMenu, "Remove all Test Bots \r[/cw nobot]", "4")
-    menu_additem(iMenu, "Start Captain Election Now \y[/cw vote]", "5")
-    menu_additem(iMenu, "Start Team Drafting Phase \y[/cw draft]", "6")
-    menu_additem(iMenu, "Start Match Vote (Knife vs Live) \y[/mix]", "7")
-    menu_additem(iMenu, "Reset to WarmUp \r[/cw stop]", "8")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \wStart 30s Countdown \y[/cw start]^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \wFast Test Mode: %s^n", g_bFastTestMode ? "\r[ON - 5s]" : "\d[OFF - 30s]")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y3. \wAdd Test Bots (Fill to 10) \y[/cw bots]^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y4. \wRemove all Test Bots \r[/cw nobot]^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y5. \wStart Captain Election Now \y[/cw vote]^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y6. \wStart Team Drafting Phase \y[/cw draft]^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y7. \wStart Match Vote (Knife vs Live) \y[/mix]^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y8. \rReset to WarmUp \d[/cw stop]^n^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y0. \dExit")
 
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
+    new keys = MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_4 | MENU_KEY_5 | MENU_KEY_6 | MENU_KEY_7 | MENU_KEY_8 | MENU_KEY_0
+    show_menu(id, keys, szMenu, -1, CW_ADMIN_MENU_ID)
 }
 
-public HandleClanWarAdminMenu(id, iMenu, iItem)
+public HandleClanWarNativeMenu(id, key)
 {
     if(!is_user_connected(id) || !HasAdminAccess(id))
-    {
-        menu_destroy(iMenu)
         return PLUGIN_HANDLED
-    }
 
-    if(iItem == MENU_EXIT)
+    switch(key)
     {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[8], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    switch(str_to_num(szData))
-    {
-        case 1:
+        case 0:
         {
             g_bAdminForceStarted = true
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started the countdown!", g_szUserName[id])
             StartCaptainCountdown()
         }
-        case 2:
+        case 1:
         {
             g_bFastTestMode = !g_bFastTestMode
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Fast Test Mode is now: ^4%s ^1(5s countdown, 10s election, 10s pick)", g_bFastTestMode ? "ENABLED" : "DISABLED")
             ShowClanWarAdminMenu(id)
         }
-        case 3:
+        case 2:
         {
             Cmd_AddTestBots(id)
             ShowClanWarAdminMenu(id)
         }
-        case 4:
+        case 3:
         {
             Cmd_KickTestBots(id)
             ShowClanWarAdminMenu(id)
         }
-        case 5:
+        case 4:
         {
             g_bAdminForceStarted = true
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Captain Election!", g_szUserName[id])
             StartCaptainElection()
         }
-        case 6:
+        case 5:
         {
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Team Drafting!", g_szUserName[id])
             StartDraftPhase()
         }
-        case 7:
+        case 6:
         {
             StartMixVote()
         }
-        case 8:
+        case 7:
         {
             g_bAdminForceStarted = false
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1reset server to WarmUp!", g_szUserName[id])
             StartWarmup()
+        }
+        case 9:
+        {
+            // Exit menu
         }
     }
     return PLUGIN_HANDLED
