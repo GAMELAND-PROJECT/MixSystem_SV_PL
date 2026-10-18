@@ -54,6 +54,9 @@ new g_iVoteMapCount
 new g_iVoteMapIndex[MAX_VOTE_MAPS]
 new g_iVoteCount[MAX_VOTE_MAPS]
 new g_iPlayerVote[MAX_PLAYERS + 1]
+new bool:g_bPlayerMapVoteLocked[MAX_PLAYERS + 1]
+new g_iPlayerMapSwitches[MAX_PLAYERS + 1]
+new Float:g_flLastMapVoteTime[MAX_PLAYERS + 1]
 new g_iVoteCreator
 new g_iVoteSecondsLeft
 
@@ -164,6 +167,9 @@ public client_putinserver(id)
 	g_flSpecEnteredAt[id] = 0.0
 	g_bSpecConfirmOpen[id] = false
 	g_iPlayerVote[id] = -1
+	g_bPlayerMapVoteLocked[id] = false
+	g_iPlayerMapSwitches[id] = 0
+	g_flLastMapVoteTime[id] = 0.0
 	set_task(0.4, "ShowInitialJoinMenu", TASK_INITIAL_JOIN_MENU + id)
 }
 
@@ -211,6 +217,9 @@ public client_disconnected(id)
 		UpdateMapVoteHud()
 	}
 	g_iPlayerVote[id] = -1
+	g_bPlayerMapVoteLocked[id] = false
+	g_iPlayerMapSwitches[id] = 0
+	g_flLastMapVoteTime[id] = 0.0
 	arrayset(g_bVoteMapSelected[id], false, MAX_MAPS)
 	g_iVoteMapPage[id] = 0
 }
@@ -566,6 +575,9 @@ stock StartSelectedMapVote(admin)
 	for(new id = 1; id <= MAX_PLAYERS; id++)
 	{
 		g_iPlayerVote[id] = -1
+		g_bPlayerMapVoteLocked[id] = false
+		g_iPlayerMapSwitches[id] = 0
+		g_flLastMapVoteTime[id] = 0.0
 	}
 
 	for(new player = 1; player <= MAX_PLAYERS; player++)
@@ -593,7 +605,7 @@ public ReopenVoteForCreator()
 
 stock ShowMapVotePlayerMenu(id)
 {
-	if(!g_bMapVoteActive || !is_user_connected(id) || is_user_hltv(id))
+	if(!g_bMapVoteActive || !is_user_connected(id) || is_user_hltv(id) || g_bPlayerMapVoteLocked[id])
 	{
 		return
 	}
@@ -602,7 +614,7 @@ stock ShowMapVotePlayerMenu(id)
 	new iLen = 0
 
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND] Choose Next Map \r[%02d sec]\w^n", g_iVoteSecondsLeft)
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d(Change your vote anytime)^n^n")
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d(Press selected map again to Confirm & Close)^n\d(Max 3 switches allowed)^n^n")
 
 	new map[32], keys = 0
 	for(new i = 0; i < g_iVoteMapCount; i++)
@@ -613,11 +625,15 @@ stock ShowMapVotePlayerMenu(id)
 
 		if(g_iPlayerVote[id] == i)
 		{
-			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y%d. \y[*] \w%s \y[Selected] \d(%d vote%s)^n", i + 1, map, iVotes, iVotes == 1 ? "" : "s")
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y%d. \y[*] \w%s \y[Selected - Press %d to Confirm] \d(%d vote%s)^n", i + 1, map, i + 1, iVotes, iVotes == 1 ? "" : "s")
 		}
 		else
 		{
-			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y%d. \w%s \d(%d vote%s)^n", i + 1, map, iVotes, iVotes == 1 ? "" : "s")
+			new iNext = (g_iPlayerVote[id] < 0) ? 0 : g_iPlayerMapSwitches[id] + 1
+			if(g_iPlayerVote[id] >= 0)
+				iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y%d. \w%s \d(Switch [%d/3]) \d(%d vote%s)^n", i + 1, map, iNext, iVotes, iVotes == 1 ? "" : "s")
+			else
+				iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y%d. \w%s \d(%d vote%s)^n", i + 1, map, iVotes, iVotes == 1 ? "" : "s")
 		}
 	}
 
@@ -626,49 +642,68 @@ stock ShowMapVotePlayerMenu(id)
 
 public HandleVoteMapChoice(id, key)
 {
-	if(!g_bMapVoteActive || key < 0 || key >= g_iVoteMapCount || !is_user_connected(id))
+	if(!g_bMapVoteActive || key < 0 || key >= g_iVoteMapCount || !is_user_connected(id) || g_bPlayerMapVoteLocked[id])
 	{
 		return PLUGIN_HANDLED
 	}
+
+	new Float:flGameTime = get_gametime()
+	if(flGameTime - g_flLastMapVoteTime[id] < 0.35)
+		return PLUGIN_HANDLED
+	g_flLastMapVoteTime[id] = flGameTime
 
 	new map[32]
 	ArrayGetString(g_aMaps, g_iVoteMapIndex[key], map, charsmax(map))
 
+	// 1. Re-press the same option -> Confirm & Lock & Close
 	if(g_iPlayerVote[id] == key)
 	{
-		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You already chose ^3%s^1.", map)
-		ShowMapVotePlayerMenu(id)
+		g_bPlayerMapVoteLocked[id] = true
+		show_menu(id, 0, "^n", 1)
+		client_cmd(id, "spk buttons/blip1")
+
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1Your vote for ^3%s ^1is ^4CONFIRMED & LOCKED^1! (Menu closed)", map)
 		return PLUGIN_HANDLED
 	}
 
+	// 2. Switch or Initial Vote
 	new bool:bSwitched = (g_iPlayerVote[id] >= 0 && g_iPlayerVote[id] < g_iVoteMapCount)
 	if(bSwitched)
 	{
+		g_iPlayerMapSwitches[id]++
 		g_iVoteCount[g_iPlayerVote[id]]--
 	}
 
 	g_iPlayerVote[id] = key
 	g_iVoteCount[key]++
 
+	// Check max 3 switches reached
+	if(g_iPlayerMapSwitches[id] >= 3)
+	{
+		g_bPlayerMapVoteLocked[id] = true
+		show_menu(id, 0, "^n", 1)
+		client_cmd(id, "spk buttons/blip1")
+
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1Max switches reached ^4(3/3)^1. Your vote for ^3%s ^1is now ^4LOCKED^1!", map)
+		UpdateMapVoteHud()
+		return PLUGIN_HANDLED
+	}
+
 	if(bSwitched)
 	{
-		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You switched your vote to: ^4%s^1.", map)
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1Switched vote to: ^4%s ^1(Switch ^4%d/3^1). ^2Press %d again to Confirm & Lock^1.",
+			map, g_iPlayerMapSwitches[id], key + 1)
 	}
 	else
 	{
-		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You voted for: ^4%s^1.", map)
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You voted for: ^4%s^1. ^2Press %d again to Confirm & Lock^1.",
+			map, key + 1)
 	}
 
-	// Update all connected players so vote numbers are real-time
-	for(new p = 1; p <= MAX_PLAYERS; p++)
-	{
-		if(is_user_connected(p) && !is_user_hltv(p))
-		{
-			ShowMapVotePlayerMenu(p)
-		}
-	}
-
+	// Update only this player's menu immediately
+	ShowMapVotePlayerMenu(id)
 	UpdateMapVoteHud()
+
 	return PLUGIN_HANDLED
 }
 
@@ -687,7 +722,7 @@ public UpdateMapVoteStatus()
 
 	for(new p = 1; p <= MAX_PLAYERS; p++)
 	{
-		if(is_user_connected(p) && !is_user_hltv(p))
+		if(is_user_connected(p) && !is_user_hltv(p) && !g_bPlayerMapVoteLocked[p])
 		{
 			ShowMapVotePlayerMenu(p)
 		}

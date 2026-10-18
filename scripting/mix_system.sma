@@ -138,6 +138,9 @@ new g_szUserName[MAX_PLAYERS + 1][MAX_NAME_LENGTH]
 new g_iMixVoteKnife = 0
 new g_iMixVoteLive = 0
 new g_iPlayerMixVote[MAX_PLAYERS + 1]
+new bool:g_bPlayerMixLocked[MAX_PLAYERS + 1]
+new g_iPlayerMixSwitches[MAX_PLAYERS + 1]
+new Float:g_flLastMixVoteTime[MAX_PLAYERS + 1]
 new g_iMixVoteTimer = 0
 
 // Knife round side selection vote (TR [Red] vs CT [Blue])
@@ -145,6 +148,9 @@ new TeamName:g_iKnifeWinnerTeam = TEAM_UNASSIGNED
 new g_iVoteTR = 0
 new g_iVoteCT = 0
 new g_iPlayerKnifeVote[MAX_PLAYERS + 1]
+new bool:g_bPlayerKnifeLocked[MAX_PLAYERS + 1]
+new g_iPlayerKnifeSwitches[MAX_PLAYERS + 1]
+new Float:g_flLastKnifeVoteTime[MAX_PLAYERS + 1]
 new g_iKnifeVoteTimer = 0
 
 // CS2-style round kill streak / cards
@@ -666,9 +672,15 @@ public client_putinserver(id)
 {
     get_user_name(id, g_szUserName[id], charsmax(g_szUserName[]))
     g_iPlayerMixVote[id] = 0
+    g_bPlayerMixLocked[id] = false
+    g_iPlayerMixSwitches[id] = 0
+    g_flLastMixVoteTime[id] = 0.0
     g_iSavedFrags[id] = 0
     g_iSavedDeaths[id] = 0
     g_iPlayerKnifeVote[id] = 0
+    g_bPlayerKnifeLocked[id] = false
+    g_iPlayerKnifeSwitches[id] = 0
+    g_flLastKnifeVoteTime[id] = 0.0
     g_iRoundKills[id] = 0
     g_iMatchKills[id] = 0
     g_iMatchDeaths[id] = 0
@@ -720,7 +732,13 @@ public client_disconnected(id)
         if(g_iVoteCT < 0) g_iVoteCT = 0
     }
     g_iPlayerMixVote[id] = 0
+    g_bPlayerMixLocked[id] = false
+    g_iPlayerMixSwitches[id] = 0
+    g_flLastMixVoteTime[id] = 0.0
     g_iPlayerKnifeVote[id] = 0
+    g_bPlayerKnifeLocked[id] = false
+    g_iPlayerKnifeSwitches[id] = 0
+    g_flLastKnifeVoteTime[id] = 0.0
     g_iRoundKills[id] = 0
     g_iSavedFrags[id] = 0
     g_iSavedDeaths[id] = 0
@@ -2017,6 +2035,9 @@ StartMixVote()
     for(new id = 1; id <= MAX_PLAYERS; id++)
     {
         g_iPlayerMixVote[id] = 0
+        g_bPlayerMixLocked[id] = false
+        g_iPlayerMixSwitches[id] = 0
+        g_flLastMixVoteTime[id] = 0.0
     }
 
     new iPlayers[MAX_PLAYERS], iNum
@@ -2033,43 +2054,74 @@ StartMixVote()
 
 ShowMixVoteMenu(id)
 {
-    if(!is_user_connected(id) || is_user_bot(id))
+    if(!is_user_connected(id) || is_user_bot(id) || g_bPlayerMixLocked[id])
         return
 
     new szMenu[512]
     new iLen = 0
 
     iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND] Match Start Vote \r[%d sec]\w^n", g_iMixVoteTimer)
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d(Change your vote anytime)^n\r[1] Knife: %d \d| \y[2] Direct Live: %d^n^n", g_iMixVoteKnife, g_iMixVoteLive)
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d(Press selected option again to Confirm & Close)^n\d(Max 3 switches allowed)^n\r[1] Knife: %d \d| \y[2] Direct Live: %d^n^n", g_iMixVoteKnife, g_iMixVoteLive)
 
     if(g_iPlayerMixVote[id] == 1)
-        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \y[*] \wKnife Round \y[Selected] \d(%d vote%s)^n", g_iMixVoteKnife, g_iMixVoteKnife == 1 ? "" : "s")
+    {
+        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \y[*] \wKnife Round \y[Selected - Press 1 to Confirm] \d(%d vote%s)^n", g_iMixVoteKnife, g_iMixVoteKnife == 1 ? "" : "s")
+    }
     else
-        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \wKnife Round \y(Winner picks side) \d(%d vote%s)^n", g_iMixVoteKnife, g_iMixVoteKnife == 1 ? "" : "s")
+    {
+        new iNext = (g_iPlayerMixVote[id] == 0) ? 0 : g_iPlayerMixSwitches[id] + 1
+        if(g_iPlayerMixVote[id] != 0)
+            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \wKnife Round \d(Switch [%d/3]) \d(%d vote%s)^n", iNext, g_iMixVoteKnife, g_iMixVoteKnife == 1 ? "" : "s")
+        else
+            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \wKnife Round \y(Winner picks side) \d(%d vote%s)^n", g_iMixVoteKnife, g_iMixVoteKnife == 1 ? "" : "s")
+    }
 
     if(g_iPlayerMixVote[id] == 2)
-        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \y[*] \wDirect Live \y[Selected] \d(%d vote%s)^n", g_iMixVoteLive, g_iMixVoteLive == 1 ? "" : "s")
+    {
+        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \y[*] \wDirect Live \y[Selected - Press 2 to Confirm] \d(%d vote%s)^n", g_iMixVoteLive, g_iMixVoteLive == 1 ? "" : "s")
+    }
     else
-        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \wDirect Live \y(Start match now) \d(%d vote%s)^n", g_iMixVoteLive, g_iMixVoteLive == 1 ? "" : "s")
+    {
+        new iNext = (g_iPlayerMixVote[id] == 0) ? 0 : g_iPlayerMixSwitches[id] + 1
+        if(g_iPlayerMixVote[id] != 0)
+            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \wDirect Live \d(Switch [%d/3]) \d(%d vote%s)^n", iNext, g_iMixVoteLive, g_iMixVoteLive == 1 ? "" : "s")
+        else
+            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \wDirect Live \y(Start match now) \d(%d vote%s)^n", g_iMixVoteLive, g_iMixVoteLive == 1 ? "" : "s")
+    }
 
     show_menu(id, MENU_KEY_1 | MENU_KEY_2, szMenu, -1, MIX_VOTE_MENU_ID)
 }
 
 public HandleMixVoteMenu(id, key)
 {
-    if(!task_exists(TASK_MIX_VOTE) || !is_user_connected(id))
+    if(!task_exists(TASK_MIX_VOTE) || !is_user_connected(id) || g_bPlayerMixLocked[id])
         return PLUGIN_HANDLED
+
+    new Float:flGameTime = get_gametime()
+    if(flGameTime - g_flLastMixVoteTime[id] < 0.35)
+        return PLUGIN_HANDLED
+    g_flLastMixVoteTime[id] = flGameTime
 
     new iChoice = key + 1 // 0 -> 1 (Knife), 1 -> 2 (Live)
 
+    // 1. Re-press the same option -> Confirm & Lock & Close
     if(g_iPlayerMixVote[id] == iChoice)
     {
-        client_print_color(id, print_team_default, "^4%s ^1You already chose ^3%s^1.", g_szChatPrefix, (iChoice == 1) ? "Knife Round" : "Direct Live")
-        ShowMixVoteMenu(id)
+        g_bPlayerMixLocked[id] = true
+        show_menu(id, 0, "^n", 1)
+        client_cmd(id, "spk buttons/blip1")
+
+        client_print_color(id, print_team_default, "^4%s ^1Your vote for ^3%s ^1is ^4CONFIRMED & LOCKED^1! (Menu closed)",
+            g_szChatPrefix, (iChoice == 1) ? "Knife Round" : "Direct Live")
         return PLUGIN_HANDLED
     }
 
+    // 2. Switch or Initial Vote
     new bool:bSwitched = (g_iPlayerMixVote[id] != 0)
+    if(bSwitched)
+    {
+        g_iPlayerMixSwitches[id]++
+    }
 
     if(g_iPlayerMixVote[id] == 1)
         g_iMixVoteKnife--
@@ -2080,28 +2132,40 @@ public HandleMixVoteMenu(id, key)
     {
         g_iMixVoteKnife++
         g_iPlayerMixVote[id] = 1
-        if(bSwitched)
-            client_print_color(id, print_team_default, "^4%s ^1You switched your vote to: ^3Knife Round^1. ^1(Knife: ^3%d ^1| Live: ^4%d^1)", g_szChatPrefix, g_iMixVoteKnife, g_iMixVoteLive)
-        else
-            client_print_color(id, print_team_default, "^4%s ^1You voted for: ^3Knife Round^1. ^1(Knife: ^3%d ^1| Live: ^4%d^1)", g_szChatPrefix, g_iMixVoteKnife, g_iMixVoteLive)
     }
     else
     {
         g_iMixVoteLive++
         g_iPlayerMixVote[id] = 2
-        if(bSwitched)
-            client_print_color(id, print_team_default, "^4%s ^1You switched your vote to: ^4Direct Live^1. ^1(Knife: ^3%d ^1| Live: ^4%d^1)", g_szChatPrefix, g_iMixVoteKnife, g_iMixVoteLive)
-        else
-            client_print_color(id, print_team_default, "^4%s ^1You voted for: ^4Direct Live^1. ^1(Knife: ^3%d ^1| Live: ^4%d^1)", g_szChatPrefix, g_iMixVoteKnife, g_iMixVoteLive)
     }
 
-    // Refresh menu for all players so vote tallies update in real time
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-    for(new i = 0; i < iNum; i++)
+    new const szChoiceNames[][] = { "", "Knife Round", "Direct Live" }
+
+    // Check max 3 switches reached
+    if(g_iPlayerMixSwitches[id] >= 3)
     {
-        ShowMixVoteMenu(iPlayers[i])
+        g_bPlayerMixLocked[id] = true
+        show_menu(id, 0, "^n", 1)
+        client_cmd(id, "spk buttons/blip1")
+
+        client_print_color(id, print_team_default, "^4%s ^1Max switches reached ^4(3/3)^1. Your vote for ^3%s ^1is now ^4LOCKED^1!",
+            g_szChatPrefix, szChoiceNames[iChoice])
+        return PLUGIN_HANDLED
     }
+
+    if(bSwitched)
+    {
+        client_print_color(id, print_team_default, "^4%s ^1Switched to ^3%s ^1(Switch ^4%d/3^1). ^2Press %d again to Confirm & Lock^1.",
+            g_szChatPrefix, szChoiceNames[iChoice], g_iPlayerMixSwitches[id], iChoice)
+    }
+    else
+    {
+        client_print_color(id, print_team_default, "^4%s ^1Voted for ^3%s^1. ^2Press %d again to Confirm & Lock^1.",
+            g_szChatPrefix, szChoiceNames[iChoice], iChoice)
+    }
+
+    // Update only this player's menu immediately
+    ShowMixVoteMenu(id)
 
     return PLUGIN_HANDLED
 }
@@ -2121,12 +2185,16 @@ public Task_MixVoteCountdown()
     show_hudmessage(0, "Match Start Vote: %d seconds left^n[1] Knife Round: %d | [2] Direct Live: %d",
         g_iMixVoteTimer, g_iMixVoteKnife, g_iMixVoteLive)
 
-    // Keep all player menus synced with live countdown and tallies
+    // Keep active unlocked players synced with countdown and tallies
     new iPlayers[MAX_PLAYERS], iNum
     get_players(iPlayers, iNum, "ch")
     for(new i = 0; i < iNum; i++)
     {
-        ShowMixVoteMenu(iPlayers[i])
+        new p = iPlayers[i]
+        if(!g_bPlayerMixLocked[p])
+        {
+            ShowMixVoteMenu(p)
+        }
     }
 }
 
@@ -2210,6 +2278,9 @@ StartKnifeVote()
     for(new id = 1; id <= MAX_PLAYERS; id++)
     {
         g_iPlayerKnifeVote[id] = 0
+        g_bPlayerKnifeLocked[id] = false
+        g_iPlayerKnifeSwitches[id] = 0
+        g_flLastKnifeVoteTime[id] = 0.0
     }
 
     new iPlayers[MAX_PLAYERS], iNum
@@ -2230,43 +2301,74 @@ StartKnifeVote()
 
 ShowKnifeSideMenu(id)
 {
-    if(!is_user_connected(id) || is_user_bot(id))
+    if(!is_user_connected(id) || is_user_bot(id) || g_bPlayerKnifeLocked[id])
         return
 
     new szMenu[512]
     new iLen = 0
 
     iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\yChoose Starting Side: \r[%d sec]\w^n", g_iKnifeVoteTimer)
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d(Change your vote anytime)^n\r[1] Terrorist: %d \d| \w[2] CT: %d^n^n", g_iVoteTR, g_iVoteCT)
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d(Press selected option again to Confirm & Close)^n\d(Max 3 switches allowed)^n\r[1] Terrorist: %d \d| \w[2] CT: %d^n^n", g_iVoteTR, g_iVoteCT)
 
     if(g_iPlayerKnifeVote[id] == 1)
-        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \y[*] \r[ Terrorist ] \y[Selected] \d(%d vote%s)^n", g_iVoteTR, g_iVoteTR == 1 ? "" : "s")
+    {
+        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \y[*] \r[ Terrorist ] \y[Selected - Press 1 to Confirm] \d(%d vote%s)^n", g_iVoteTR, g_iVoteTR == 1 ? "" : "s")
+    }
     else
-        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \r[ Terrorist ] \d(Red Side) \d(%d vote%s)^n", g_iVoteTR, g_iVoteTR == 1 ? "" : "s")
+    {
+        new iNext = (g_iPlayerKnifeVote[id] == 0) ? 0 : g_iPlayerKnifeSwitches[id] + 1
+        if(g_iPlayerKnifeVote[id] != 0)
+            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \r[ Terrorist ] \d(Switch to TR [%d/3]) \d(%d vote%s)^n", iNext, g_iVoteTR, g_iVoteTR == 1 ? "" : "s")
+        else
+            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \r[ Terrorist ] \d(Red Side) \d(%d vote%s)^n", g_iVoteTR, g_iVoteTR == 1 ? "" : "s")
+    }
 
     if(g_iPlayerKnifeVote[id] == 2)
-        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \y[*] \w[ Counter-Terrorist ] \y[Selected] \d(%d vote%s)^n", g_iVoteCT, g_iVoteCT == 1 ? "" : "s")
+    {
+        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \y[*] \w[ Counter-Terrorist ] \y[Selected - Press 2 to Confirm] \d(%d vote%s)^n", g_iVoteCT, g_iVoteCT == 1 ? "" : "s")
+    }
     else
-        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \w[ Counter-Terrorist ] \y(Blue Side) \d(%d vote%s)^n", g_iVoteCT, g_iVoteCT == 1 ? "" : "s")
+    {
+        new iNext = (g_iPlayerKnifeVote[id] == 0) ? 0 : g_iPlayerKnifeSwitches[id] + 1
+        if(g_iPlayerKnifeVote[id] != 0)
+            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \w[ Counter-Terrorist ] \d(Switch to CT [%d/3]) \d(%d vote%s)^n", iNext, g_iVoteCT, g_iVoteCT == 1 ? "" : "s")
+        else
+            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \w[ Counter-Terrorist ] \y(Blue Side) \d(%d vote%s)^n", g_iVoteCT, g_iVoteCT == 1 ? "" : "s")
+    }
 
     show_menu(id, MENU_KEY_1 | MENU_KEY_2, szMenu, -1, KNIFE_SIDE_MENU_ID)
 }
 
 public HandleKnifeSideMenu(id, key)
 {
-    if(g_iMatchState != STATE_KNIFE || !task_exists(TASK_KNIFE_VOTE) || !is_user_connected(id))
+    if(g_iMatchState != STATE_KNIFE || !task_exists(TASK_KNIFE_VOTE) || !is_user_connected(id) || g_bPlayerKnifeLocked[id])
         return PLUGIN_HANDLED
+
+    new Float:flGameTime = get_gametime()
+    if(flGameTime - g_flLastKnifeVoteTime[id] < 0.35)
+        return PLUGIN_HANDLED
+    g_flLastKnifeVoteTime[id] = flGameTime
 
     new iChoice = key + 1 // 0 -> 1 (TR), 1 -> 2 (CT)
 
+    // 1. Re-press the same option -> Confirm & Lock & Close
     if(g_iPlayerKnifeVote[id] == iChoice)
     {
-        client_print_color(id, print_team_default, "^4%s ^1You already chose ^3%s^1.", g_szChatPrefix, (iChoice == 1) ? "Terrorist" : "Counter-Terrorist")
-        ShowKnifeSideMenu(id)
+        g_bPlayerKnifeLocked[id] = true
+        show_menu(id, 0, "^n", 1)
+        client_cmd(id, "spk buttons/blip1")
+
+        client_print_color(id, print_team_default, "^4%s ^1Your vote for ^3%s ^1is ^4CONFIRMED & LOCKED^1! (Menu closed)",
+            g_szChatPrefix, (iChoice == 1) ? "Terrorist" : "Counter-Terrorist")
         return PLUGIN_HANDLED
     }
 
+    // 2. Switch or Initial Vote
     new bool:bSwitched = (g_iPlayerKnifeVote[id] != 0)
+    if(bSwitched)
+    {
+        g_iPlayerKnifeSwitches[id]++
+    }
 
     if(g_iPlayerKnifeVote[id] == 1)
         g_iVoteTR--
@@ -2277,32 +2379,40 @@ public HandleKnifeSideMenu(id, key)
     {
         g_iVoteTR++
         g_iPlayerKnifeVote[id] = 1
-        if(bSwitched)
-            client_print_color(id, print_team_default, "^4%s ^1You switched your vote to ^3Terrorist ^1(Red Side). (TR: ^4%d ^1| CT: ^4%d^1)", g_szChatPrefix, g_iVoteTR, g_iVoteCT)
-        else
-            client_print_color(id, print_team_default, "^4%s ^1You voted for ^3Terrorist ^1(Red Side). (TR: ^4%d ^1| CT: ^4%d^1)", g_szChatPrefix, g_iVoteTR, g_iVoteCT)
     }
     else
     {
         g_iVoteCT++
         g_iPlayerKnifeVote[id] = 2
-        if(bSwitched)
-            client_print_color(id, print_team_default, "^4%s ^1You switched your vote to ^4Counter-Terrorist ^1(Blue Side). (TR: ^4%d ^1| CT: ^4%d^1)", g_szChatPrefix, g_iVoteTR, g_iVoteCT)
-        else
-            client_print_color(id, print_team_default, "^4%s ^1You voted for ^4Counter-Terrorist ^1(Blue Side). (TR: ^4%d ^1| CT: ^4%d^1)", g_szChatPrefix, g_iVoteTR, g_iVoteCT)
     }
 
-    // Refresh menu for winning team players
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-    for(new i = 0; i < iNum; i++)
+    new const szSideNames[][] = { "", "Terrorist", "Counter-Terrorist" }
+
+    // Check max 3 switches reached
+    if(g_iPlayerKnifeSwitches[id] >= 3)
     {
-        new p = iPlayers[i]
-        if(get_member(p, m_iTeam) == g_iKnifeWinnerTeam)
-        {
-            ShowKnifeSideMenu(p)
-        }
+        g_bPlayerKnifeLocked[id] = true
+        show_menu(id, 0, "^n", 1)
+        client_cmd(id, "spk buttons/blip1")
+
+        client_print_color(id, print_team_default, "^4%s ^1Max switches reached ^4(3/3)^1. Your vote for ^3%s ^1is now ^4LOCKED^1!",
+            g_szChatPrefix, szSideNames[iChoice])
+        return PLUGIN_HANDLED
     }
+
+    if(bSwitched)
+    {
+        client_print_color(id, print_team_default, "^4%s ^1Switched to ^3%s ^1(Switch ^4%d/3^1). ^2Press %d again to Confirm & Lock^1.",
+            g_szChatPrefix, szSideNames[iChoice], g_iPlayerKnifeSwitches[id], iChoice)
+    }
+    else
+    {
+        client_print_color(id, print_team_default, "^4%s ^1Voted for ^3%s^1. ^2Press %d again to Confirm & Lock^1.",
+            g_szChatPrefix, szSideNames[iChoice], iChoice)
+    }
+
+    // Update only this player's menu immediately
+    ShowKnifeSideMenu(id)
 
     return PLUGIN_HANDLED
 }
@@ -2321,13 +2431,13 @@ public Task_KnifeVoteCountdown()
     set_hudmessage(0, 200, 255, -1.0, 0.25, 0, 0.0, 0.9, 0.0, 0.1)
     show_hudmessage(0, "Side Choice Vote: %d seconds left^nTerrorist (Red): %d | Counter-Terrorist (Blue): %d", g_iKnifeVoteTimer, g_iVoteTR, g_iVoteCT)
 
-    // Keep winning team menus updated with countdown and tallies
+    // Keep active unlocked winning team players updated with countdown and tallies
     new iPlayers[MAX_PLAYERS], iNum
     get_players(iPlayers, iNum, "ch")
     for(new i = 0; i < iNum; i++)
     {
         new p = iPlayers[i]
-        if(get_member(p, m_iTeam) == g_iKnifeWinnerTeam)
+        if(get_member(p, m_iTeam) == g_iKnifeWinnerTeam && !g_bPlayerKnifeLocked[p])
         {
             ShowKnifeSideMenu(p)
         }
