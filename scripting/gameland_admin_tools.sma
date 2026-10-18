@@ -54,7 +54,6 @@ new g_iVoteMapCount
 new g_iVoteMapIndex[MAX_VOTE_MAPS]
 new g_iVoteCount[MAX_VOTE_MAPS]
 new g_iPlayerVote[MAX_PLAYERS + 1]
-new g_iPlayerMapVoteMenu[MAX_PLAYERS + 1]
 new g_iVoteCreator
 new g_iVoteSecondsLeft
 
@@ -138,6 +137,7 @@ public plugin_init()
 	register_menucmd(register_menuid("GAMELAND_Open_Team_Menu", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_0, "HandleOpenTeamMenu")
 	register_menucmd(register_menuid("GAMELAND_Map_Categories", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_0, "HandleMapCategoryMenu")
 	register_menucmd(register_menuid("GAMELAND_VoteMap_Select", 1), 1023, "HandleVoteMapSelect")
+	register_menucmd(register_menuid("GAMELAND_Vote_Map_Choice", 1), 1023, "HandleVoteMapChoice")
 	register_menucmd(register_menuid(SPEC_CONFIRM_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleSpecConfirmMenu")
 
 	g_pAllowSpectators = get_cvar_pointer("allow_spectators")
@@ -163,7 +163,6 @@ public client_putinserver(id)
 	g_flLastActivity[id] = get_gametime()
 	g_flSpecEnteredAt[id] = 0.0
 	g_bSpecConfirmOpen[id] = false
-	g_iPlayerMapVoteMenu[id] = 0
 	g_iPlayerVote[id] = -1
 	set_task(0.4, "ShowInitialJoinMenu", TASK_INITIAL_JOIN_MENU + id)
 }
@@ -210,11 +209,6 @@ public client_disconnected(id)
 	{
 		g_iVoteCount[g_iPlayerVote[id]]--
 		UpdateMapVoteHud()
-	}
-	if(g_iPlayerMapVoteMenu[id] > 0)
-	{
-		menu_destroy(g_iPlayerMapVoteMenu[id])
-		g_iPlayerMapVoteMenu[id] = 0
 	}
 	g_iPlayerVote[id] = -1
 	arrayset(g_bVoteMapSelected[id], false, MAX_MAPS)
@@ -572,11 +566,6 @@ stock StartSelectedMapVote(admin)
 	for(new id = 1; id <= MAX_PLAYERS; id++)
 	{
 		g_iPlayerVote[id] = -1
-		if(g_iPlayerMapVoteMenu[id] > 0)
-		{
-			menu_destroy(g_iPlayerMapVoteMenu[id])
-			g_iPlayerMapVoteMenu[id] = 0
-		}
 	}
 
 	for(new player = 1; player <= MAX_PLAYERS; player++)
@@ -609,57 +598,43 @@ stock ShowMapVotePlayerMenu(id)
 		return
 	}
 
-	if(g_iPlayerMapVoteMenu[id] > 0)
-	{
-		menu_destroy(g_iPlayerMapVoteMenu[id])
-		g_iPlayerMapVoteMenu[id] = 0
-	}
+	new szMenu[512]
+	new iLen = 0
 
-	new title[192]
-	formatex(title, charsmax(title), "\y[GAMELAND] Choose Next Map \r[%02d sec]\w^n\d(Change your vote anytime)", g_iVoteSecondsLeft)
-	new menu = menu_create(title, "MapVoteMenuHandler")
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND] Choose Next Map \r[%02d sec]\w^n", g_iVoteSecondsLeft)
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d(Change your vote anytime)^n^n")
 
-	new map[32], itemText[96], info[8]
+	new map[32], keys = 0
 	for(new i = 0; i < g_iVoteMapCount; i++)
 	{
 		ArrayGetString(g_aMaps, g_iVoteMapIndex[i], map, charsmax(map))
-		num_to_str(i, info, charsmax(info))
-
 		new iVotes = g_iVoteCount[i]
+		keys |= (1 << i)
+
 		if(g_iPlayerVote[id] == i)
 		{
-			formatex(itemText, charsmax(itemText), "\y[*] \w%s \y[Selected] \d(%d vote%s)", map, iVotes, iVotes == 1 ? "" : "s")
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y%d. \y[*] \w%s \y[Selected] \d(%d vote%s)^n", i + 1, map, iVotes, iVotes == 1 ? "" : "s")
 		}
 		else
 		{
-			formatex(itemText, charsmax(itemText), "\w%s \d(%d vote%s)", map, iVotes, iVotes == 1 ? "" : "s")
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y%d. \w%s \d(%d vote%s)^n", i + 1, map, iVotes, iVotes == 1 ? "" : "s")
 		}
-
-		menu_additem(menu, itemText, info)
 	}
 
-	menu_setprop(menu, MPROP_EXIT, MEXIT_NEVER)
-	g_iPlayerMapVoteMenu[id] = menu
-	menu_display(id, menu, 0)
+	show_menu(id, keys, szMenu, -1, "GAMELAND_Vote_Map_Choice")
 }
 
-public MapVoteMenuHandler(id, menu, item)
+public HandleVoteMapChoice(id, key)
 {
-	menu_destroy(menu)
-	if(g_iPlayerMapVoteMenu[id] == menu)
-	{
-		g_iPlayerMapVoteMenu[id] = 0
-	}
-
-	if(!g_bMapVoteActive || item == MENU_EXIT || item < 0 || item >= g_iVoteMapCount || !is_user_connected(id))
+	if(!g_bMapVoteActive || key < 0 || key >= g_iVoteMapCount || !is_user_connected(id))
 	{
 		return PLUGIN_HANDLED
 	}
 
 	new map[32]
-	ArrayGetString(g_aMaps, g_iVoteMapIndex[item], map, charsmax(map))
+	ArrayGetString(g_aMaps, g_iVoteMapIndex[key], map, charsmax(map))
 
-	if(g_iPlayerVote[id] == item)
+	if(g_iPlayerVote[id] == key)
 	{
 		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You already chose ^3%s^1.", map)
 		ShowMapVotePlayerMenu(id)
@@ -672,8 +647,8 @@ public MapVoteMenuHandler(id, menu, item)
 		g_iVoteCount[g_iPlayerVote[id]]--
 	}
 
-	g_iPlayerVote[id] = item
-	g_iVoteCount[item]++
+	g_iPlayerVote[id] = key
+	g_iVoteCount[key]++
 
 	if(bSwitched)
 	{
@@ -765,14 +740,9 @@ public FinishMapVote()
 
 	for(new p = 1; p <= MAX_PLAYERS; p++)
 	{
-		if(g_iPlayerMapVoteMenu[p] > 0)
-		{
-			menu_destroy(g_iPlayerMapVoteMenu[p])
-			g_iPlayerMapVoteMenu[p] = 0
-		}
 		if(is_user_connected(p))
 		{
-			menu_cancel(p)
+			show_menu(p, 0, "^n", 1)
 		}
 	}
 
