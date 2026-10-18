@@ -3,7 +3,7 @@
 #include <amxmodx>
 #include <mix_system>
 
-#define PLUGIN  "[MIX System] Voice chat"
+#define PLUGIN  "[Match Server] Voice Chat"
 #define VERSION "1.0.0"
 #define AUTHOR  "Shadows Adi"
 

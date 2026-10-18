@@ -3,7 +3,7 @@
 #include <reapi>
 #include <mix_system>
 
-#define PLUGIN  "[MIX System] Player Drop"
+#define PLUGIN  "[Match Server] Player Drop"
 #define VERSION "1.2.0"
 #define AUTHOR  "Shadows Adi"
 

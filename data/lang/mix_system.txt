@@ -1,15 +1,15 @@
 [en]
 YOU_DONT_HAVE_ACCESS = ^1You do not have access to this command!
 
-MIX_NEEDS_TEN_PLAYERS = ^1The mix requires^4 10 players^1 to start.
+MIX_NEEDS_TEN_PLAYERS = ^1The match requires^4 10 players^1 to start.
 
-MIX_ALREADY_STARTED = ^1The mix has already started!
-MIX_STARTED_BY_YOU = ^1The mix was started by ^4You^1.
-MIX_STARTED_BY_X = ^1The mix was started by ^4%s^1.
-MIX_NOT_STARTED_YET = ^1The mix has not started yet!
-MIX_STOPPED_BY_YOU = ^1The mix was stopped by ^4You^1.
-MIX_STOPPED_BY_X = ^1The mix was stopped by ^4%s^1.
-MIX_NEED_STOPPED = ^1The mix needs to be ^4stopped^1.
+MIX_ALREADY_STARTED = ^1The match has already started!
+MIX_STARTED_BY_YOU = ^1The match was started by ^4You^1.
+MIX_STARTED_BY_X = ^1The match was started by ^4%s^1.
+MIX_NOT_STARTED_YET = ^1The match has not started yet!
+MIX_STOPPED_BY_YOU = ^1The match was stopped by ^4You^1.
+MIX_STOPPED_BY_X = ^1The match was stopped by ^4%s^1.
+MIX_NEED_STOPPED = ^1The match needs to be ^4stopped^1.
 
 WARM_STARTED_BY_YOU = ^1The WarmUp was started by ^4You^1.
 WARM_STARTED_BY_X = ^1The WarmUp was started by ^4%s^1.
@@ -50,12 +50,12 @@ OVERTIME_STARTED_BY_YOU = ^1Overtime was started by ^4You^1.
 OVERTIME_STARTED_BY_X = ^1Overtime was started by ^4%s^1.
 DEMO_STARTED_ON_YOU = ^1The demo was started ^4automatically^1.
 
-MIX_SCORE_IS = ^1The mix has just ^4Started^1. The score is ^4%L %i ^3- ^4%L %i^1.
+MIX_SCORE_IS = ^1The match has just ^4Started^1. The score is ^4%L %i ^3- ^4%L %i^1.
 MIX_SCORE_IS_WITH_END = ^1The round has ended. The score is now ^4%L %i ^3- ^4%L %i^1.
 MIX_HALF_SCORE = ^1The first half has ^4ended^1. The score is now ^4%L %i ^3- ^4%L %i^1.
 MIX_LAST_ROUND_FOR_X_TEAM = ^1This is the last round for team ^4%s.
-MIX_WON_BY_X_TEAM = ^1The mix was won by team ^4%s^1. ^3Congratulations.
-MIX_END_SCORE = ^1The mix has ^4ended^1. The final score is: ^4%L %i ^3 - ^4%L %i^1.
+MIX_WON_BY_X_TEAM = ^1The match was won by team ^4%s^1. ^3Congratulations.
+MIX_END_SCORE = ^1The match has ^4ended^1. The final score is: ^4%L %i ^3 - ^4%L %i^1.
 
 OVERTIME_AUTOMATIC_WILL_START = ^4Overtime^1 will start in ^47 seconds^1.
 OVERTIME_AUTOMATIC_WILL_START_ONER = ^4Decider round^1 will start in ^47 seconds^1.
@@ -64,7 +64,7 @@ FIRST_OVERTIME_SCORE_IS = ^1In the first part of ^4Overtime^1, the score is: ^4%
 SECOND_OVERTIME_SCORE_IS = ^1In the second part of ^4Overtime^1, the score is: ^4%L %i ^3 - ^4%L %i^1.
 ONE_ROUND_FOR_WIN = ^1The decider round has started^4!
 MIX_WON_BY_X_TEAM_IN_OVERTIME = ^1The mix was won in ^4Overtime^1 by team ^4%s^1. ^3Congratulations.
-MIX_OVERTIME_END_SCORE = ^1The mix has ^4ended^1 in ^4Overtime^1. The final score is: ^4%L %i ^3 - ^4%L %i^1.
+MIX_OVERTIME_END_SCORE = ^1The match has ^4ended^1 in ^4Overtime^1. The final score is: ^4%L %i ^3 - ^4%L %i^1.
 
 MIX_YOUR_TEAM_WON = ^1Your team won the ^4Mix^1. You received ^4%d bonus points^1.
 

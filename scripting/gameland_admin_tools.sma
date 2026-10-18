@@ -54,9 +54,9 @@ new g_iVoteMapCount
 new g_iVoteMapIndex[MAX_VOTE_MAPS]
 new g_iVoteCount[MAX_VOTE_MAPS]
 new g_iPlayerVote[MAX_PLAYERS + 1]
+new g_iPlayerMapVoteMenu[MAX_PLAYERS + 1]
 new g_iVoteCreator
 new g_iVoteSecondsLeft
-new g_iVoteMenu
 
 public plugin_init()
 {
@@ -163,6 +163,8 @@ public client_putinserver(id)
 	g_flLastActivity[id] = get_gametime()
 	g_flSpecEnteredAt[id] = 0.0
 	g_bSpecConfirmOpen[id] = false
+	g_iPlayerMapVoteMenu[id] = 0
+	g_iPlayerVote[id] = -1
 	set_task(0.4, "ShowInitialJoinMenu", TASK_INITIAL_JOIN_MENU + id)
 }
 
@@ -204,10 +206,19 @@ public client_disconnected(id)
 	g_flLastViewAngles[id][2] = 0.0
 	g_bSpecConfirmOpen[id] = false
 	g_iBanTargetUserId[id] = 0
+	if(g_bMapVoteActive && g_iPlayerVote[id] >= 0 && g_iPlayerVote[id] < g_iVoteMapCount)
+	{
+		g_iVoteCount[g_iPlayerVote[id]]--
+		UpdateMapVoteHud()
+	}
+	if(g_iPlayerMapVoteMenu[id] > 0)
+	{
+		menu_destroy(g_iPlayerMapVoteMenu[id])
+		g_iPlayerMapVoteMenu[id] = 0
+	}
 	g_iPlayerVote[id] = -1
 	arrayset(g_bVoteMapSelected[id], false, MAX_MAPS)
 	g_iVoteMapPage[id] = 0
-	g_iPlayerVote[id] = -1
 }
 
 public ShowInitialJoinMenu(taskId)
@@ -561,31 +572,23 @@ stock StartSelectedMapVote(admin)
 	for(new id = 1; id <= MAX_PLAYERS; id++)
 	{
 		g_iPlayerVote[id] = -1
-	}
-
-	new menu = menu_create("\y[GAMELAND]\w Choose the next map", "MapVoteMenuHandler")
-	g_iVoteMenu = menu
-	new map[32], info[8]
-	for(new i = 0; i < count; i++)
-	{
-		ArrayGetString(g_aMaps, g_iVoteMapIndex[i], map, charsmax(map))
-		num_to_str(i, info, charsmax(info))
-		menu_additem(menu, map, info)
-	}
-	menu_setprop(menu, MPROP_EXIT, MEXIT_NEVER)
-	for(new player = 1; player <= MAX_PLAYERS; player++)
-	{
-		if(player != admin && is_user_connected(player) && !is_user_hltv(player))
+		if(g_iPlayerMapVoteMenu[id] > 0)
 		{
-			menu_display(player, menu)
+			menu_destroy(g_iPlayerMapVoteMenu[id])
+			g_iPlayerMapVoteMenu[id] = 0
 		}
 	}
-	if(is_user_connected(admin) && !is_user_hltv(admin))
+
+	for(new player = 1; player <= MAX_PLAYERS; player++)
 	{
-		menu_display(admin, menu)
+		if(is_user_connected(player) && !is_user_hltv(player))
+		{
+			ShowMapVotePlayerMenu(player)
+		}
 	}
+
 	set_task(0.2, "ReopenVoteForCreator", TASK_MAP_VOTE + 3)
-	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Map vote started. You have ^420 seconds^1 to vote.")
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Map vote started. You have ^4%d seconds^1 to vote.", g_iVoteSecondsLeft)
 	remove_task(TASK_MAP_VOTE + 2)
 	set_task(1.0, "UpdateMapVoteStatus", TASK_MAP_VOTE + 2, _, _, "b")
 	set_task(MAP_VOTE_DURATION, "FinishMapVote", TASK_MAP_VOTE)
@@ -593,28 +596,103 @@ stock StartSelectedMapVote(admin)
 
 public ReopenVoteForCreator()
 {
-	if(g_bMapVoteActive && g_iVoteMenu > 0 && is_user_connected(g_iVoteCreator))
+	if(g_bMapVoteActive && is_user_connected(g_iVoteCreator))
 	{
-		menu_display(g_iVoteCreator, g_iVoteMenu)
+		ShowMapVotePlayerMenu(g_iVoteCreator)
 	}
+}
+
+stock ShowMapVotePlayerMenu(id)
+{
+	if(!g_bMapVoteActive || !is_user_connected(id) || is_user_hltv(id))
+	{
+		return
+	}
+
+	if(g_iPlayerMapVoteMenu[id] > 0)
+	{
+		menu_destroy(g_iPlayerMapVoteMenu[id])
+		g_iPlayerMapVoteMenu[id] = 0
+	}
+
+	new title[192]
+	formatex(title, charsmax(title), "\y[GAMELAND] Choose Next Map \r[%02d sec]\w^n\d(Change your vote anytime)", g_iVoteSecondsLeft)
+	new menu = menu_create(title, "MapVoteMenuHandler")
+
+	new map[32], itemText[96], info[8]
+	for(new i = 0; i < g_iVoteMapCount; i++)
+	{
+		ArrayGetString(g_aMaps, g_iVoteMapIndex[i], map, charsmax(map))
+		num_to_str(i, info, charsmax(info))
+
+		new iVotes = g_iVoteCount[i]
+		if(g_iPlayerVote[id] == i)
+		{
+			formatex(itemText, charsmax(itemText), "\y[*] \w%s \y[Selected] \d(%d vote%s)", map, iVotes, iVotes == 1 ? "" : "s")
+		}
+		else
+		{
+			formatex(itemText, charsmax(itemText), "\w%s \d(%d vote%s)", map, iVotes, iVotes == 1 ? "" : "s")
+		}
+
+		menu_additem(menu, itemText, info)
+	}
+
+	menu_setprop(menu, MPROP_EXIT, MEXIT_NEVER)
+	g_iPlayerMapVoteMenu[id] = menu
+	menu_display(id, menu, 0)
 }
 
 public MapVoteMenuHandler(id, menu, item)
 {
+	menu_destroy(menu)
+	if(g_iPlayerMapVoteMenu[id] == menu)
+	{
+		g_iPlayerMapVoteMenu[id] = 0
+	}
+
 	if(!g_bMapVoteActive || item == MENU_EXIT || item < 0 || item >= g_iVoteMapCount || !is_user_connected(id))
 	{
 		return PLUGIN_HANDLED
 	}
 
-	if(g_iPlayerVote[id] >= 0 && g_iPlayerVote[id] < g_iVoteMapCount)
+	new map[32]
+	ArrayGetString(g_aMaps, g_iVoteMapIndex[item], map, charsmax(map))
+
+	if(g_iPlayerVote[id] == item)
+	{
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You already chose ^3%s^1.", map)
+		ShowMapVotePlayerMenu(id)
+		return PLUGIN_HANDLED
+	}
+
+	new bool:bSwitched = (g_iPlayerVote[id] >= 0 && g_iPlayerVote[id] < g_iVoteMapCount)
+	if(bSwitched)
 	{
 		g_iVoteCount[g_iPlayerVote[id]]--
 	}
 
 	g_iPlayerVote[id] = item
 	g_iVoteCount[item]++
-	client_print_color(id, print_team_default, "^4[GAMELAND] ^1Your vote was recorded.")
-	menu_display(id, menu)
+
+	if(bSwitched)
+	{
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You switched your vote to: ^4%s^1.", map)
+	}
+	else
+	{
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You voted for: ^4%s^1.", map)
+	}
+
+	// Update all connected players so vote numbers are real-time
+	for(new p = 1; p <= MAX_PLAYERS; p++)
+	{
+		if(is_user_connected(p) && !is_user_hltv(p))
+		{
+			ShowMapVotePlayerMenu(p)
+		}
+	}
+
 	UpdateMapVoteHud()
 	return PLUGIN_HANDLED
 }
@@ -631,6 +709,15 @@ public UpdateMapVoteStatus()
 	{
 		g_iVoteSecondsLeft--
 	}
+
+	for(new p = 1; p <= MAX_PLAYERS; p++)
+	{
+		if(is_user_connected(p) && !is_user_hltv(p))
+		{
+			ShowMapVotePlayerMenu(p)
+		}
+	}
+
 	UpdateMapVoteHud()
 }
 
@@ -675,11 +762,20 @@ public FinishMapVote()
 	g_bMapVoteActive = false
 	remove_task(TASK_MAP_VOTE + 2)
 	remove_task(TASK_MAP_VOTE + 3)
-	if(g_iVoteMenu > 0)
+
+	for(new p = 1; p <= MAX_PLAYERS; p++)
 	{
-		menu_destroy(g_iVoteMenu)
-		g_iVoteMenu = 0
+		if(g_iPlayerMapVoteMenu[p] > 0)
+		{
+			menu_destroy(g_iPlayerMapVoteMenu[p])
+			g_iPlayerMapVoteMenu[p] = 0
+		}
+		if(is_user_connected(p))
+		{
+			menu_cancel(p)
+		}
 	}
+
 	g_iVoteCreator = 0
 	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Vote finished: ^4%s^1 won with ^3%d^1 votes.", map, g_iVoteCount[winner])
 	set_task(2.0, "ChangeToVotedMap", TASK_MAP_VOTE + 1, map, sizeof map)
@@ -1591,9 +1687,6 @@ stock ApplyRestrictedJoinKey(id, key, bool:showMenu)
 	if(key == 0)
 	{
 		MoveToFreeSpectator(id)
-		SetCvar(g_pForceCamera, 0)
-		SetCvar(g_pForceChaseCam, 0)
-		SetCvar(g_pFadeToBlack, 0)
 		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You were moved to Spectator.")
 	}
 	else if(key == 1)
