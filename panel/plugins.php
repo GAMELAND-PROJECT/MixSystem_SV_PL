@@ -547,17 +547,14 @@ function escHtml(str) {
         <button onclick="mixCmd('cw_fast')" class="btn btn-warning mix-ctrl-btn" title="Toggle 5s Fast Test Mode (/cw fast)">
             ⚡ Toggle Fast Mode (5s)
         </button>
-        <button onclick="mixCmd('cw_bots')" class="btn btn-secondary mix-ctrl-btn" style="border-color:#10b981; color:#10b981;" title="Add test bots to fill server to 10 (/cw bots)">
-            🤖 Add Test Bots (10 Slots)
-        </button>
-        <button onclick="mixCmd('cw_nobot')" class="btn btn-secondary mix-ctrl-btn" style="border-color:#ef4444; color:#ef4444;" title="Kick all test bots (/cw nobot)">
-            🧹 Remove Test Bots
-        </button>
         <button onclick="mixCmd('cw_vote')" class="btn btn-secondary mix-ctrl-btn" title="Force start Captain Election (/cw vote)">
             👑 Captain Election Now
         </button>
         <button onclick="mixCmd('cw_draft')" class="btn btn-secondary mix-ctrl-btn" title="Force start Team Drafting (/cw draft)">
             👥 Team Drafting Phase
+        </button>
+        <button onclick="mixCmd('cw_spec')" class="btn btn-secondary mix-ctrl-btn" title="Move All Players to Spectator (/spec)">
+            👁️ Move All to Spectator
         </button>
         <button onclick="mixCmd('start')" class="btn btn-secondary mix-ctrl-btn" title="Start Match Vote (/mix)">
             🔪 Match Vote (Knife vs Live)
@@ -721,10 +718,9 @@ function mixCmd(action) {
         restart_round: '🔄 Restarting Round...',
         cw_start:      '▶️ Starting Clan War Countdown...',
         cw_fast:       '⚡ Toggling Fast Test Mode...',
-        cw_bots:       '🤖 Adding Test Bots (10 slots)...',
-        cw_nobot:      '🧹 Removing Test Bots...',
         cw_vote:       '👑 Starting Captain Election...',
         cw_draft:      '👥 Starting Team Drafting...',
+        cw_spec:       '👁️ Moving All to Spectator...',
         cw_stop:       '🛑 Resetting Clan War to WarmUp...',
         knife:         '🔪 Starting Knife Round...',
         start:         '▶️ Starting Match...',

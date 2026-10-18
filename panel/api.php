@@ -258,10 +258,9 @@ switch ($action) {
             'endround'      => 'mp_roundtime 0.01',  // force end round quickly
             'cw_start'      => 'amx_cw start',       // start CW countdown
             'cw_fast'       => 'amx_cw fast',        // toggle fast CW test mode
-            'cw_bots'       => 'amx_cw bots',        // add test bots
-            'cw_nobot'      => 'amx_cw nobot',       // remove test bots
             'cw_vote'       => 'amx_cw vote',        // force captain election
             'cw_draft'      => 'amx_cw draft',       // force team drafting
+            'cw_spec'       => 'amx_cw spec',        // move all to spectator
             'cw_stop'       => 'amx_cw stop',        // reset CW to warmup
         ];
 
