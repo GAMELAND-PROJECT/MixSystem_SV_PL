@@ -146,6 +146,7 @@ new g_iCaptainTR = 0
 new g_iCurrentDraftTurn = 1 // 1: CT, 2: TR
 new g_iPickTimer = 15
 new g_iDraftRound = 1
+new bool:g_bAdminForceStarted = false
 new g_szUserName[MAX_PLAYERS + 1][MAX_NAME_LENGTH]
 
 // /mix Global Vote (Knife vs Direct Live)
@@ -309,13 +310,17 @@ public plugin_init()
     register_concmd("amx_rev1", "Cmd_ReviveOn", ADMIN_CFG, "- Enable Infinite Revive mode")
     register_concmd("amx_rev0", "Cmd_ReviveOff", ADMIN_CFG, "- Disable Infinite Revive mode")
 
-    // Standard client commands fallback
-    register_clcmd("say /cw", "Cmd_StartMix")
-    register_clcmd("say_team /cw", "Cmd_StartMix")
-    register_clcmd("say /clanwar", "Cmd_StartMix")
-    register_clcmd("say_team /clanwar", "Cmd_StartMix")
-    register_clcmd("cw", "Cmd_StartMix")
-    register_clcmd("clanwar", "Cmd_StartMix")
+    // Set visible maxplayers strictly to 10
+    set_cvar_num("sv_visiblemaxplayers", 10)
+
+    // Clan War Admin Control Commands (/cw, /clanwar)
+    register_clcmd("say /cw", "Cmd_ClanWarAdmin")
+    register_clcmd("say_team /cw", "Cmd_ClanWarAdmin")
+    register_clcmd("say /clanwar", "Cmd_ClanWarAdmin")
+    register_clcmd("say_team /clanwar", "Cmd_ClanWarAdmin")
+    register_clcmd("cw", "Cmd_ClanWarAdmin")
+    register_clcmd("clanwar", "Cmd_ClanWarAdmin")
+    register_concmd("amx_cw", "Cmd_ClanWarAdmin", ADMIN_CFG, "- Open Clan War Admin Control Menu")
     register_clcmd("say /cwcomenzi", "Cmd_ShowCommands")
     register_clcmd("say_team /cwcomenzi", "Cmd_ShowCommands")
     register_clcmd("say /comenzi", "Cmd_ShowCommands")
@@ -712,6 +717,22 @@ RegisterDefaultCommands()
 public client_putinserver(id)
 {
     get_user_name(id, g_szUserName[id], charsmax(g_szUserName[]))
+
+    // Enforce 10 human slots strictly
+    if(!is_user_bot(id) && !is_user_hltv(id))
+    {
+        new iConnectedHumans = 0
+        for(new p = 1; p <= MaxClients; p++)
+        {
+            if(is_user_connected(p) && !is_user_bot(p) && !is_user_hltv(p))
+                iConnectedHumans++
+        }
+        if(iConnectedHumans > 10 && !HasAdminAccess(id))
+        {
+            server_cmd("kick #%d ^"Server is full (10/10 Clan War slots)^"", get_user_userid(id))
+            return
+        }
+    }
     g_iPlayerMixVote[id] = 0
     g_bPlayerMixLocked[id] = false
     g_iPlayerMixSwitches[id] = 0
@@ -772,7 +793,7 @@ public client_disconnected(id)
     }
     if(g_iMatchState == STATE_CAPTAIN_COUNTDOWN)
     {
-        if(GetActiveInGamePlayerCount() < 10)
+        if(!g_bAdminForceStarted && GetActiveInGamePlayerCount() < 10)
         {
             remove_task(TASK_CW_COUNTDOWN)
             g_iMatchState = STATE_WARMUP
@@ -2009,6 +2030,7 @@ public StartWarmup()
     g_iCaptainTR = 0
     g_iCurrentDraftTurn = 1
     g_iDraftRound = 1
+    g_bAdminForceStarted = false
 
     for(new i = 1; i <= MAX_PLAYERS; i++)
     {
@@ -2709,12 +2731,12 @@ public Task_HudDisplay()
 
             if(g_bReviveMode)
             {
-                formatex(szMsg, charsmax(szMsg), "== [ CW WARMUP - REVIVE ON ] ==^nWaiting for 10 Players: [ %d / 10 ]", iInGame)
+                formatex(szMsg, charsmax(szMsg), "== [ CW WARMUP (10 SLOTS) - REVIVE ON ] ==^nWaiting for 10 Players: [ %d / 10 ]^n(Admins can type /cw to force start)", iInGame)
                 set_hudmessage(0, 255, 120, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             }
             else
             {
-                formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR WARMUP ] ==^nWaiting for 10 Players: [ %d / 10 ]", iInGame)
+                formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR WARMUP (10 SLOTS) ] ==^nWaiting for 10 Players: [ %d / 10 ]^n(Admins can type /cw to force start)", iInGame)
                 set_hudmessage(0, 220, 255, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             }
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
@@ -4399,7 +4421,14 @@ public StartCaptainCountdown()
     set_task(1.0, "Task_CaptainCountdown", TASK_CW_COUNTDOWN, .flags = "b")
 
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
-    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^310 PLAYERS REACHED! ^1Captain Election will begin in ^430 seconds^1.")
+    if(g_bAdminForceStarted)
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3CAPTAIN COUNTDOWN FORCE-STARTED BY ADMIN! ^1(^430 seconds^1)")
+    }
+    else
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^310 PLAYERS REACHED! ^1Captain Election will begin in ^430 seconds^1.")
+    }
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1All players will be moved to Spectator for Captain Voting & Team Pick.")
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
     client_cmd(0, "spk buttons/bell1")
@@ -4414,7 +4443,7 @@ public Task_CaptainCountdown()
     }
 
     new iInGame = GetActiveInGamePlayerCount()
-    if(iInGame < 10)
+    if(!g_bAdminForceStarted && iInGame < 10)
     {
         remove_task(TASK_CW_COUNTDOWN)
         g_iMatchState = STATE_WARMUP
@@ -4457,7 +4486,7 @@ public StartCaptainElection()
         if(is_user_connected(id) && !is_user_bot(id) && !is_user_hltv(id))
         {
             new TeamName:team = get_member(id, m_iTeam)
-            if(team == TEAM_CT || team == TEAM_TERRORIST)
+            if(team == TEAM_CT || team == TEAM_TERRORIST || (g_bAdminForceStarted && team == TEAM_SPECTATOR))
             {
                 if(g_iEligibleVoterCount < 10)
                 {
@@ -4982,4 +5011,141 @@ public FinishDraftPhase()
 
     // 2.0s delay then launch StartMixVote() (Knife vs Live vote)
     set_task(2.0, "StartMixVote")
+}
+
+
+// -----------------------------------------------------------------------------
+// CLAN WAR ADMIN CONTROL COMMANDS & INTERACTIVE MENU (/cw)
+// -----------------------------------------------------------------------------
+
+public Cmd_ClanWarAdmin(id)
+{
+    if(!HasAdminAccess(id))
+    {
+        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+        return PLUGIN_HANDLED
+    }
+
+    new szArg[32]
+    read_argv(1, szArg, charsmax(szArg))
+
+    if(equali(szArg, "start") || equali(szArg, "force"))
+    {
+        g_bAdminForceStarted = true
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started the 30-second countdown!", g_szUserName[id])
+        StartCaptainCountdown()
+        return PLUGIN_HANDLED
+    }
+    else if(equali(szArg, "vote") || equali(szArg, "elect"))
+    {
+        g_bAdminForceStarted = true
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Captain Election!", g_szUserName[id])
+        StartCaptainElection()
+        return PLUGIN_HANDLED
+    }
+    else if(equali(szArg, "draft") || equali(szArg, "pick"))
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Team Drafting!", g_szUserName[id])
+        StartDraftPhase()
+        return PLUGIN_HANDLED
+    }
+    else if(equali(szArg, "stop") || equali(szArg, "warm"))
+    {
+        g_bAdminForceStarted = false
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1reset server to WarmUp!", g_szUserName[id])
+        StartWarmup()
+        return PLUGIN_HANDLED
+    }
+
+    ShowClanWarAdminMenu(id)
+    return PLUGIN_HANDLED
+}
+
+public ShowClanWarAdminMenu(id)
+{
+    if(!is_user_connected(id) || !HasAdminAccess(id))
+        return
+
+    new szState[64]
+    GetMatchStateName(szState, charsmax(szState))
+
+    new szTitle[128]
+    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND] Clan War Mode Control\w^n\dCurrent State: \r%s", szState)
+    new iMenu = menu_create(szTitle, "HandleClanWarAdminMenu")
+
+    menu_additem(iMenu, "Start 30s Countdown \y[/cw start]", "1")
+    menu_additem(iMenu, "Start Captain Election Now \y[/cw vote]", "2")
+    menu_additem(iMenu, "Start Team Drafting Phase \y[/cw draft]", "3")
+    menu_additem(iMenu, "Start Match Vote (Knife vs Live) \y[/mix]", "4")
+    menu_additem(iMenu, "Reset to WarmUp \r[/cw stop]", "5")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public HandleClanWarAdminMenu(id, iMenu, iItem)
+{
+    if(!is_user_connected(id) || !HasAdminAccess(id))
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[8], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    switch(str_to_num(szData))
+    {
+        case 1:
+        {
+            g_bAdminForceStarted = true
+            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started the 30-second countdown!", g_szUserName[id])
+            StartCaptainCountdown()
+        }
+        case 2:
+        {
+            g_bAdminForceStarted = true
+            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Captain Election!", g_szUserName[id])
+            StartCaptainElection()
+        }
+        case 3:
+        {
+            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Team Drafting!", g_szUserName[id])
+            StartDraftPhase()
+        }
+        case 4:
+        {
+            StartMixVote()
+        }
+        case 5:
+        {
+            g_bAdminForceStarted = false
+            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1reset server to WarmUp!", g_szUserName[id])
+            StartWarmup()
+        }
+    }
+    return PLUGIN_HANDLED
+}
+
+stock GetMatchStateName(szOutput[], iMaxLen)
+{
+    switch(g_iMatchState)
+    {
+        case STATE_WARMUP: copy(szOutput, iMaxLen, "WarmUp (Waiting for 10 Players)")
+        case STATE_CAPTAIN_COUNTDOWN: copy(szOutput, iMaxLen, "30s Captain Countdown")
+        case STATE_CAPTAIN_VOTE: copy(szOutput, iMaxLen, "Captain Election Vote")
+        case STATE_PICKING: copy(szOutput, iMaxLen, "Turn-by-Turn Drafting")
+        case STATE_KNIFE: copy(szOutput, iMaxLen, "Knife Round")
+        case STATE_FIRST_HALF: copy(szOutput, iMaxLen, "Live Match (First Half)")
+        case STATE_SECOND_HALF: copy(szOutput, iMaxLen, "Live Match (Second Half)")
+        case STATE_OVERTIME_FIRST_HALF, STATE_OVERTIME_SECOND_HALF: copy(szOutput, iMaxLen, "Overtime")
+        default: copy(szOutput, iMaxLen, "Unknown")
+    }
 }
