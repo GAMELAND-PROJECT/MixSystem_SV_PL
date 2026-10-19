@@ -951,20 +951,6 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
             g_iMatchKills[iKiller]++
             g_iRoundKills[iKiller]++
 
-            // CS2-style announcements for high kill streaks
-            if(g_iRoundKills[iKiller] == 3)
-            {
-                client_print_color(0, print_team_default, "^4%s ^4%s ^3scored a ^4TRIPLE KILL^3! [ 3 ]", g_szChatPrefix, szKillerName)
-            }
-            else if(g_iRoundKills[iKiller] == 4)
-            {
-                client_print_color(0, print_team_default, "^4%s ^4%s ^3scored a ^4QUAD KILL^3! [ 4 ]", g_szChatPrefix, szKillerName)
-            }
-            else if(g_iRoundKills[iKiller] >= 5)
-            {
-                client_print_color(0, print_team_default, "^4%s ^3* * * ^4%s ^3SCORED AN ACE! * * * [ * ACE * ]", g_szChatPrefix, szKillerName)
-            }
-
             if(bHeadshot)
             {
                 g_iMatchHS[iKiller]++

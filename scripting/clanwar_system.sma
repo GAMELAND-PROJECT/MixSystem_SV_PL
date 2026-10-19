@@ -60,6 +60,7 @@ enum TeamScore
 #define TASK_CW_COUNTDOWN        3120
 #define TASK_CW_CAPTAIN_VOTE     3121
 #define TASK_CW_PICK_TIMER       3122
+#define TASK_ABANDON_FORFEIT     3150
 
 #define MIX_VOTE_MENU_ID         "GAMELAND_CW_Vote"
 #define KNIFE_SIDE_MENU_ID       "GAMELAND_CW_Knife_Side"
@@ -113,6 +114,9 @@ new bool:g_bChatMuted = false
 new bool:g_bPaused = false
 new g_iPauseTimer = 0
 new bool:g_bTeamTimeoutUsed[TeamScore]
+new bool:g_bAbandonTimerActive = false
+new g_iAbandonTimer = 60
+new TeamName:g_iAbandonDefaultTeam = TEAM_UNASSIGNED
 
 // Settings from MixSettings.ini
 new g_szChatPrefix[32] = "[GAMELAND CW]"
@@ -936,14 +940,163 @@ public Task_LateJoinScoreSync(id)
     }
 }
 
+stock GetMatchTeamCountExcluding(TeamName:team, iExcludeId = 0)
+{
+    new iCount = 0
+    for(new i = 1; i <= MaxClients; i++)
+    {
+        if(i != iExcludeId && is_user_connected(i) && !is_user_bot(i) && !is_user_hltv(i))
+        {
+            if(get_member(i, m_iTeam) == team)
+            {
+                iCount++
+            }
+        }
+    }
+    return iCount
+}
+
+stock CheckTeamAbandonment(iCtCount, iTrCount)
+{
+    if(g_iMatchState < STATE_FIRST_HALF || g_iMatchState > STATE_OVERTIME_SECOND_HALF)
+        return
+
+    new TeamName:iDefTeam = TEAM_UNASSIGNED
+    if(iCtCount < 4 && iTrCount >= 4)
+        iDefTeam = TEAM_CT
+    else if(iTrCount < 4 && iCtCount >= 4)
+        iDefTeam = TEAM_TERRORIST
+    else if(iCtCount < 4 && iTrCount < 4)
+        iDefTeam = (iCtCount < iTrCount) ? TEAM_CT : TEAM_TERRORIST
+
+    if(iDefTeam == TEAM_UNASSIGNED)
+        return
+
+    if(!g_bAbandonTimerActive)
+    {
+        g_bAbandonTimerActive = true
+        g_iAbandonTimer = 60
+        g_iAbandonDefaultTeam = iDefTeam
+
+        new szDefName[32], szOppName[32]
+        copy(szDefName, charsmax(szDefName), (iDefTeam == TEAM_CT) ? "Counter-Terrorist" : "Terrorist")
+        copy(szOppName, charsmax(szOppName), (iDefTeam == TEAM_CT) ? "Terrorist" : "Counter-Terrorist")
+
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3WARNING: 2+ PLAYERS DISCONNECTED FROM %s! ^1(%d player%s left)",
+            szDefName, (iDefTeam == TEAM_CT) ? iCtCount : iTrCount, ((iDefTeam == TEAM_CT) ? iCtCount : iTrCount) == 1 ? "" : "s")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Waiting ^460 seconds ^1for reconnect or substitute to join.")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1If team does not reach at least 4 players, ^4%s ^1wins by FORFEIT!", szOppName)
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+
+        client_cmd(0, "spk buttons/bell1")
+
+        remove_task(TASK_ABANDON_FORFEIT)
+        set_task(1.0, "Task_AbandonCountdown", TASK_ABANDON_FORFEIT, .flags = "b")
+    }
+}
+
+public Task_AbandonCountdown()
+{
+    if(g_iMatchState < STATE_FIRST_HALF || g_iMatchState > STATE_OVERTIME_SECOND_HALF)
+    {
+        remove_task(TASK_ABANDON_FORFEIT)
+        g_bAbandonTimerActive = false
+        return
+    }
+
+    new iCtCount = GetMatchTeamCountExcluding(TEAM_CT, 0)
+    new iTrCount = GetMatchTeamCountExcluding(TEAM_TERRORIST, 0)
+
+    // Check if defaulting team has recovered to 4 or more players
+    new iDefCount = (g_iAbandonDefaultTeam == TEAM_CT) ? iCtCount : iTrCount
+    if(iDefCount >= 4)
+    {
+        remove_task(TASK_ABANDON_FORFEIT)
+        g_bAbandonTimerActive = false
+
+        new szDefName[32]
+        copy(szDefName, charsmax(szDefName), (g_iAbandonDefaultTeam == TEAM_CT) ? "Counter-Terrorist" : "Terrorist")
+
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^4TEAM %s RECOVERED! ^1(%d players now in team)", szDefName, iDefCount)
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Forfeit timer cancelled. Match continues!")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+        client_cmd(0, "spk buttons/blip1")
+        return
+    }
+
+    g_iAbandonTimer--
+
+    new szDefName[32], szOppName[32]
+    copy(szDefName, charsmax(szDefName), (g_iAbandonDefaultTeam == TEAM_CT) ? "CT" : "TR")
+    copy(szOppName, charsmax(szOppName), (g_iAbandonDefaultTeam == TEAM_CT) ? "TR" : "CT")
+
+    if(g_iAbandonTimer <= 0)
+    {
+        remove_task(TASK_ABANDON_FORFEIT)
+        g_bAbandonTimerActive = false
+
+        new TeamName:iWinnerTeam = (g_iAbandonDefaultTeam == TEAM_CT) ? TEAM_TERRORIST : TEAM_CT
+        new szWinnerName[32], szLoserName[32]
+        copy(szWinnerName, charsmax(szWinnerName), (iWinnerTeam == TEAM_CT) ? "Counter-Terrorist" : "Terrorist")
+        copy(szLoserName, charsmax(szLoserName), (g_iAbandonDefaultTeam == TEAM_CT) ? "Counter-Terrorist" : "Terrorist")
+
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3MATCH CANCELLED DUE TO FORFEIT / ABANDONMENT!")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Team ^3%s ^1failed to reach 4 players within 60s.", szLoserName)
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^4WINNER BY FORFEIT: ^3TEAM %s!^1", szWinnerName)
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+
+        if(iWinnerTeam == TEAM_CT)
+            rg_send_audio(0, "radio/ctwin.wav")
+        else
+            rg_send_audio(0, "radio/terwin.wav")
+
+        if(g_szStopConfig[0])
+        {
+            server_cmd("exec %s", g_szStopConfig)
+        }
+
+        set_cvar_num("mp_roundtime", 1)
+        g_iMatchState = STATE_WARMUP
+        UpdateServerHostname()
+
+        // Launch Post-Match Map Vote after 3 seconds so players can choose next map
+        set_task(3.0, "StartPostMatchMapVote", TASK_MATCH_END)
+        return
+    }
+
+    set_dhudmessage(255, 75, 75, -1.0, 0.28, 0, 0.0, 1.0, 0.0, 0.1)
+    show_dhudmessage(0, "⚠️ TEAM %s DISCONNECT (Fewer than 4 players) ⚠️^nForfeit in: %d SECONDS^nWinner by Forfeit: Team %s",
+        szDefName, g_iAbandonTimer, szOppName)
+
+    if(g_iAbandonTimer % 15 == 0 || g_iAbandonTimer <= 5)
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3[Forfeit Warning] ^1Team ^3%s ^1has ^4%d seconds ^1to reach 4 players or ^4%s ^1wins by forfeit!",
+            szDefName, g_iAbandonTimer, szOppName)
+        client_cmd(0, "spk buttons/blip2")
+    }
+}
+
 public client_disconnected(id)
 {
     new szAuthID[36]
     get_user_authid(id, szAuthID, charsmax(szAuthID))
 
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF)
+    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
+       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
     {
         ExecuteForward(g_hFwdSysLeaver, g_iRet, szAuthID)
+
+        // Clan War 5v5 Forfeit Rule: If 2+ players disconnect from a team (team has < 4 players),
+        // wait 60s for reconnect/substitute. If not restored to 4+ players, forfeit & cancel match!
+        new iCtCount = GetMatchTeamCountExcluding(TEAM_CT, id)
+        new iTrCount = GetMatchTeamCountExcluding(TEAM_TERRORIST, id)
+        if(iCtCount < 4 || iTrCount < 4)
+        {
+            CheckTeamAbandonment(iCtCount, iTrCount)
+        }
     }
 
     ExecuteForward(g_hFwdUserSave, g_iRet, id)
@@ -1021,6 +1174,17 @@ public RG_CBasePlayer_Spawn_Post(id)
     {
         client_cmd(id, "bind n nightvision")
         client_cmd(id, "bind N nightvision")
+    }
+
+    if(g_bAbandonTimerActive)
+    {
+        new iCtCount = GetMatchTeamCountExcluding(TEAM_CT, 0)
+        new iTrCount = GetMatchTeamCountExcluding(TEAM_TERRORIST, 0)
+        new iDefCount = (g_iAbandonDefaultTeam == TEAM_CT) ? iCtCount : iTrCount
+        if(iDefCount >= 4)
+        {
+            Task_AbandonCountdown()
+        }
     }
 
     if(g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
@@ -1185,20 +1349,6 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
         {
             g_iMatchKills[iKiller]++
             g_iRoundKills[iKiller]++
-
-            // CS2-style announcements for high kill streaks
-            if(g_iRoundKills[iKiller] == 3)
-            {
-                client_print_color(0, print_team_default, "^4%s ^4%s ^3scored a ^4TRIPLE KILL^3! [ 3 ]", g_szChatPrefix, szKillerName)
-            }
-            else if(g_iRoundKills[iKiller] == 4)
-            {
-                client_print_color(0, print_team_default, "^4%s ^4%s ^3scored a ^4QUAD KILL^3! [ 4 ]", g_szChatPrefix, szKillerName)
-            }
-            else if(g_iRoundKills[iKiller] >= 5)
-            {
-                client_print_color(0, print_team_default, "^4%s ^3* * * ^4%s ^3SCORED AN ACE! * * * [ * ACE * ]", g_szChatPrefix, szKillerName)
-            }
 
             if(bHeadshot)
             {
@@ -2017,6 +2167,9 @@ EndMatch(TeamName:iWinnerTeam)
     remove_task(TASK_VICTORY_PULSE)
     remove_task(TASK_SHOW_LEADERBOARD)
     remove_task(TASK_MATCH_END)
+    remove_task(TASK_ABANDON_FORFEIT)
+    g_bAbandonTimerActive = false
+    g_iAbandonDefaultTeam = TEAM_UNASSIGNED
 
     Task_VictoryPulse()
 
@@ -2283,6 +2436,9 @@ public StartWarmup()
     UpdateServerHostname()
     g_bRoundScored = false
     g_bHalftimePendingSync = false
+    remove_task(TASK_ABANDON_FORFEIT)
+    g_bAbandonTimerActive = false
+    g_iAbandonDefaultTeam = TEAM_UNASSIGNED
     g_iScore[CT_SCORE] = 0
     g_iScore[TERO_SCORE] = 0
     g_iFirstHalfScore[CT_SCORE] = 0
@@ -2902,6 +3058,9 @@ StartMatchLive()
         set_cvar_num("allow_spectators", 1)
 
     g_bReviveMode = false
+    remove_task(TASK_ABANDON_FORFEIT)
+    g_bAbandonTimerActive = false
+    g_iAbandonDefaultTeam = TEAM_UNASSIGNED
     server_cmd("sv_restart 1")
 
     // Green ScreenFade Heartbeat & Prominent LIVE notice
