@@ -388,8 +388,14 @@ except Exception: pass
 ' "${PROJECT_DIR}/instances/servers.json" 2>/dev/null || true
 fi
 
+# Ensure gameland.service has no unresolved variables before restarting
+if [ -f "/etc/systemd/system/gameland.service" ] && grep -q '\${PROJECT_ROOT}' /etc/systemd/system/gameland.service; then
+    sed -i "s|\${PROJECT_ROOT}|${PROJECT_DIR}|g" /etc/systemd/system/gameland.service 2>/dev/null || true
+fi
+systemctl daemon-reload 2>/dev/null || true
+
 echo " Restarting gameland.service to load plugins..."
-systemctl restart gameland.service
+systemctl restart gameland.service 2>/dev/null || true
 sleep 2
-systemctl status gameland.service --no-pager
+systemctl status gameland.service --no-pager 2>/dev/null || true
 
