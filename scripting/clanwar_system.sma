@@ -868,8 +868,9 @@ public client_putinserver(id)
     g_iMatchKnifeKills[id] = 0
     g_iMatchPlants[id] = 0
     g_iMatchDefuses[id] = 0
-    client_cmd(id, "bind F3 ^"cw_menu^"")
     ResetPlayerF3Votes(id)
+    set_task(1.0, "Task_BindClientF3", id)
+    set_task(3.0, "Task_BindClientF3", id)
 
     if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
        g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
@@ -966,6 +967,14 @@ public RG_CBasePlayer_Spawn_Post(id)
     if(!is_user_alive(id))
         return
 
+    if(!is_user_bot(id))
+    {
+        client_cmd(id, "bind F3 cw_menu")
+        client_cmd(id, "bind f3 cw_menu")
+        client_cmd(id, "bind F3 ^"cw_menu^"")
+        client_cmd(id, "bind f3 ^"cw_menu^"")
+    }
+
     if(g_bReviveMode)
     {
         rg_add_account(id, 16000, AS_SET)
@@ -982,15 +991,11 @@ public RG_CBasePlayer_Spawn_Post(id)
     {
         case STATE_WARMUP, STATE_CAPTAIN_COUNTDOWN:
         {
-            // Give $16,000 spawn money and scatter player across map
+            // Standard Clan War Warmup: base spawn, $16,000, armor, no C4
             rg_add_account(id, g_iWarmMoney, AS_SET)
             set_member(id, m_iAccount, g_iWarmMoney)
             rg_set_user_armor(id, 100, ARMOR_VESTHELM)
             rg_remove_item(id, "weapon_c4")
-
-            TeleportToRandomSpawn(id)
-            set_entvar(id, var_takedamage, DAMAGE_NO)
-            set_task(2.0, "Task_RemoveSpawnProtection", id)
         }
         case STATE_KNIFE:
         {
@@ -1059,10 +1064,10 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
         return
     }
 
-    // 2. Standard Warmup Mode (/warm)
+    // 2. Standard Warmup Mode (/warm): Clan War rules - NO auto-respawn!
+    // When killed, player stays dead and waits for round to end normally.
     if(g_iMatchState == STATE_WARMUP || g_iMatchState == STATE_CAPTAIN_COUNTDOWN)
     {
-        set_task(1.2, "Task_WarmupRespawn", iVictim)
         return
     }
 
@@ -2209,11 +2214,11 @@ public StartWarmup()
         LoadMapSpawns()
     }
 
-    // Warmup gameplay rules: Deathmatch, continuous play, $16,000, buy anywhere, no friendly fire
+    // Warmup gameplay rules: 1.0 minute round, Clan War style (no auto-respawn), $16,000, buy anywhere, no friendly fire
     set_cvar_num("mp_freezetime", 0)
     set_cvar_num("mp_buytime", 999)
     set_cvar_num("mp_startmoney", g_iWarmMoney)
-    set_cvar_float("mp_roundtime", 9.0)
+    set_cvar_float("mp_roundtime", 1.0)
     set_cvar_num("mp_friendlyfire", 0)
 
     // Warmup camera: Free spectating permitted
@@ -2228,7 +2233,7 @@ public StartWarmup()
         set_cvar_num("mp_buy_anywhere", 1)
 
     if(get_cvar_pointer("mp_round_infinite"))
-        set_cvar_string("mp_round_infinite", "f")
+        set_cvar_string("mp_round_infinite", "0")
 
     if(get_cvar_pointer("mp_auto_reload_weapons"))
         set_cvar_num("mp_auto_reload_weapons", 1)
@@ -2463,7 +2468,7 @@ public StartKnifeRound()
 
     set_cvar_num("mp_freezetime", 3)
     set_cvar_num("mp_buytime", 0)
-    set_cvar_float("mp_roundtime", 35.0)
+    set_cvar_float("mp_roundtime", 3.0)
 
     // Competitive camera: dead players can ONLY spectate alive teammates (NO enemies)
     set_cvar_num("mp_forcecamera", 2)
