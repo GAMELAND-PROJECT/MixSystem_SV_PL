@@ -288,6 +288,7 @@ new bool:g_bReviveMode = false
 new g_szBaseHostname[64] = "GAMELAND"
 new bool:g_bPickMode = false
 new g_iLivePulseCount = 0
+new bool:g_bUpdatingHostname = false
 
 // Countdown
 new g_iMatchStartTime = 0
@@ -335,7 +336,19 @@ public plugin_init()
     register_cvar("gameland_clanwar_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
     register_cvar("gameland_cw_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
     register_cvar("cw_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
-    register_cvar("cw_base_hostname", "")
+    new pCwBase = register_cvar("cw_base_hostname", "")
+    if(pCwBase)
+        hook_cvar_change(pCwBase, "CvarHook_BaseHostname")
+
+    new pMixBase = get_cvar_pointer("mix_base_hostname")
+    if(!pMixBase)
+        pMixBase = register_cvar("mix_base_hostname", "")
+    if(pMixBase)
+        hook_cvar_change(pMixBase, "CvarHook_BaseHostname")
+
+    new pHost = get_cvar_pointer("hostname")
+    if(pHost)
+        hook_cvar_change(pHost, "CvarHook_Hostname")
     register_concmd("amx_cw_version", "Cmd_Version")
     register_clcmd("say /ver", "Cmd_SayVersion")
     register_clcmd("say_team /ver", "Cmd_SayVersion")
@@ -406,6 +419,8 @@ public plugin_init()
     InitBaseHostname()
     UpdateServerHostname()
     set_task(0.5, "Task_InitHostname")
+    set_task(1.5, "Task_InitHostname")
+    set_task(3.0, "Task_InitHostname")
 
     // Register HUD task
     set_task(1.0, "Task_HudDisplay", TASK_HUD_STATUS, .flags = "b")
@@ -597,11 +612,50 @@ DestroyCommandArrays()
 // -----------------------------------------------------------------------------
 // Server Hostname State Management
 // -----------------------------------------------------------------------------
+public CvarHook_BaseHostname(pcvar, const old_value[], const new_value[])
+{
+    new szNew[64]
+    copy(szNew, charsmax(szNew), new_value)
+    trim(szNew)
+    if(szNew[0])
+    {
+        copy(g_szBaseHostname, charsmax(g_szBaseHostname), szNew)
+        UpdateServerHostname()
+    }
+}
+
+public CvarHook_Hostname(pcvar, const old_value[], const new_value[])
+{
+    if(g_bUpdatingHostname)
+        return
+
+    new szExplicit[64]
+    get_cvar_string("cw_base_hostname", szExplicit, charsmax(szExplicit))
+    trim(szExplicit)
+    if(!szExplicit[0])
+    {
+        get_cvar_string("mix_base_hostname", szExplicit, charsmax(szExplicit))
+        trim(szExplicit)
+    }
+
+    if(!szExplicit[0])
+    {
+        InitBaseHostname()
+        UpdateServerHostname()
+    }
+}
+
 InitBaseHostname()
 {
     new szExplicitHost[64]
     get_cvar_string("cw_base_hostname", szExplicitHost, charsmax(szExplicitHost))
     trim(szExplicitHost)
+    if(!szExplicitHost[0])
+    {
+        get_cvar_string("mix_base_hostname", szExplicitHost, charsmax(szExplicitHost))
+        trim(szExplicitHost)
+    }
+
     if(szExplicitHost[0])
     {
         copy(g_szBaseHostname, charsmax(g_szBaseHostname), szExplicitHost)
@@ -689,7 +743,9 @@ UpdateServerHostname()
             g_szBaseHostname, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
     }
 
+    g_bUpdatingHostname = true
     set_cvar_string("hostname", szNewHostname)
+    g_bUpdatingHostname = false
 }
 
 public Task_InitHostname()

@@ -67,13 +67,32 @@ switch ($action) {
         echo json_encode(ServerCmd::removeAvgBans($activeServer));
         break;
 
+    case 'switch_server_mode':
+        $serverId = $_POST['server_id'] ?? ($activeServer['id'] ?? 'main');
+        $targetMode = $_POST['target_mode'] ?? $_POST['mode'] ?? 'clanwar';
+        global $SERVERS;
+        $targetServer = $SERVERS[$serverId] ?? $activeServer;
+        $res = ServerCmd::switchServerMode($targetServer, $targetMode);
+        echo json_encode($res);
+        break;
+
+    case 'set_afk_guard':
+        $serverId = $_POST['server_id'] ?? ($activeServer['id'] ?? 'main');
+        $mode = (int)($_POST['afk_guard'] ?? $_POST['mode'] ?? 1);
+        global $SERVERS;
+        $targetServer = $SERVERS[$serverId] ?? $activeServer;
+        $res = ServerCmd::setServerAfkGuard($targetServer, $mode);
+        echo json_encode($res);
+        break;
+
     case 'create_server':
         $id = $_POST['server_id'] ?? '';
         $port = $_POST['port'] ?? '';
         $name = $_POST['name'] ?? '';
-        $slots = $_POST['slots'] ?? 12;
+        $slots = $_POST['slots'] ?? 10;
         $hostname = $_POST['hostname'] ?? $name;
-        $res = ServerCmd::createServerInstance($id, $port, $name, $slots, $hostname);
+        $mode = $_POST['mode'] ?? 'clanwar';
+        $res = ServerCmd::createServerInstance($id, $port, $name, $slots, $hostname, $mode);
         echo json_encode($res);
         break;
 
@@ -96,6 +115,8 @@ switch ($action) {
             'slots' => $_POST['slots'] ?? '',
             'map' => $_POST['map'] ?? '',
             'rcon_password' => $_POST['rcon_password'] ?? '',
+            'mode' => $_POST['mode'] ?? '',
+            'afk_guard' => $_POST['afk_guard'] ?? '',
         ];
         $res = ServerCmd::updateServerInstance($id, $data);
         echo json_encode($res);
@@ -183,7 +204,10 @@ switch ($action) {
     // ─── Service Control (start/stop/restart) ───────────────────────────────
     case 'service_control':
         $serviceAction = $_POST['service_action'] ?? '';
-        $res = ServerCmd::controlService($activeServer['service_name'], $serviceAction);
+        $targetServerId = $_POST['server_id'] ?? ($activeServer['id'] ?? 'main');
+        global $SERVERS;
+        $svcTarget = $SERVERS[$targetServerId] ?? $activeServer;
+        $res = ServerCmd::controlService($svcTarget['service_name'], $serviceAction);
         echo json_encode($res);
         break;
 
