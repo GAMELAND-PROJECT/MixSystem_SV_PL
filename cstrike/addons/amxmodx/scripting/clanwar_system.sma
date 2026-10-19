@@ -338,11 +338,19 @@ public plugin_init()
     register_clcmd("say /version", "Cmd_SayVersion")
     register_clcmd("say_team /version", "Cmd_SayVersion")
 
-    // Built-in Teammate Semiclip to permanently prevent spawn overlapping / stuck
+    // Safety Interlock: prevent duplicate execution if mix_system is loaded concurrently
+    new iMixPlugin = is_plugin_loaded("GAMELAND 5v5 Match Server")
+    if(iMixPlugin != -1)
+    {
+        server_print("[GAMELAND CW] CRITICAL: mix_system.amxx detected concurrently! Auto-pausing mix_system.amxx to eliminate conflict.")
+        pause("ac", "mix_system.amxx")
+    }
+
+    // Solid player collision: semiclip strictly DISABLED (no ghosting into each other)
     if(get_cvar_pointer("mp_semiclip"))
-        set_cvar_num("mp_semiclip", 1)
+        set_cvar_num("mp_semiclip", 0)
     if(get_cvar_pointer("mp_semiclip_actions"))
-        set_cvar_num("mp_semiclip_actions", 3)
+        set_cvar_num("mp_semiclip_actions", 0)
 
     register_dictionary("clanwar_system.txt")
 
@@ -2316,8 +2324,8 @@ public StartWarmup()
     set_cvar_num("mp_startmoney", g_iWarmMoney)
     set_cvar_float("mp_roundtime", 1.0)
     set_cvar_num("mp_friendlyfire", 0)
-    if(get_cvar_pointer("mp_semiclip")) set_cvar_num("mp_semiclip", 1)
-    if(get_cvar_pointer("mp_semiclip_actions")) set_cvar_num("mp_semiclip_actions", 3)
+    if(get_cvar_pointer("mp_semiclip")) set_cvar_num("mp_semiclip", 0)
+    if(get_cvar_pointer("mp_semiclip_actions")) set_cvar_num("mp_semiclip_actions", 0)
 
     // Warmup camera: Free spectating permitted
     set_cvar_num("mp_forcecamera", 0)
@@ -2567,8 +2575,14 @@ public StartKnifeRound()
     set_cvar_num("mp_freezetime", 3)
     set_cvar_num("mp_buytime", 0)
     set_cvar_float("mp_roundtime", 3.0)
-    if(get_cvar_pointer("mp_semiclip")) set_cvar_num("mp_semiclip", 1)
-    if(get_cvar_pointer("mp_semiclip_actions")) set_cvar_num("mp_semiclip_actions", 3)
+    if(get_cvar_pointer("mp_semiclip")) set_cvar_num("mp_semiclip", 0)
+    if(get_cvar_pointer("mp_semiclip_actions")) set_cvar_num("mp_semiclip_actions", 0)
+
+    // Clear any pending respawn or warmup tasks for all players
+    for(new id = 1; id <= MAX_PLAYERS; id++)
+    {
+        remove_task(id)
+    }
 
     // Competitive camera: dead players can ONLY spectate alive teammates (NO enemies)
     set_cvar_num("mp_forcecamera", 2)

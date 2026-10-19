@@ -117,9 +117,14 @@ if ! grep -qE '^[[:space:]]*nextclientapi([[:space:]]|$)' "${MODULES_INI}"; then
     echo "  -> Ensured nextclientapi in modules.ini"
 fi
 
-# Ensure all 9 GameLand & Mix plugins are registered in plugins.ini
+# Detect active game mode in plugins.ini: Clan War vs Mix 5v5
+IS_CW_ACTIVE=false
+if grep -qE '^[[:space:]]*clanwar_system\.amxx([[:space:]]|$)' "${PLUGINS_INI}"; then
+    IS_CW_ACTIVE=true
+fi
+
+# Ensure all 8 GameLand helper plugins are registered and active in plugins.ini
 for plugin_entry in \
-    "mix_system.amxx:GAMELAND 5v5 mix and match manager" \
     "mix_system_voice_chat.amxx:automatic sv_alltalk state for mix rounds" \
     "gameland_admin_tools.amxx:/map menu and sv_alltalk shortcuts" \
     "player_drop.amxx:Match Server player drop / substitute" \
@@ -143,11 +148,26 @@ for plugin_entry in \
     fi
 done
 
-# Ensure clanwar_system is registered in plugins.ini (commented if mix is active)
-if [ -f "${PLUGINS_DIR}/clanwar_system.amxx" ]; then
+# Ensure Clan War and Mix mode are strictly MUTUALLY EXCLUSIVE in plugins.ini
+if [ "$IS_CW_ACTIVE" = true ]; then
+    echo "  -> Clan War Mode is active: ensuring mix_system.amxx is commented out!"
+    sed -i -E 's/^[[:space:]]*mix_system\.amxx([[:space:]].*)?$/;mix_system.amxx\t; GAMELAND 5v5 mix and match manager/' "${PLUGINS_INI}"
+    if ! grep -qE "mix_system\.amxx" "${PLUGINS_INI}"; then
+        printf ';mix_system.amxx\t; GAMELAND 5v5 mix and match manager\n' >> "${PLUGINS_INI}"
+    fi
+else
+    # 5v5 Mix is active: ensure mix_system.amxx is active and clanwar_system.amxx is commented out
+    echo "  -> 5v5 Mix Mode is active: ensuring clanwar_system.amxx is commented out!"
+    if grep -qE "^[[:space:]]*;+[[:space:]]*mix_system\.amxx([[:space:]]|$)" "${PLUGINS_INI}"; then
+        sed -i -E "s/^[[:space:]]*;+[[:space:]]*(mix_system\.amxx.*)$/\1/" "${PLUGINS_INI}"
+        echo "  -> Uncommented mix_system.amxx in plugins.ini"
+    elif ! grep -qE "^[[:space:]]*mix_system\.amxx([[:space:]]|$)" "${PLUGINS_INI}"; then
+        printf 'mix_system.amxx\t; GAMELAND 5v5 mix and match manager\n' >> "${PLUGINS_INI}"
+        echo "  -> Added mix_system.amxx to plugins.ini"
+    fi
+    sed -i -E 's/^[[:space:]]*clanwar_system\.amxx([[:space:]].*)?$/;clanwar_system.amxx\t; GAMELAND 10-slot Clan War Mode manager/' "${PLUGINS_INI}"
     if ! grep -qE "clanwar_system\.amxx" "${PLUGINS_INI}"; then
         printf ';clanwar_system.amxx\t; GAMELAND 10-slot Clan War Mode manager\n' >> "${PLUGINS_INI}"
-        echo "  -> Added ;clanwar_system.amxx (disabled by default) to plugins.ini"
     fi
 fi
 
@@ -313,6 +333,22 @@ sys.exit(1)
             cp -f "${CONFIGS_DIR}"/ClanWarSettings.ini "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
             cp -f "${CONFIGS_DIR}"/MixSettings.ini "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
             cp -f "${CONFIGS_DIR}"/*.cfg "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
+
+            # Ensure instance server.cfg has semiclip disabled (solid collision)
+            if [ -f "${target_dir}/cstrike/server.cfg" ]; then
+                sed -i -E 's/^[[:space:]]*mp_semiclip[[:space:]]+.*/mp_semiclip 0/' "${target_dir}/cstrike/server.cfg" 2>/dev/null || true
+                sed -i -E 's/^[[:space:]]*mp_semiclip_actions[[:space:]]+.*/mp_semiclip_actions 0/' "${target_dir}/cstrike/server.cfg" 2>/dev/null || true
+            fi
+
+            # Ensure instance plugins.ini strictly enforces mutual exclusion
+            inst_pini="${target_dir}/cstrike/addons/amxmodx/configs/plugins.ini"
+            if [ -f "$inst_pini" ]; then
+                if grep -qE '^[[:space:]]*clanwar_system\.amxx([[:space:]]|$)' "$inst_pini"; then
+                    sed -i -E 's/^[[:space:]]*mix_system\.amxx([[:space:]].*)?$/;mix_system.amxx\t; GAMELAND 5v5 mix and match manager/' "$inst_pini" 2>/dev/null || true
+                elif grep -qE '^[[:space:]]*mix_system\.amxx([[:space:]]|$)' "$inst_pini"; then
+                    sed -i -E 's/^[[:space:]]*clanwar_system\.amxx([[:space:]].*)?$/;clanwar_system.amxx\t; GAMELAND 10-slot Clan War Mode manager/' "$inst_pini" 2>/dev/null || true
+                fi
+            fi
 
             chmod +x "${target_dir}/hlds_linux" "${target_dir}/hlds_run" "${target_dir}"/*.sh 2>/dev/null || true
             chown -R www-data:www-data "${target_dir}/cstrike/addons/amxmodx" 2>/dev/null || true

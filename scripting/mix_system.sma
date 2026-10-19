@@ -217,6 +217,20 @@ public plugin_init()
     register_cvar("gameland_mix_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
     register_cvar("mix_base_hostname", "")
 
+    // Safety Interlock: prevent duplicate execution if clanwar_system is loaded concurrently
+    new iCwPlugin = is_plugin_loaded("GAMELAND Clan War Mode")
+    if(iCwPlugin != -1)
+    {
+        server_print("[GAMELAND MIX] CRITICAL: clanwar_system.amxx detected concurrently! Auto-pausing mix_system.amxx to eliminate conflict.")
+        pause("ac", "mix_system.amxx")
+    }
+
+    // Solid player collision: semiclip strictly DISABLED
+    if(get_cvar_pointer("mp_semiclip"))
+        set_cvar_num("mp_semiclip", 0)
+    if(get_cvar_pointer("mp_semiclip_actions"))
+        set_cvar_num("mp_semiclip_actions", 0)
+
     register_dictionary("mix_system.txt")
 
     // ReAPI HookChains
