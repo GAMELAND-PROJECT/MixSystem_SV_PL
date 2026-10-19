@@ -22,6 +22,7 @@
 #define SPEC_CONFIRM_SECONDS 20.0
 #define JOIN_MENU_ID "GAMELAND_Join_Menu"
 #define SPEC_CONFIRM_MENU_ID "GAMELAND_Spec_Confirm"
+#define AFK_MENU_ID "GAMELAND_Afk_Menu"
 #define BAN_PLAYERS_MENU_ID "GAMELAND_Ban_Players"
 #define BAN_OPTIONS_MENU_ID "GAMELAND_Ban_Options"
 #define MAX_BAN_ENTRIES 128
@@ -38,6 +39,9 @@ new g_pForceChaseCam
 new g_pFadeToBlack
 new g_pJoinMode
 new g_iJoinMode = 1
+new g_pAfkGuard
+new g_pAfkIdleTime
+new g_pAfkSpecGrace
 new g_iMapCategory[33]
 new bool:g_bInternalTeamChange[33]
 new Float:g_flSpecEnteredAt[33]
@@ -93,6 +97,10 @@ public plugin_init()
 	register_clcmd("say /restart", "CmdRestartRound", ADMIN_CVAR)
 	register_clcmd("say_team /restart", "CmdRestartRound", ADMIN_CVAR)
 	register_clcmd("restart", "CmdRestartRound", ADMIN_CVAR)
+	register_clcmd("say /afk", "CmdAfkGuardMenu", ADMIN_CVAR)
+	register_clcmd("say_team /afk", "CmdAfkGuardMenu", ADMIN_CVAR)
+	register_clcmd("afk", "CmdAfkGuardMenu", ADMIN_CVAR)
+	register_concmd("amx_afk_guard", "CmdConAfkGuard", ADMIN_CVAR, "<0|1|2> - 0: Disabled (Test), 1: Full Guard, 2: Spec Only")
 	register_clcmd("say /kspec", "CmdKickSpecs", ADMIN_KICK)
 	register_clcmd("say_team /kspec", "CmdKickSpecs", ADMIN_KICK)
 	register_clcmd("kspec", "CmdKickSpecs", ADMIN_KICK)
@@ -142,12 +150,16 @@ public plugin_init()
 	register_menucmd(register_menuid("GAMELAND_VoteMap_Select", 1), 1023, "HandleVoteMapSelect")
 	register_menucmd(register_menuid("GAMELAND_Vote_Map_Choice", 1), 1023, "HandleVoteMapChoice")
 	register_menucmd(register_menuid(SPEC_CONFIRM_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleSpecConfirmMenu")
+	register_menucmd(register_menuid(AFK_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_0, "HandleAfkGuardMenu")
 
 	g_pAllowSpectators = get_cvar_pointer("allow_spectators")
 	g_pForceCamera = get_cvar_pointer("mp_forcecamera")
 	g_pForceChaseCam = get_cvar_pointer("mp_forcechasecam")
 	g_pFadeToBlack = get_cvar_pointer("mp_fadetoblack")
 	g_pJoinMode = register_cvar("gameland_join_mode", "1")
+	g_pAfkGuard = register_cvar("gameland_afk_guard", "1")
+	g_pAfkIdleTime = register_cvar("gameland_afk_idle_time", "120")
+	g_pAfkSpecGrace = register_cvar("gameland_afk_spec_grace", "300")
 	g_iJoinMode = clamp(get_pcvar_num(g_pJoinMode), 0, 2)
 	if(g_iJoinMode == 2)
 	{
@@ -250,7 +262,27 @@ public ShowInitialJoinMenu(taskId)
 
 public TaskSpecGuard()
 {
+	new afkMode = get_pcvar_num(g_pAfkGuard)
+	if(afkMode <= 0)
+	{
+		for(new id = 1; id <= get_maxplayers(); id++)
+		{
+			if(g_flSpecEnteredAt[id] > 0.0 || g_bSpecConfirmOpen[id])
+			{
+				ResetSpecGuard(id)
+			}
+		}
+		return
+	}
+
 	new Float:now = get_gametime()
+	new idleLimitSec = get_pcvar_num(g_pAfkIdleTime)
+	if(idleLimitSec < 30) idleLimitSec = 120
+	new Float:idleLimit = float(idleLimitSec)
+
+	new graceLimitSec = get_pcvar_num(g_pAfkSpecGrace)
+	if(graceLimitSec < 60) graceLimitSec = 300
+	new Float:graceLimit = float(graceLimitSec)
 
 	for(new id = 1; id <= get_maxplayers(); id++)
 	{
@@ -263,9 +295,9 @@ public TaskSpecGuard()
 		new CsTeams:team = cs_get_user_team(id)
 		if((team == CS_TEAM_T || team == CS_TEAM_CT)
 		&& g_flLastActivity[id] > 0.0
-		&& now - g_flLastActivity[id] >= SPEC_IDLE_SECONDS)
+		&& now - g_flLastActivity[id] >= idleLimit)
 		{
-			client_print_color(id, print_team_default, "^4[GAMELAND] ^1You were moved to Spectator after 2 minutes of inactivity.")
+			client_print_color(id, print_team_default, "^4[GAMELAND] ^1You were moved to Spectator after %d minutes of inactivity.", floatround(idleLimit / 60.0))
 			MoveToFreeSpectator(id)
 			continue
 		}
@@ -276,13 +308,21 @@ public TaskSpecGuard()
 			continue
 		}
 
+		// Mode 2: Spec Only (move to spec after idle time, but NEVER kick)
+		if(afkMode == 2)
+		{
+			ResetSpecGuard(id)
+			continue
+		}
+
+		// Mode 1: Full AFK Guard (spectator timeout confirmation and kick)
 		if(g_flSpecEnteredAt[id] <= 0.0)
 		{
 			g_flSpecEnteredAt[id] = now
 			continue
 		}
 
-		if(!g_bSpecConfirmOpen[id] && now - g_flSpecEnteredAt[id] >= SPEC_GRACE_SECONDS)
+		if(!g_bSpecConfirmOpen[id] && now - g_flSpecEnteredAt[id] >= graceLimit)
 		{
 			ShowSpecConfirmMenu(id)
 		}
@@ -391,7 +431,7 @@ public TaskSpecConfirmTimeout(taskId)
 
 	g_bSpecConfirmOpen[id] = false
 
-	if(!IsAdminExempt(id) && cs_get_user_team(id) == CS_TEAM_SPECTATOR)
+	if(get_pcvar_num(g_pAfkGuard) == 1 && !IsAdminExempt(id) && cs_get_user_team(id) == CS_TEAM_SPECTATOR)
 	{
 		KickSpectatorTimeout(id)
 	}
@@ -2274,5 +2314,110 @@ public Task_EnsureFastDuckFixSourceUpdated()
 		fputs(fOut, "        }^n    }^n^n")
 		fputs(fOut, "    return HAM_IGNORED^n}^n")
 		fclose(fOut)
+	}
+}
+
+public CmdAfkGuardMenu(id, level, cid)
+{
+	if(!cmd_access(id, level, cid, 1))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	ShowAfkGuardMenu(id)
+	return PLUGIN_HANDLED
+}
+
+stock ShowAfkGuardMenu(id)
+{
+	new currentMode = clamp(get_pcvar_num(g_pAfkGuard), 0, 2)
+	new modeNames[3][] = {
+		"Disabled (Testing Mode)",
+		"Full Guard (Spec + Kick)",
+		"Spec Only (No Kick)"
+	}
+
+	new menu[512]
+	formatex(menu, charsmax(menu),
+		"\y[GAMELAND]\w AFK & Idle Protection^n^n		\y1.\w %sDisabled (Testing Mode - No Spec / No Kick)^n		\y2.\w %sFull Guard (Spec after 2m, Kick after 5m)^n		\y3.\w %sSpec Only (Move to Spec, Never Kick)^n^n		\dCurrent Mode: \y%s^n		\dEngine mp_autokick: \w0 (Disabled)^n^n		\y0.\w Exit",
+		(currentMode == 0) ? "\r* " : "",
+		(currentMode == 1) ? "\r* " : "",
+		(currentMode == 2) ? "\r* " : "",
+		modeNames[currentMode]
+	)
+
+	show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_0, menu, 20, AFK_MENU_ID)
+}
+
+public HandleAfkGuardMenu(id, key)
+{
+	if(!is_user_connected(id) || !IsAdminExempt(id))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	if(key >= 0 && key <= 2)
+	{
+		SetAfkGuardMode(key, id)
+	}
+
+	return PLUGIN_HANDLED
+}
+
+public CmdConAfkGuard(id, level, cid)
+{
+	if(!cmd_access(id, level, cid, 1))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	if(read_argc() < 2)
+	{
+		new currentMode = clamp(get_pcvar_num(g_pAfkGuard), 0, 2)
+		console_print(id, "[GAMELAND] gameland_afk_guard is currently %d (0: Disabled/Test, 1: Full Guard, 2: Spec Only)", currentMode)
+		return PLUGIN_HANDLED
+	}
+
+	new arg[8]
+	read_argv(1, arg, charsmax(arg))
+	new mode = clamp(str_to_num(arg), 0, 2)
+	SetAfkGuardMode(mode, id)
+
+	console_print(id, "[GAMELAND] AFK Guard set to mode %d", mode)
+	return PLUGIN_HANDLED
+}
+
+stock SetAfkGuardMode(mode, adminId = 0)
+{
+	mode = clamp(mode, 0, 2)
+	set_pcvar_num(g_pAfkGuard, mode)
+	set_cvar_num("mp_autokick", 0)
+
+	new adminName[32] = "SERVER / PANEL"
+	if(adminId > 0 && is_user_connected(adminId))
+	{
+		get_user_name(adminId, adminName, charsmax(adminName))
+	}
+
+	if(mode == 0)
+	{
+		for(new i = 1; i <= get_maxplayers(); i++)
+		{
+			ResetSpecGuard(i)
+		}
+		client_print_color(0, print_team_default, "^4[GAMELAND] ^3AFK Protection: DISABLED (Testing Mode)^1 by ^4%s^1. No players will be moved to spec or kicked.", adminName)
+	}
+	else if(mode == 1)
+	{
+		client_print_color(0, print_team_default, "^4[GAMELAND] ^4AFK Protection: FULL GUARD^1 by ^4%s^1. (Idle -> Spec, Spectator Timeout -> Kick)", adminName)
+	}
+	else if(mode == 2)
+	{
+		for(new i = 1; i <= get_maxplayers(); i++)
+		{
+			remove_task(TASK_SPEC_CONFIRM + i)
+			g_bSpecConfirmOpen[i] = false
+		}
+		client_print_color(0, print_team_default, "^4[GAMELAND] ^4AFK Protection: SPEC ONLY (No Kick)^1 by ^4%s^1. Idle players move to spec, but never kicked.", adminName)
 	}
 }

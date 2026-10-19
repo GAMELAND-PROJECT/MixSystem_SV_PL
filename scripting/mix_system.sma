@@ -330,6 +330,13 @@ public plugin_init()
     register_clcmd("say", "Hook_Say")
     register_clcmd("say_team", "Hook_SayTeam")
 
+    // Clan War Mode notice when in Mix Mode
+    register_clcmd("say /cw", "Cmd_NotifyClanWarMode")
+    register_clcmd("say_team /cw", "Cmd_NotifyClanWarMode")
+    register_clcmd("say /clanwar", "Cmd_NotifyClanWarMode")
+    register_clcmd("say_team /clanwar", "Cmd_NotifyClanWarMode")
+    register_clcmd("cw", "Cmd_NotifyClanWarMode")
+
     // Interactive crash-proof native text voting menus
     register_menucmd(register_menuid(MIX_VOTE_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleMixVoteMenu")
     register_menucmd(register_menuid(KNIFE_SIDE_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2, "HandleKnifeSideMenu")
@@ -4218,4 +4225,11 @@ public native_get_points_table(iPlugin, iParams)
 {
     set_string(1, "", get_param(2))
     return 0
+}
+
+public Cmd_NotifyClanWarMode(id)
+{
+    client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are currently in ^35v5 Match Server Mode^1!")
+    client_print_color(id, print_team_default, "^4[GAMELAND] ^1To play ^4Clan War Mode (10 Slots)^1, switch mode in the Web Panel or contact an Admin.")
+    return PLUGIN_HANDLED
 }
