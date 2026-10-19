@@ -250,13 +250,31 @@ if [ "${1:-}" == "--sync-all" ]; then
             mkdir -p "${target_dir}/cstrike/addons/amxmodx/data/lang" 2>/dev/null || true
             cp -rf "${PROJECT_DIR}/cstrike/addons/amxmodx/data/lang"/* "${target_dir}/cstrike/addons/amxmodx/data/lang/" 2>/dev/null || true
 
-            # Sync configs, stop.cfg, start.cfg, server rules
-            cp -f "${PROJECT_DIR}/cstrike"/*.cfg "${target_dir}/cstrike/" 2>/dev/null || true
+            # Sync match and rules configs (stop.cfg, start.cfg, clanwar.cfg, etc.)
+            for cfg_name in stop.cfg start.cfg clanwar.cfg warmup.cfg knife.cfg live.cfg game_init.cfg rehlds.cfg; do
+                if [ -f "${PROJECT_DIR}/cstrike/${cfg_name}" ]; then
+                    cp -f "${PROJECT_DIR}/cstrike/${cfg_name}" "${target_dir}/cstrike/" 2>/dev/null || true
+                fi
+            done
+            if [ ! -f "${target_dir}/cstrike/server.cfg" ] && [ -f "${PROJECT_DIR}/cstrike/server.cfg" ]; then
+                cp -f "${PROJECT_DIR}/cstrike/server.cfg" "${target_dir}/cstrike/" 2>/dev/null || true
+            fi
+
+            # Hitbox fixer config
+            if [ -d "${target_dir}/cstrike/addons/hitbox_fixer" ]; then
+                mkdir -p "${target_dir}/cstrike/addons/hitbox_fixer/dlls" 2>/dev/null || true
+                if [ -f "${PROJECT_DIR}/cstrike/addons/hitbox_fixer/hbf.cfg" ]; then
+                    cp -f "${PROJECT_DIR}/cstrike/addons/hitbox_fixer/hbf.cfg" "${target_dir}/cstrike/addons/hitbox_fixer/dlls/hbf.cfg" 2>/dev/null || true
+                    cp -f "${PROJECT_DIR}/cstrike/addons/hitbox_fixer/hbf.cfg" "${target_dir}/cstrike/addons/hitbox_fixer/hbf.cfg" 2>/dev/null || true
+                fi
+            fi
+
             mkdir -p "${target_dir}/cstrike/addons/amxmodx/configs" 2>/dev/null || true
             cp -f "${CONFIGS_DIR}"/ClanWarSettings.ini "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
             cp -f "${CONFIGS_DIR}"/MixSettings.ini "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
             cp -f "${CONFIGS_DIR}"/*.cfg "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
 
+            chmod +x "${target_dir}/hlds_linux" "${target_dir}/hlds_run" "${target_dir}"/*.sh 2>/dev/null || true
             chown -R www-data:www-data "${target_dir}/cstrike/addons/amxmodx" 2>/dev/null || true
             synced_count=$((synced_count + 1))
 
@@ -273,16 +291,16 @@ if [ "${1:-}" == "--sync-all" ]; then
                 echo "  -> Restarting instance '$s_id' ($svc)..."
                 systemctl restart "$svc" 2>/dev/null || true
                 sleep 2.5
-                if systemctl is-active --quiet "$svc" 2>/dev/null; then
+                if systemctl is-active --quiet "$svc" 2>/dev/null && tmux has-session -t "gameland_${s_id}" 2>/dev/null; then
                     echo "     [✔ RUNNING] Instance '$s_id' is active and online!"
                 else
                     echo "     [!] Retrying startup for '$s_id'..."
-                    systemctl start "$svc" 2>/dev/null || true
-                    sleep 1.0
-                    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+                    systemctl restart "$svc" 2>/dev/null || true
+                    sleep 2.0
+                    if systemctl is-active --quiet "$svc" 2>/dev/null && tmux has-session -t "gameland_${s_id}" 2>/dev/null; then
                         echo "     [✔ RUNNING] Instance '$s_id' is active!"
                     else
-                        echo "     [✖ FAILED] Check logs: journalctl -u $svc -n 20"
+                        echo "     [✖ FAILED] Check logs: /opt/gameland/instances/${s_id}/logs/server_${s_id}.log"
                     fi
                 fi
             else
