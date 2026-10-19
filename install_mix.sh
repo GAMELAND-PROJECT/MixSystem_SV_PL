@@ -280,6 +280,28 @@ if [ "${1:-}" == "--sync-all" ]; then
                 cp -f "${PROJECT_DIR}/cstrike/server.cfg" "${target_dir}/cstrike/" 2>/dev/null || true
             fi
 
+            # Hitbox fixer config
+            if [ -d "${target_dir}/cstrike/addons/hitbox_fixer" ]; then
+                mkdir -p "${target_dir}/cstrike/addons/hitbox_fixer/dlls" 2>/dev/null || true
+                if [ -f "${PROJECT_DIR}/cstrike/addons/hitbox_fixer/hbf.cfg" ]; then
+                    cp -f "${PROJECT_DIR}/cstrike/addons/hitbox_fixer/hbf.cfg" "${target_dir}/cstrike/addons/hitbox_fixer/dlls/hbf.cfg" 2>/dev/null || true
+                    cp -f "${PROJECT_DIR}/cstrike/addons/hitbox_fixer/hbf.cfg" "${target_dir}/cstrike/addons/hitbox_fixer/hbf.cfg" 2>/dev/null || true
+                fi
+            fi
+
+            mkdir -p "${target_dir}/cstrike/addons/amxmodx/configs" 2>/dev/null || true
+            cp -f "${CONFIGS_DIR}"/ClanWarSettings.ini "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
+            cp -f "${CONFIGS_DIR}"/MixSettings.ini "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
+            for cfg_f in "${CONFIGS_DIR}"/*.cfg; do
+                if [ -f "$cfg_f" ]; then
+                    fname="$(basename "$cfg_f")"
+                    if [ "$fname" = "amxx.cfg" ] && [ -f "${target_dir}/cstrike/addons/amxmodx/configs/amxx.cfg" ]; then
+                        continue
+                    fi
+                    cp -f "$cfg_f" "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
+                fi
+            done
+
             # Resolve instance specific hostname from servers.json
             inst_hostname=$(python3 -c '
 import json, sys
@@ -300,9 +322,17 @@ sys.exit(1)
                     if ! grep -q '^[[:space:]]*hostname' "${target_dir}/cstrike/server.cfg"; then
                         echo "hostname \"${inst_hostname}\"" >> "${target_dir}/cstrike/server.cfg"
                     fi
+                    sed -i -E "s/^[[:space:]]*cw_base_hostname[[:space:]]+.*/cw_base_hostname \"${inst_hostname}\"/" "${target_dir}/cstrike/server.cfg" 2>/dev/null || true
+                    if ! grep -q '^[[:space:]]*cw_base_hostname' "${target_dir}/cstrike/server.cfg"; then
+                        echo "cw_base_hostname \"${inst_hostname}\"" >> "${target_dir}/cstrike/server.cfg"
+                    fi
+                    sed -i -E "s/^[[:space:]]*mix_base_hostname[[:space:]]+.*/mix_base_hostname \"${inst_hostname}\"/" "${target_dir}/cstrike/server.cfg" 2>/dev/null || true
+                    if ! grep -q '^[[:space:]]*mix_base_hostname' "${target_dir}/cstrike/server.cfg"; then
+                        echo "mix_base_hostname \"${inst_hostname}\"" >> "${target_dir}/cstrike/server.cfg"
+                    fi
                 fi
                 if [ -f "${target_dir}/cstrike/gameland.cfg" ]; then
-                    sed -i -E '/^[[:space:]]*hostname[[:space:]]+/d' "${target_dir}/cstrike/gameland.cfg" 2>/dev/null || true
+                    sed -i -E '/^[[:space:]]*(hostname|cw_base_hostname|mix_base_hostname)[[:space:]]+/d' "${target_dir}/cstrike/gameland.cfg" 2>/dev/null || true
                 fi
                 if [ -f "${PROJECT_DIR}/instances/${s_id}.env" ]; then
                     sed -i -E "s/^[[:space:]]*HOSTNAME=.*/HOSTNAME=\"${inst_hostname}\"/" "${PROJECT_DIR}/instances/${s_id}.env" 2>/dev/null || true
@@ -319,20 +349,6 @@ sys.exit(1)
                     echo "mix_base_hostname \"${inst_hostname}\"" >> "$amxx_cfg"
                 fi
             fi
-
-            # Hitbox fixer config
-            if [ -d "${target_dir}/cstrike/addons/hitbox_fixer" ]; then
-                mkdir -p "${target_dir}/cstrike/addons/hitbox_fixer/dlls" 2>/dev/null || true
-                if [ -f "${PROJECT_DIR}/cstrike/addons/hitbox_fixer/hbf.cfg" ]; then
-                    cp -f "${PROJECT_DIR}/cstrike/addons/hitbox_fixer/hbf.cfg" "${target_dir}/cstrike/addons/hitbox_fixer/dlls/hbf.cfg" 2>/dev/null || true
-                    cp -f "${PROJECT_DIR}/cstrike/addons/hitbox_fixer/hbf.cfg" "${target_dir}/cstrike/addons/hitbox_fixer/hbf.cfg" 2>/dev/null || true
-                fi
-            fi
-
-            mkdir -p "${target_dir}/cstrike/addons/amxmodx/configs" 2>/dev/null || true
-            cp -f "${CONFIGS_DIR}"/ClanWarSettings.ini "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
-            cp -f "${CONFIGS_DIR}"/MixSettings.ini "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
-            cp -f "${CONFIGS_DIR}"/*.cfg "${target_dir}/cstrike/addons/amxmodx/configs/" 2>/dev/null || true
 
             # Ensure instance server.cfg has semiclip disabled (solid collision)
             if [ -f "${target_dir}/cstrike/server.cfg" ]; then

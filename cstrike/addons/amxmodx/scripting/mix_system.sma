@@ -483,6 +483,59 @@ public CvarHook_Hostname(pcvar, const old_value[], const new_value[])
     }
 }
 
+stock ReadHostnameFromFile(szOutput[], iMaxLen)
+{
+    new fp = fopen("server.cfg", "rt")
+    if(!fp)
+        fp = fopen("cstrike/server.cfg", "rt")
+
+    if(!fp)
+        return 0
+
+    new szLine[128], szKey[32], szVal[64]
+    new szCandidate[64]
+    szCandidate[0] = EOS
+
+    while(!feof(fp))
+    {
+        fgets(fp, szLine, charsmax(szLine))
+        trim(szLine)
+        if(!szLine[0] || szLine[0] == '/' || szLine[0] == ';')
+            continue
+
+        szKey[0] = EOS
+        szVal[0] = EOS
+        parse(szLine, szKey, charsmax(szKey), szVal, charsmax(szVal))
+        trim(szKey)
+        trim(szVal)
+
+        if(equali(szKey, "cw_base_hostname") || equali(szKey, "mix_base_hostname"))
+        {
+            if(szVal[0] && !equali(szVal, "GAMELAND"))
+            {
+                copy(szOutput, iMaxLen, szVal)
+                fclose(fp)
+                return 1
+            }
+        }
+        else if(equali(szKey, "hostname") && !szCandidate[0])
+        {
+            if(szVal[0] && !equali(szVal, "GAMELAND") && !equali(szVal, "Counter-Strike 1.6 Server"))
+            {
+                copy(szCandidate, charsmax(szCandidate), szVal)
+            }
+        }
+    }
+    fclose(fp)
+
+    if(szCandidate[0])
+    {
+        copy(szOutput, iMaxLen, szCandidate)
+        return 1
+    }
+    return 0
+}
+
 InitBaseHostname()
 {
     new szExplicitHost[64]
@@ -494,7 +547,7 @@ InitBaseHostname()
         trim(szExplicitHost)
     }
 
-    if(szExplicitHost[0])
+    if(szExplicitHost[0] && !equali(szExplicitHost, "GAMELAND"))
     {
         copy(g_szBaseHostname, charsmax(g_szBaseHostname), szExplicitHost)
         return
@@ -504,8 +557,14 @@ InitBaseHostname()
     get_cvar_string("hostname", szCurrentHost, charsmax(szCurrentHost))
     trim(szCurrentHost)
 
-    if(!szCurrentHost[0])
+    if(!szCurrentHost[0] || equali(szCurrentHost, "GAMELAND") || equali(szCurrentHost, "Counter-Strike 1.6 Server"))
     {
+        new szFromFile[64]
+        if(ReadHostnameFromFile(szFromFile, charsmax(szFromFile)))
+        {
+            copy(g_szBaseHostname, charsmax(g_szBaseHostname), szFromFile)
+            return
+        }
         copy(g_szBaseHostname, charsmax(g_szBaseHostname), "GAMELAND")
         return
     }
@@ -534,13 +593,21 @@ InitBaseHostname()
     }
 
     trim(szCurrentHost)
-    if(szCurrentHost[0])
+    if(szCurrentHost[0] && !equali(szCurrentHost, "GAMELAND"))
     {
         copy(g_szBaseHostname, charsmax(g_szBaseHostname), szCurrentHost)
     }
     else
     {
-        copy(g_szBaseHostname, charsmax(g_szBaseHostname), "GAMELAND")
+        new szFromFile[64]
+        if(ReadHostnameFromFile(szFromFile, charsmax(szFromFile)))
+        {
+            copy(g_szBaseHostname, charsmax(g_szBaseHostname), szFromFile)
+        }
+        else
+        {
+            copy(g_szBaseHostname, charsmax(g_szBaseHostname), "GAMELAND")
+        }
     }
 }
 
