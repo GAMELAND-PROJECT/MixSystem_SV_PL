@@ -989,7 +989,7 @@ stock CheckTeamAbandonment(iCtCount, iTrCount)
         client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1If team does not reach at least 4 players, ^4%s ^1wins by FORFEIT!", szOppName)
         client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
 
-        client_cmd(0, "spk buttons/bell1")
+        client_cmd(0, "spk buttons/blip1")
 
         remove_task(TASK_ABANDON_FORFEIT)
         set_task(1.0, "Task_AbandonCountdown", TASK_ABANDON_FORFEIT, .flags = "b")
@@ -1067,15 +1067,16 @@ public Task_AbandonCountdown()
         return
     }
 
-    set_dhudmessage(255, 75, 75, -1.0, 0.28, 0, 0.0, 1.0, 0.0, 0.1)
-    show_dhudmessage(0, "⚠️ TEAM %s DISCONNECT (Fewer than 4 players) ⚠️^nForfeit in: %d SECONDS^nWinner by Forfeit: Team %s",
-        szDefName, g_iAbandonTimer, szOppName)
+    // Gentle, clean DHUD at upper screen (0.18) so it never blocks crosshair or vision
+    set_dhudmessage(255, 180, 50, -1.0, 0.18, 0, 0.0, 1.0, 0.0, 0.1)
+    show_dhudmessage(0, "[ FORFEIT TIMER: %ds ]^nTeam %s has fewer than 4 players | Forfeit to Team %s",
+        g_iAbandonTimer, szDefName, szOppName)
 
-    if(g_iAbandonTimer % 15 == 0 || g_iAbandonTimer <= 5)
+    // Discrete chat notice only at 30s and 10s without any annoying sound beeps
+    if(g_iAbandonTimer == 30 || g_iAbandonTimer == 10)
     {
         client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3[Forfeit Warning] ^1Team ^3%s ^1has ^4%d seconds ^1to reach 4 players or ^4%s ^1wins by forfeit!",
             szDefName, g_iAbandonTimer, szOppName)
-        client_cmd(0, "spk buttons/blip2")
     }
 }
 
