@@ -149,6 +149,100 @@ new g_iPickTimer = 15
 new g_iDraftRound = 1
 new bool:g_bAdminForceStarted = false
 new bool:g_bFastTestMode = false
+
+#define TASK_POST_MATCH_MAP_VOTE  3130
+
+new g_iPlayerKickVotes[MAX_PLAYERS + 1]
+new g_iVotedKickTarget[MAX_PLAYERS + 1]
+new g_iMapVoteChoice[MAX_PLAYERS + 1]
+new g_iMapVoteCount[8]
+new bool:g_bVotedRePick[MAX_PLAYERS + 1]
+new bool:g_bVotedRestart[MAX_PLAYERS + 1]
+
+new const g_szStandardMaps[][] = {
+    "de_dust2",
+    "de_inferno",
+    "de_nuke",
+    "de_train",
+    "de_aztec",
+    "de_mirage"
+}
+
+// Post-Match Map Vote State
+new g_szPostMatchMaps[8][32]
+new g_iPostMatchMapCount = 0
+new g_iPostMatchVoteCount[8]
+new g_iPlayerPostMatchVote[MAX_PLAYERS + 1]
+new g_iPostMatchVoteTimer = 15
+
+stock ResetPlayerF3Votes(id)
+{
+    if(1 <= id <= MAX_PLAYERS)
+    {
+        new kickTarget = g_iVotedKickTarget[id]
+        if(1 <= kickTarget <= MAX_PLAYERS && g_iPlayerKickVotes[kickTarget] > 0)
+        {
+            g_iPlayerKickVotes[kickTarget]--
+        }
+        g_iVotedKickTarget[id] = 0
+
+        new mapIdx = g_iMapVoteChoice[id]
+        if(0 <= mapIdx < sizeof(g_szStandardMaps) && g_iMapVoteCount[mapIdx] > 0)
+        {
+            g_iMapVoteCount[mapIdx]--
+        }
+        g_iMapVoteChoice[id] = -1
+
+        g_bVotedRePick[id] = false
+        g_bVotedRestart[id] = false
+        g_iPlayerPostMatchVote[id] = -1
+    }
+}
+
+stock ResetAllF3Votes()
+{
+    for(new i = 1; i <= MAX_PLAYERS; i++)
+    {
+        g_iPlayerKickVotes[i] = 0
+        g_iVotedKickTarget[i] = 0
+        g_iMapVoteChoice[i] = -1
+        g_bVotedRePick[i] = false
+        g_bVotedRestart[i] = false
+        g_iPlayerPostMatchVote[i] = -1
+    }
+    for(new m = 0; m < 8; m++)
+    {
+        g_iMapVoteCount[m] = 0
+        g_iPostMatchVoteCount[m] = 0
+    }
+}
+
+stock bool:IsBetterCaptainCandidate(candA, votesA, candB, votesB)
+{
+    if(votesA != votesB)
+    {
+        return votesA > votesB;
+    }
+
+    // Tie-breaker 1: Frags / Kills in server
+    new fragsA = get_user_frags(candA);
+    new fragsB = get_user_frags(candB);
+    if(fragsA != fragsB)
+    {
+        return fragsA > fragsB;
+    }
+
+    // Tie-breaker 2: Deaths (fewer is better)
+    new deathsA = get_member(candA, m_iDeaths);
+    new deathsB = get_member(candB, m_iDeaths);
+    if(deathsA != deathsB)
+    {
+        return deathsA < deathsB;
+    }
+
+    // Tie-breaker 3: Deterministic connection index
+    return candA < candB;
+}
 new g_szUserName[MAX_PLAYERS + 1][MAX_NAME_LENGTH]
 
 // /mix Global Vote (Knife vs Direct Live)
@@ -314,6 +408,15 @@ public plugin_init()
 
     // Set visible maxplayers strictly to 10
     set_cvar_num("sv_visiblemaxplayers", 10)
+
+    // Player Action Menu [F3] (/f3, /menu)
+    register_clcmd("cw_menu", "Cmd_F3Menu")
+    register_clcmd("say /f3", "Cmd_F3Menu")
+    register_clcmd("say_team /f3", "Cmd_F3Menu")
+    register_clcmd("say /menu", "Cmd_F3Menu")
+    register_clcmd("say_team /menu", "Cmd_F3Menu")
+    register_clcmd("f3", "Cmd_F3Menu")
+    register_clcmd("menu", "Cmd_F3Menu")
 
     // Clan War Admin Control Commands (/cw, /clanwar)
     register_clcmd("say /cw", "Cmd_ClanWarAdmin")
@@ -629,6 +732,8 @@ LoadConfiguration()
             {
                 if(equal(szKey, "START_MIX_COMMANDS"))
                     RegisterCommandsFromCSV(szValue, "Cmd_StartMix", g_aStartCmds)
+                else if(equal(szKey, "CLANWAR_ADMIN_COMMANDS"))
+                    RegisterCommandsFromCSV(szValue, "Cmd_ClanWarAdmin", g_aStartCmds)
                 else if(equal(szKey, "STOP_MIX_COMMANDS"))
                     RegisterCommandsFromCSV(szValue, "Cmd_StopMix", g_aStopCmds)
                 else if(equal(szKey, "WARM_COMMANDS"))
@@ -672,6 +777,12 @@ LoadConfiguration()
     // Make sure /warm is always explicitly registered for Warmup
     RegisterSingleCmd("say /warm", "Cmd_Warmup", g_aWarmCmds)
     RegisterSingleCmd("say_team /warm", "Cmd_Warmup", g_aWarmCmds)
+    RegisterSingleCmd("say /cw", "Cmd_ClanWarAdmin", g_aStartCmds)
+    RegisterSingleCmd("say_team /cw", "Cmd_ClanWarAdmin", g_aStartCmds)
+    RegisterSingleCmd("say /clanwar", "Cmd_ClanWarAdmin", g_aStartCmds)
+    RegisterSingleCmd("say_team /clanwar", "Cmd_ClanWarAdmin", g_aStartCmds)
+    RegisterSingleCmd("say /cwmenu", "Cmd_ClanWarAdmin", g_aStartCmds)
+    RegisterSingleCmd("say_team /cwmenu", "Cmd_ClanWarAdmin", g_aStartCmds)
 }
 
 RegisterCommandsFromCSV(const szCSV[], const szFunction[], Array:aHolder)
@@ -700,6 +811,12 @@ RegisterDefaultCommands()
 {
     RegisterSingleCmd("say /warm", "Cmd_Warmup", g_aWarmCmds)
     RegisterSingleCmd("say_team /warm", "Cmd_Warmup", g_aWarmCmds)
+    RegisterSingleCmd("say /cw", "Cmd_ClanWarAdmin", g_aStartCmds)
+    RegisterSingleCmd("say_team /cw", "Cmd_ClanWarAdmin", g_aStartCmds)
+    RegisterSingleCmd("say /clanwar", "Cmd_ClanWarAdmin", g_aStartCmds)
+    RegisterSingleCmd("say_team /clanwar", "Cmd_ClanWarAdmin", g_aStartCmds)
+    RegisterSingleCmd("say /cwmenu", "Cmd_ClanWarAdmin", g_aStartCmds)
+    RegisterSingleCmd("say_team /cwmenu", "Cmd_ClanWarAdmin", g_aStartCmds)
     RegisterSingleCmd("say /mix", "Cmd_StartMix", g_aStartCmds)
     RegisterSingleCmd("say_team /mix", "Cmd_StartMix", g_aStartCmds)
     RegisterSingleCmd("say /start", "Cmd_StartMix", g_aStartCmds)
@@ -751,6 +868,8 @@ public client_putinserver(id)
     g_iMatchKnifeKills[id] = 0
     g_iMatchPlants[id] = 0
     g_iMatchDefuses[id] = 0
+    client_cmd(id, "bind F3 ^"cw_menu^"")
+    ResetPlayerF3Votes(id)
 
     if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
        g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
@@ -778,6 +897,7 @@ public client_disconnected(id)
     }
 
     ExecuteForward(g_hFwdUserSave, g_iRet, id)
+    ResetPlayerF3Votes(id)
 
     g_szUserName[id][0] = EOS
     if(task_exists(TASK_MIX_VOTE))
@@ -1791,8 +1911,8 @@ EndMatch(TeamName:iWinnerTeam)
 
     Task_VictoryPulse()
 
-    // Automatically transition to Warmup after 14 seconds
-    set_task(14.0, "StartWarmup", TASK_MATCH_END)
+    // Trigger professional Post-Match Map Vote after 10 seconds of celebration!
+    set_task(10.0, "StartPostMatchMapVote", TASK_MATCH_END)
 }
 
 public Task_VictoryPulse()
@@ -4488,16 +4608,15 @@ public StartCaptainElection()
     g_bPickMode = true
     UpdateServerHostname()
 
-    // 1. Gather up to 10 players in game: Prioritize HUMANS first, then BOTS
+    // 1. Gather up to 10 human players from teams or spectator
     g_iEligibleVoterCount = 0
 
-    // Add humans first
     for(new id = 1; id <= MaxClients; id++)
     {
         if(is_user_connected(id) && !is_user_bot(id) && !is_user_hltv(id))
         {
             new TeamName:team = get_member(id, m_iTeam)
-            if(team == TEAM_CT || team == TEAM_TERRORIST || (g_bAdminForceStarted && team == TEAM_SPECTATOR))
+            if(team == TEAM_CT || team == TEAM_TERRORIST || team == TEAM_SPECTATOR)
             {
                 if(g_iEligibleVoterCount < 10)
                 {
@@ -4507,23 +4626,7 @@ public StartCaptainElection()
         }
     }
 
-    // Add bots to fill up to 10 if present
-    for(new id = 1; id <= MaxClients; id++)
-    {
-        if(is_user_connected(id) && is_user_bot(id) && !is_user_hltv(id))
-        {
-            new TeamName:team = get_member(id, m_iTeam)
-            if(team == TEAM_CT || team == TEAM_TERRORIST || (g_bAdminForceStarted && team == TEAM_SPECTATOR))
-            {
-                if(g_iEligibleVoterCount < 10)
-                {
-                    g_iEligibleVoters[g_iEligibleVoterCount++] = id
-                }
-            }
-        }
-    }
-
-    // 2. Move all gathered players to Spectator & reset votes
+    // 2. Move all gathered players to Spectator// 2. Move all gathered players to Spectator & reset votes
     for(new i = 0; i < g_iEligibleVoterCount; i++)
     {
         new id = g_iEligibleVoters[i]
@@ -4536,17 +4639,7 @@ public StartCaptainElection()
         g_iVotedForCapt[id] = 0
     }
 
-    // 3. Simulate bot votes for top candidates so dynamic vote numbers are seen
-    for(new i = 0; i < g_iEligibleVoterCount; i++)
-    {
-        new voterId = g_iEligibleVoters[i]
-        if(is_user_bot(voterId) && g_iEligibleVoterCount >= 2)
-        {
-            new randCandidate = g_iEligibleVoters[random_num(0, min(1, g_iEligibleVoterCount - 1))]
-            g_iVotedForCapt[voterId] = randCandidate
-            g_iPlayerCaptVotes[randCandidate]++
-        }
-    }
+    // Real human election without bots
 
     g_iCaptVoteTimer = g_bFastTestMode ? 10 : 20
     set_task(1.0, "Task_CaptVoteTimer", TASK_CW_CAPTAIN_VOTE, .flags = "b")
@@ -4580,36 +4673,33 @@ public ShowCaptainVoteMenu(id)
     if(!is_user_connected(id) || is_user_bot(id) || g_iMatchState != STATE_CAPTAIN_VOTE)
         return
 
+    if(g_iVotedForCapt[id] > 0)
+    {
+        // Player has already voted - strictly 1 vote allowed!
+        return
+    }
+
     new szTitle[128]
-    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND CW] Vote Team Captain \r[%d sec]\w^n\dVote for someone to be Captain (Top 2 win):", g_iCaptVoteTimer)
+    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND CW] Vote Team Captain \r[%d sec]\w^n\dVote for another player to be Captain (Top 2 win):", g_iCaptVoteTimer)
     new iMenu = menu_create(szTitle, "HandleCaptainVoteMenu")
 
     for(new i = 0; i < g_iEligibleVoterCount; i++)
     {
         new candidateId = g_iEligibleVoters[i]
-        if(!is_user_connected(candidateId))
+        // Disallow self-voting: candidateId != id
+        if(!is_user_connected(candidateId) || candidateId == id)
             continue
 
         new szData[8], szItem[96]
         num_to_str(candidateId, szData, charsmax(szData))
 
         new iVotes = g_iPlayerCaptVotes[candidateId]
-        if(candidateId == id)
-        {
-            formatex(szItem, charsmax(szItem), "\d%s [You - Cannot self-vote] (%d vote%s)", g_szUserName[candidateId], iVotes, iVotes == 1 ? "" : "s")
-        }
-        else if(g_iVotedForCapt[id] == candidateId)
-        {
-            formatex(szItem, charsmax(szItem), "\y[*] \w%s \y[VOTED] \d(%d vote%s)", g_szUserName[candidateId], iVotes, iVotes == 1 ? "" : "s")
-        }
-        else
-        {
-            formatex(szItem, charsmax(szItem), "\w%s \d(%d vote%s)", g_szUserName[candidateId], iVotes, iVotes == 1 ? "" : "s")
-        }
-
+        formatex(szItem, charsmax(szItem), "\w%s \d(%d vote%s)", g_szUserName[candidateId], iVotes, iVotes == 1 ? "" : "s")
         menu_additem(iMenu, szItem, szData)
     }
 
+    // Show all candidates on page 1 without pagination
+    menu_setprop(iMenu, MPROP_PERPAGE, 0)
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_NEVER)
     menu_display(id, iMenu, 0)
 }
@@ -4633,12 +4723,6 @@ public HandleCaptainVoteMenu(id, iMenu, iItem)
     menu_destroy(iMenu)
 
     new candidateId = str_to_num(szData)
-    if(candidateId == id)
-    {
-        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1You cannot vote for yourself! Choose another player.")
-        ShowCaptainVoteMenu(id)
-        return PLUGIN_HANDLED
-    }
 
     if(!is_user_connected(candidateId))
     {
@@ -4646,20 +4730,25 @@ public HandleCaptainVoteMenu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    // If switching vote, decrement previous
-    if(g_iVotedForCapt[id] > 0 && g_iVotedForCapt[id] != candidateId)
+    // Strict rule: each player can vote ONLY ONCE!
+    if(g_iVotedForCapt[id] > 0)
     {
-        new oldTarget = g_iVotedForCapt[id]
-        if(1 <= oldTarget <= MAX_PLAYERS && g_iPlayerCaptVotes[oldTarget] > 0)
-        {
-            g_iPlayerCaptVotes[oldTarget]--
-        }
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^3You have already cast your vote! You cannot vote multiple times.")
+        return PLUGIN_HANDLED
+    }
+
+    // Strict rule: no self-voting!
+    if(candidateId == id)
+    {
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^3You cannot vote for yourself! Please vote for another player.")
+        ShowCaptainVoteMenu(id)
+        return PLUGIN_HANDLED
     }
 
     g_iVotedForCapt[id] = candidateId
     g_iPlayerCaptVotes[candidateId]++
 
-    client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1You voted for ^4%s ^1as Captain! (Total votes: ^3%d^1)", g_szUserName[candidateId], g_iPlayerCaptVotes[candidateId])
+    client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Your vote for ^4%s ^1as Captain is recorded! (Total votes: ^3%d^1)", g_szUserName[candidateId], g_iPlayerCaptVotes[candidateId])
     client_cmd(id, "spk buttons/blip1")
 
     // Check if all connected human voters have cast their votes
@@ -4684,7 +4773,7 @@ public HandleCaptainVoteMenu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    ShowCaptainVoteMenu(id)
+    // Do NOT reopen menu - vote is locked!
     return PLUGIN_HANDLED
 }
 
@@ -4775,17 +4864,26 @@ public FinishCaptainElection()
         return
     }
 
-    // Bubble sort descending
+    // Sort candidates with smart tie-breaking:
+    // 1) Votes count
+    // 2) Kills/Frags
+    // 3) Deaths (fewer is better)
+    // 4) Deterministic fair selection
     for(new i = 0; i < iCount - 1; i++)
     {
         for(new j = i + 1; j < iCount; j++)
         {
-            if(iVotes[j] > iVotes[i])
+            if(IsBetterCaptainCandidate(iCandidates[j], iVotes[j], iCandidates[i], iVotes[i]))
             {
                 new tempV = iVotes[i]; iVotes[i] = iVotes[j]; iVotes[j] = tempV
                 new tempC = iCandidates[i]; iCandidates[i] = iCandidates[j]; iCandidates[j] = tempC
             }
         }
+    }
+
+    if(iCount >= 2 && iVotes[0] == iVotes[1])
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3Captain vote tie detected! Winner chosen fairly based on match performance (frags/deaths).")
     }
 
     g_iCaptainCT = iCandidates[0]
@@ -4831,7 +4929,7 @@ public TriggerNextPickTurn()
     if(g_iMatchState != STATE_PICKING)
         return
 
-    // Gather spectators (humans and bots)
+    // Gather spectators
     new iPool[MAX_PLAYERS], iPoolCount = 0
     for(new id = 1; id <= MaxClients; id++)
     {
@@ -4846,14 +4944,20 @@ public TriggerNextPickTurn()
 
     if(iPoolCount == 0)
     {
-        if(GetTeamPlayerCount(TEAM_CT) + GetTeamPlayerCount(TEAM_TERRORIST) >= 2)
+        new iCtCount = GetTeamPlayerCount(TEAM_CT)
+        new iTrCount = GetTeamPlayerCount(TEAM_TERRORIST)
+
+        if(iCtCount >= 5 && iTrCount >= 5)
         {
             FinishDraftPhase()
         }
         else
         {
-            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3No spectators available in draft pool! ^1Add bots with ^4/cw bots^1.")
-            StartWarmup()
+            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3Both Captains assigned! (CT: ^4%s ^3| TR: ^4%s^3)",
+                g_szUserName[g_iCaptainCT], g_szUserName[g_iCaptainTR])
+            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Drafting complete for current players. Start match with ^4/mix ^1or ^4/cw^1.")
+            g_bPickMode = false
+            UpdateServerHostname()
         }
         return
     }
@@ -4892,15 +4996,6 @@ public TriggerNextPickTurn()
         return
     }
 
-    // Check if active captain is a bot -> auto pick after 2 seconds!
-    if(is_user_bot(activeCaptain))
-    {
-        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^4Round %d ^1| Turn: Bot Captain ^3%s ^1(%s) is picking... (2s)",
-            g_iDraftRound, g_szUserName[activeCaptain], szTeamName)
-        set_task(2.0, "Task_BotCaptainPick", TASK_CW_PICK_TIMER)
-        return
-    }
-
     g_iPickTimer = g_bFastTestMode ? 10 : 15
     set_task(1.0, "Task_PickTimerCountdown", TASK_CW_PICK_TIMER, .flags = "b")
 
@@ -4908,38 +5003,6 @@ public TriggerNextPickTurn()
         g_iDraftRound, g_szUserName[activeCaptain], szTeamName, g_iPickTimer)
 
     ShowPickMenu(activeCaptain)
-}
-
-public Task_BotCaptainPick()
-{
-    if(g_iMatchState != STATE_PICKING)
-        return
-
-    new activeCaptain = (g_iCurrentDraftTurn == 1) ? g_iCaptainCT : g_iCaptainTR
-    if(!is_user_connected(activeCaptain))
-        return
-
-    new iPool[MAX_PLAYERS], iPoolCount = 0
-    for(new id = 1; id <= MaxClients; id++)
-    {
-        if(is_user_connected(id) && !is_user_hltv(id))
-        {
-            if(get_member(id, m_iTeam) == TEAM_SPECTATOR)
-            {
-                iPool[iPoolCount++] = id
-            }
-        }
-    }
-
-    if(iPoolCount > 0)
-    {
-        new pickedPlayer = iPool[random_num(0, iPoolCount - 1)]
-        ApplyDraftPick(activeCaptain, pickedPlayer)
-    }
-    else
-    {
-        FinishDraftPhase()
-    }
 }
 
 stock FindFallbackCaptain(TeamName:targetTeam)
@@ -4972,12 +5035,13 @@ public ShowPickMenu(id)
             {
                 new szData[8], szItem[64]
                 num_to_str(p, szData, charsmax(szData))
-                formatex(szItem, charsmax(szItem), "\w%s%s", g_szUserName[p], is_user_bot(p) ? " \d[BOT]" : "")
+                formatex(szItem, charsmax(szItem), "\w%s", g_szUserName[p])
                 menu_additem(iMenu, szItem, szData)
             }
         }
     }
 
+    menu_setprop(iMenu, MPROP_PERPAGE, 0)
     menu_setprop(iMenu, MPROP_EXIT, MEXIT_NEVER)
     menu_display(id, iMenu, 0)
 }
@@ -5100,13 +5164,13 @@ public FinishDraftPhase()
 
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3TEAMS FULLY DRAFTED! (5 CT vs 5 TR)")
-    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Starting Global Match Vote: ^3[1] Knife Round ^1vs ^4[2] Direct Live^1...")
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Starting ^3KNIFE ROUND ^1directly in 2 seconds...")
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
 
     client_cmd(0, "spk buttons/bell1")
 
-    // 2.0s delay then launch StartMixVote() (Knife vs Live vote)
-    set_task(2.0, "StartMixVote")
+    // Directly transition to Knife Round!
+    set_task(2.0, "StartKnifeRound")
 }
 
 
@@ -5122,44 +5186,52 @@ public Cmd_ClanWarAdmin(id)
         return PLUGIN_HANDLED
     }
 
-    new szArg[32]
-    read_argv(1, szArg, charsmax(szArg))
+    new szFullArgs[64], szToken1[32], szToken2[32]
+    read_args(szFullArgs, charsmax(szFullArgs))
+    remove_quotes(szFullArgs)
+    trim(szFullArgs)
 
-    if(equali(szArg, "start") || equali(szArg, "force"))
+    // Parse arguments: e.g. "/cw start" -> token1="/cw", token2="start"
+    // or console "cw start" -> token1="start", token2=""
+    parse(szFullArgs, szToken1, charsmax(szToken1), szToken2, charsmax(szToken2))
+
+    new szSubCmd[32]
+    if(szToken1[0] == '/' || equali(szToken1, "cw") || equali(szToken1, "clanwar") || equali(szToken1, "cwmenu"))
+    {
+        copy(szSubCmd, charsmax(szSubCmd), szToken2)
+    }
+    else
+    {
+        copy(szSubCmd, charsmax(szSubCmd), szToken1)
+    }
+
+    if(equali(szSubCmd, "start") || equali(szSubCmd, "force"))
     {
         g_bAdminForceStarted = true
         client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started the countdown!", g_szUserName[id])
         StartCaptainCountdown()
         return PLUGIN_HANDLED
     }
-    else if(equali(szArg, "fast") || equali(szArg, "speed"))
+    else if(equali(szSubCmd, "fast") || equali(szSubCmd, "speed"))
     {
         g_bFastTestMode = !g_bFastTestMode
         client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Fast Test Mode is now: ^4%s ^1(5s countdown, 10s election, 10s pick)", g_bFastTestMode ? "ENABLED" : "DISABLED")
         return PLUGIN_HANDLED
     }
-    else if(equali(szArg, "bots") || equali(szArg, "bot") || equali(szArg, "addbots"))
-    {
-        return Cmd_AddTestBots(id)
-    }
-    else if(equali(szArg, "kickbots") || equali(szArg, "nobot") || equali(szArg, "rembots"))
-    {
-        return Cmd_KickTestBots(id)
-    }
-    else if(equali(szArg, "vote") || equali(szArg, "elect"))
+    else if(equali(szSubCmd, "vote") || equali(szSubCmd, "elect"))
     {
         g_bAdminForceStarted = true
         client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Captain Election!", g_szUserName[id])
         StartCaptainElection()
         return PLUGIN_HANDLED
     }
-    else if(equali(szArg, "draft") || equali(szArg, "pick"))
+    else if(equali(szSubCmd, "draft") || equali(szSubCmd, "pick"))
     {
         client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Team Drafting!", g_szUserName[id])
         StartDraftPhase()
         return PLUGIN_HANDLED
     }
-    else if(equali(szArg, "stop") || equali(szArg, "warm"))
+    else if(equali(szSubCmd, "stop") || equali(szSubCmd, "warm"))
     {
         g_bAdminForceStarted = false
         client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1reset server to WarmUp!", g_szUserName[id])
@@ -5169,47 +5241,12 @@ public Cmd_ClanWarAdmin(id)
 
     if(id > 0)
     {
-        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Opening Clan War Menu... ^3[/cw start, /cw fast, /cw bots, /cw nobot, /cw vote, /cw draft, /cw stop]")
         ShowClanWarAdminMenu(id)
     }
     else
     {
-        server_print("[GAMELAND CW] Usage: amx_cw <start|fast|bots|nobot|vote|draft|stop>")
+        server_print("[GAMELAND CW] Usage: amx_cw <start|fast|vote|draft|stop>")
     }
-    return PLUGIN_HANDLED
-}
-
-public Cmd_AddTestBots(id)
-{
-    new iCurrent = 0
-    for(new p = 1; p <= MaxClients; p++)
-    {
-        if(is_user_connected(p) && !is_user_hltv(p))
-            iCurrent++
-    }
-
-    new iNeeded = 10 - iCurrent
-    if(iNeeded <= 0)
-    {
-        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Server already has ^310 players^1! No bots needed.")
-        return PLUGIN_HANDLED
-    }
-
-    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1spawning ^3%d test bots ^1to test Clan War Mode (10 slots)!", g_szUserName[id], iNeeded)
-
-    server_cmd("bot_stop 1; bot_quota_mode fill; bot_join_after_player 0; bot_quota 10")
-    for(new i = 0; i < iNeeded; i++)
-    {
-        server_cmd("bot_add")
-    }
-
-    return PLUGIN_HANDLED
-}
-
-public Cmd_KickTestBots(id)
-{
-    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1removed all test bots.", g_szUserName[id])
-    server_cmd("bot_quota 0; bot_kick")
     return PLUGIN_HANDLED
 }
 
@@ -5224,21 +5261,20 @@ public ShowClanWarAdminMenu(id)
     new szMenu[512]
     new iLen = 0
 
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND] Clan War Mode Control\w^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\dState: \r%s \d| Fast: \y%s^n^n", 
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND] Clan War Control Menu\w^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\dStatus: \r%s \d| Fast: \y%s^n^n", 
         szState, g_bFastTestMode ? "ON (5s)" : "OFF (30s)")
 
     iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1. \wStart 30s Countdown \y[/cw start]^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \wFast Test Mode: %s^n", g_bFastTestMode ? "\r[ON - 5s]" : "\d[OFF - 30s]")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y3. \wAdd Test Bots (Fill to 10) \y[/cw bots]^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y4. \wRemove all Test Bots \r[/cw nobot]^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y5. \wStart Captain Election Now \y[/cw vote]^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y6. \wStart Team Drafting Phase \y[/cw draft]^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y7. \wStart Match Vote (Knife vs Live) \y[/mix]^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y8. \rReset to WarmUp \d[/cw stop]^n^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y0. \dExit")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2. \wStart Captain Election Now \y[/cw vote]^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y3. \wStart Team Drafting Phase \y[/cw draft]^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y4. \wStart Match Vote (Knife vs Live) \y[/mix]^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y5. \wFast Test Mode: %s^n", g_bFastTestMode ? "\r[ON - 5s]" : "\d[OFF - 30s]")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y6. \wMove All to Spectator \y[/spec]^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y7. \rReset to WarmUp \d[/cw stop]^n^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y0. \dExit Menu")
 
-    new keys = MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_4 | MENU_KEY_5 | MENU_KEY_6 | MENU_KEY_7 | MENU_KEY_8 | MENU_KEY_0
+    new keys = MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_4 | MENU_KEY_5 | MENU_KEY_6 | MENU_KEY_7 | MENU_KEY_0
     show_menu(id, keys, szMenu, -1, CW_ADMIN_MENU_ID)
 }
 
@@ -5249,52 +5285,47 @@ public HandleClanWarNativeMenu(id, key)
 
     switch(key)
     {
-        case 0:
+        case 0: // 1. Start Countdown
         {
             g_bAdminForceStarted = true
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started the countdown!", g_szUserName[id])
             StartCaptainCountdown()
         }
-        case 1:
-        {
-            g_bFastTestMode = !g_bFastTestMode
-            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Fast Test Mode is now: ^4%s ^1(5s countdown, 10s election, 10s pick)", g_bFastTestMode ? "ENABLED" : "DISABLED")
-            ShowClanWarAdminMenu(id)
-        }
-        case 2:
-        {
-            Cmd_AddTestBots(id)
-            ShowClanWarAdminMenu(id)
-        }
-        case 3:
-        {
-            Cmd_KickTestBots(id)
-            ShowClanWarAdminMenu(id)
-        }
-        case 4:
+        case 1: // 2. Start Captain Election
         {
             g_bAdminForceStarted = true
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Captain Election!", g_szUserName[id])
             StartCaptainElection()
         }
-        case 5:
+        case 2: // 3. Start Team Drafting
         {
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1force-started Team Drafting!", g_szUserName[id])
             StartDraftPhase()
         }
-        case 6:
+        case 3: // 4. Start Match Vote
         {
             StartMixVote()
         }
-        case 7:
+        case 4: // 5. Fast Test Mode
+        {
+            g_bFastTestMode = !g_bFastTestMode
+            client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Fast Test Mode is now: ^4%s ^1(5s countdown, 10s election, 10s pick)", g_bFastTestMode ? "ENABLED" : "DISABLED")
+            ShowClanWarAdminMenu(id)
+        }
+        case 5: // 6. Move All to Spectator
+        {
+            Cmd_SpecAll(id)
+            ShowClanWarAdminMenu(id)
+        }
+        case 6: // 7. Reset to WarmUp
         {
             g_bAdminForceStarted = false
             client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Admin ^4%s ^1reset server to WarmUp!", g_szUserName[id])
             StartWarmup()
         }
-        case 9:
+        case 9: // 0. Exit
         {
-            // Exit menu
+            // Close menu
         }
     }
     return PLUGIN_HANDLED
@@ -5314,4 +5345,671 @@ stock GetMatchStateName(szOutput[], iMaxLen)
         case STATE_OVERTIME_FIRST_HALF, STATE_OVERTIME_SECOND_HALF: copy(szOutput, iMaxLen, "Overtime")
         default: copy(szOutput, iMaxLen, "Unknown")
     }
+}
+
+
+// =============================================================================
+// F3 PLAYER ACTION MENU & POST-MATCH MAP VOTE SYSTEM
+// =============================================================================
+
+public Cmd_F3Menu(id)
+{
+    if(!is_user_connected(id))
+        return PLUGIN_HANDLED
+
+    new szTitle[128]
+    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND CW] Player Action Menu \r[F3]\w^n\dQuick Match & Team Management:")
+    new iMenu = menu_create(szTitle, "Handle_F3Menu")
+
+    new iCtRePick = 0, iTrRePick = 0
+    new iCtRestart = 0, iTrRestart = 0
+    for(new p = 1; p <= MaxClients; p++)
+    {
+        if(is_user_connected(p) && !is_user_bot(p))
+        {
+            new TeamName:t = get_member(p, m_iTeam)
+            if(t == TEAM_CT)
+            {
+                if(g_bVotedRePick[p]) iCtRePick++
+                if(g_bVotedRestart[p]) iCtRestart++
+            }
+            else if(t == TEAM_TERRORIST)
+            {
+                if(g_bVotedRePick[p]) iTrRePick++
+                if(g_bVotedRestart[p]) iTrRestart++
+            }
+        }
+    }
+
+    new TeamName:myTeam = get_member(id, m_iTeam)
+    new myTeamRePick = (myTeam == TEAM_CT) ? iCtRePick : ((myTeam == TEAM_TERRORIST) ? iTrRePick : 0)
+
+    new szItem[128]
+    menu_additem(iMenu, "\wVote Kick Teammate \y[3 votes needed]\w", "1")
+    menu_additem(iMenu, "\wVote Change Map \d(dust2, nuke, inferno, train, aztec)\w", "2")
+
+    formatex(szItem, charsmax(szItem), "%sVote Re-Pick & Captains \d(Need 5 team votes: \y%d/5\d)\w",
+        g_bVotedRePick[id] ? "\y[*] \r" : "\w", myTeamRePick)
+    menu_additem(iMenu, szItem, "3")
+
+    formatex(szItem, charsmax(szItem), "%sVote Restart Match \d(Need 3 CT & 3 TR: \yCT %d/3 \d| \yTR %d/3\d)\w",
+        g_bVotedRestart[id] ? "\y[*] \r" : "\w", iCtRestart, iTrRestart)
+    menu_additem(iMenu, szItem, "4")
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+    return PLUGIN_HANDLED
+}
+
+public Handle_F3Menu(id, iMenu, iItem)
+{
+    if(!is_user_connected(id))
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[8], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    new choice = str_to_num(szData)
+    switch(choice)
+    {
+        case 1: ShowVoteKickMenu(id)
+        case 2: ShowVoteMapMenu(id)
+        case 3: ProcessVoteRePick(id)
+        case 4: ProcessVoteRestart(id)
+    }
+
+    return PLUGIN_HANDLED
+}
+
+public ShowVoteKickMenu(id)
+{
+    if(!is_user_connected(id)) return
+
+    new TeamName:myTeam = get_member(id, m_iTeam)
+    if(myTeam != TEAM_CT && myTeam != TEAM_TERRORIST)
+    {
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^3You must be in a team (CT or TR) to vote kick a teammate.")
+        return
+    }
+
+    new iTeammates[MAX_PLAYERS], iCount = 0
+    for(new p = 1; p <= MaxClients; p++)
+    {
+        if(is_user_connected(p) && !is_user_bot(p) && !is_user_hltv(p))
+        {
+            if(get_member(p, m_iTeam) == myTeam && p != id)
+            {
+                iTeammates[iCount++] = p
+            }
+        }
+    }
+
+    if(iCount == 0)
+    {
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^3No teammates available to vote kick.")
+        return
+    }
+
+    new szTitle[128]
+    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND CW] Vote Kick Teammate \r[3 Votes Needed]\w^n\dSelect teammate to kick:")
+    new iMenu = menu_create(szTitle, "HandleVoteKickMenu")
+
+    for(new i = 0; i < iCount; i++)
+    {
+        new targetId = iTeammates[i]
+        new szData[8], szItem[96]
+        num_to_str(targetId, szData, charsmax(szData))
+        new v = g_iPlayerKickVotes[targetId]
+        if(g_iVotedKickTarget[id] == targetId)
+        {
+            formatex(szItem, charsmax(szItem), "\y[*] \r%s \y[VOTED] \d(%d/3 votes)", g_szUserName[targetId], v)
+        }
+        else
+        {
+            formatex(szItem, charsmax(szItem), "\w%s \d(%d/3 votes)", g_szUserName[targetId], v)
+        }
+        menu_additem(iMenu, szItem, szData)
+    }
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public HandleVoteKickMenu(id, iMenu, iItem)
+{
+    if(!is_user_connected(id))
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[8], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    new targetId = str_to_num(szData)
+    if(!is_user_connected(targetId) || targetId == id)
+    {
+        return PLUGIN_HANDLED
+    }
+
+    new TeamName:myTeam = get_member(id, m_iTeam)
+    if(get_member(targetId, m_iTeam) != myTeam)
+    {
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^3You can only vote kick your own teammates.")
+        return PLUGIN_HANDLED
+    }
+
+    if(g_iVotedKickTarget[id] > 0 && g_iVotedKickTarget[id] != targetId)
+    {
+        new oldTarget = g_iVotedKickTarget[id]
+        if(1 <= oldTarget <= MAX_PLAYERS && g_iPlayerKickVotes[oldTarget] > 0)
+        {
+            g_iPlayerKickVotes[oldTarget]--
+        }
+    }
+
+    if(g_iVotedKickTarget[id] == targetId)
+    {
+        if(g_iPlayerKickVotes[targetId] > 0) g_iPlayerKickVotes[targetId]--
+        g_iVotedKickTarget[id] = 0
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1You retracted your vote kick for ^4%s^1.", g_szUserName[targetId])
+        return PLUGIN_HANDLED
+    }
+
+    g_iVotedKickTarget[id] = targetId
+    g_iPlayerKickVotes[targetId]++
+
+    new needed = 3
+
+    for(new p = 1; p <= MaxClients; p++)
+    {
+        if(is_user_connected(p) && get_member(p, m_iTeam) == myTeam)
+        {
+            client_print_color(p, print_team_default, "^4[GAMELAND CW] ^3%s ^1voted to kick ^4%s^1! (^3%d/%d votes^1)",
+                g_szUserName[id], g_szUserName[targetId], g_iPlayerKickVotes[targetId], needed)
+        }
+    }
+    client_cmd(id, "spk buttons/blip1")
+
+    if(g_iPlayerKickVotes[targetId] >= needed)
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3%s ^1was vote-kicked by their team! (^4%d votes^1)", g_szUserName[targetId], g_iPlayerKickVotes[targetId])
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+
+        for(new p = 1; p <= MAX_PLAYERS; p++)
+        {
+            if(g_iVotedKickTarget[p] == targetId)
+            {
+                g_iVotedKickTarget[p] = 0
+            }
+        }
+        g_iPlayerKickVotes[targetId] = 0
+
+        new userid = get_user_userid(targetId)
+        server_cmd("kick #%d ^"Voted off by team (%d votes)^"", userid, needed)
+        server_exec()
+    }
+
+    return PLUGIN_HANDLED
+}
+
+public ShowVoteMapMenu(id)
+{
+    if(!is_user_connected(id)) return
+
+    new iTotalHumans = 0
+    for(new p = 1; p <= MaxClients; p++)
+    {
+        if(is_user_connected(p) && !is_user_bot(p) && !is_user_hltv(p))
+            iTotalHumans++
+    }
+
+    new needed = max(2, iTotalHumans - 1)
+
+    new szTitle[128]
+    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND CW] Vote Change Map \r[Need %d votes]\w^n\dVote for a competitive map:", needed)
+    new iMenu = menu_create(szTitle, "HandleVoteMapMenu")
+
+    for(new i = 0; i < sizeof(g_szStandardMaps); i++)
+    {
+        new szData[8], szItem[96]
+        num_to_str(i, szData, charsmax(szData))
+        new v = g_iMapVoteCount[i]
+        if(g_iMapVoteChoice[id] == i)
+        {
+            formatex(szItem, charsmax(szItem), "\y[*] \r%s \y[VOTED] \d(%d/%d votes)", g_szStandardMaps[i], v, needed)
+        }
+        else
+        {
+            formatex(szItem, charsmax(szItem), "\w%s \d(%d/%d votes)", g_szStandardMaps[i], v, needed)
+        }
+        menu_additem(iMenu, szItem, szData)
+    }
+
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
+    menu_display(id, iMenu, 0)
+}
+
+public HandleVoteMapMenu(id, iMenu, iItem)
+{
+    if(!is_user_connected(id))
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[8], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    new mapIdx = str_to_num(szData)
+    if(mapIdx < 0 || mapIdx >= sizeof(g_szStandardMaps))
+        return PLUGIN_HANDLED
+
+    new iTotalHumans = 0
+    for(new p = 1; p <= MaxClients; p++)
+    {
+        if(is_user_connected(p) && !is_user_bot(p) && !is_user_hltv(p))
+            iTotalHumans++
+    }
+    new needed = max(2, iTotalHumans - 1)
+
+    if(g_iMapVoteChoice[id] >= 0 && g_iMapVoteChoice[id] != mapIdx)
+    {
+        new old = g_iMapVoteChoice[id]
+        if(old < sizeof(g_szStandardMaps) && g_iMapVoteCount[old] > 0)
+        {
+            g_iMapVoteCount[old]--
+        }
+    }
+
+    if(g_iMapVoteChoice[id] == mapIdx)
+    {
+        if(g_iMapVoteCount[mapIdx] > 0) g_iMapVoteCount[mapIdx]--
+        g_iMapVoteChoice[id] = -1
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1You retracted your vote for ^3%s^1.", g_szStandardMaps[mapIdx])
+        return PLUGIN_HANDLED
+    }
+
+    g_iMapVoteChoice[id] = mapIdx
+    g_iMapVoteCount[mapIdx]++
+
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3%s ^1voted for map ^4%s^1! (^3%d/%d votes^1)",
+        g_szUserName[id], g_szStandardMaps[mapIdx], g_iMapVoteCount[mapIdx], needed)
+    client_cmd(id, "spk buttons/blip1")
+
+    if(g_iMapVoteCount[mapIdx] >= needed)
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^4MAP VOTE PASSED! ^1Changing map to ^3%s ^1in 3 seconds...", g_szStandardMaps[mapIdx])
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+        client_cmd(0, "spk buttons/bell1")
+
+        set_dhudmessage(0, 220, 255, -1.0, 0.35, 0, 0.0, 3.0, 0.1, 0.2)
+        show_dhudmessage(0, "MAP VOTE PASSED!^nChanging level to: %s", g_szStandardMaps[mapIdx])
+
+        new szChangeCmd[64]
+        formatex(szChangeCmd, charsmax(szChangeCmd), "changelevel %s", g_szStandardMaps[mapIdx])
+        set_task(3.0, "Task_ExecChangelevel", _, szChangeCmd, sizeof(szChangeCmd))
+    }
+
+    return PLUGIN_HANDLED
+}
+
+public Task_ExecChangelevel(const szCmd[])
+{
+    server_cmd("%s", szCmd)
+}
+
+public ProcessVoteRePick(id)
+{
+    if(!is_user_connected(id)) return
+
+    new TeamName:myTeam = get_member(id, m_iTeam)
+    if(myTeam != TEAM_CT && myTeam != TEAM_TERRORIST)
+    {
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^3You must be on a team (CT or TR) to vote for Re-Pick.")
+        return
+    }
+
+    g_bVotedRePick[id] = !g_bVotedRePick[id]
+
+    new iCtCount = 0, iTrCount = 0
+    for(new p = 1; p <= MaxClients; p++)
+    {
+        if(is_user_connected(p) && !is_user_bot(p))
+        {
+            if(get_member(p, m_iTeam) == TEAM_CT && g_bVotedRePick[p]) iCtCount++
+            else if(get_member(p, m_iTeam) == TEAM_TERRORIST && g_bVotedRePick[p]) iTrCount++
+        }
+    }
+
+    new myCount = (myTeam == TEAM_CT) ? iCtCount : iTrCount
+    if(g_bVotedRePick[id])
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3%s ^1voted for ^4RE-PICK^1! (Team %s: ^3%d/5 votes^1)",
+            g_szUserName[id], (myTeam == TEAM_CT) ? "CT" : "TR", myCount)
+        client_cmd(id, "spk buttons/blip1")
+    }
+    else
+    {
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1You retracted your vote for ^3RE-PICK^1.")
+    }
+
+    if(iCtCount >= 5 || iTrCount >= 5)
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^4RE-PICK TRIGGERED! ^1Team ^3%s ^1voted 5/5 for Re-Pick!",
+            (iCtCount >= 5) ? "Counter-Terrorist" : "Terrorist")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Returning to Captain Election and Drafting in 3 seconds...")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+        client_cmd(0, "spk buttons/bell1")
+
+        ResetAllF3Votes()
+        remove_task(TASK_CW_COUNTDOWN)
+        remove_task(TASK_CW_CAPTAIN_VOTE)
+        remove_task(TASK_CW_PICK_TIMER)
+        remove_task(TASK_KNIFE_COUNTDOWN)
+        remove_task(TASK_LIVE_COUNTDOWN)
+
+        set_task(3.0, "StartCaptainElection")
+    }
+}
+
+public ProcessVoteRestart(id)
+{
+    if(!is_user_connected(id)) return
+
+    new TeamName:myTeam = get_member(id, m_iTeam)
+    if(myTeam != TEAM_CT && myTeam != TEAM_TERRORIST)
+    {
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^3You must be on a team (CT or TR) to vote for restart.")
+        return
+    }
+
+    g_bVotedRestart[id] = !g_bVotedRestart[id]
+
+    new iCtCount = 0, iTrCount = 0
+    for(new p = 1; p <= MaxClients; p++)
+    {
+        if(is_user_connected(p) && !is_user_bot(p))
+        {
+            if(get_member(p, m_iTeam) == TEAM_CT && g_bVotedRestart[p]) iCtCount++
+            else if(get_member(p, m_iTeam) == TEAM_TERRORIST && g_bVotedRestart[p]) iTrCount++
+        }
+    }
+
+    if(g_bVotedRestart[id])
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3%s ^1voted to ^4RESTART MATCH^1! (CT: ^3%d/3 ^1| TR: ^3%d/3^1)",
+            g_szUserName[id], iCtCount, iTrCount)
+        client_cmd(id, "spk buttons/blip1")
+    }
+    else
+    {
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1You retracted your vote to ^3Restart Match^1.")
+    }
+
+    if(iCtCount >= 3 && iTrCount >= 3)
+    {
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^4MUTUAL RESTART AGREED! ^1(3 CT and 3 TR voted to restart)")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Resetting match scores and restarting from Round 1 in 3 seconds...")
+        client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+        client_cmd(0, "spk buttons/bell1")
+
+        ResetAllF3Votes()
+        g_iScore[CT_SCORE] = 0
+        g_iScore[TERO_SCORE] = 0
+        g_iFirstHalfScore[CT_SCORE] = 0
+        g_iFirstHalfScore[TERO_SCORE] = 0
+        g_iOvertimeScore[CT_SCORE] = 0
+        g_iOvertimeScore[TERO_SCORE] = 0
+
+        set_task(3.0, "StartKnifeRound")
+    }
+}
+
+// -----------------------------------------------------------------------------
+// POST-MATCH MAP VOTE (END OF MIX CELEBRATION VOTE)
+// -----------------------------------------------------------------------------
+
+public StartPostMatchMapVote()
+{
+    remove_task(TASK_MATCH_END)
+    remove_task(TASK_POST_MATCH_MAP_VOTE)
+
+    new szCurrentMap[32]
+    get_mapname(szCurrentMap, charsmax(szCurrentMap))
+
+    g_iPostMatchMapCount = 0
+
+    // 1. Add current map played first
+    copy(g_szPostMatchMaps[g_iPostMatchMapCount++], 31, szCurrentMap)
+
+    // 2. Add other competitive standard maps without duplicates
+    for(new i = 0; i < sizeof(g_szStandardMaps); i++)
+    {
+        if(!equali(g_szStandardMaps[i], szCurrentMap))
+        {
+            if(g_iPostMatchMapCount < 7)
+            {
+                copy(g_szPostMatchMaps[g_iPostMatchMapCount++], 31, g_szStandardMaps[i])
+            }
+        }
+    }
+
+    for(new i = 0; i < g_iPostMatchMapCount; i++)
+    {
+        g_iPostMatchVoteCount[i] = 0
+    }
+
+    for(new p = 1; p <= MAX_PLAYERS; p++)
+    {
+        g_iPlayerPostMatchVote[p] = -1
+    }
+
+    g_iPostMatchVoteTimer = 15
+
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3MATCH ENDED! VOTE NEXT CLAN WAR MAP!")
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Vote for the map you want to play next (%d seconds)...", g_iPostMatchVoteTimer)
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+    client_cmd(0, "spk buttons/bell1")
+
+    set_task(1.0, "Task_PostMatchVoteTimer", TASK_POST_MATCH_MAP_VOTE, .flags = "b")
+
+    for(new p = 1; p <= MaxClients; p++)
+    {
+        if(is_user_connected(p) && !is_user_bot(p) && !is_user_hltv(p))
+        {
+            ShowPostMatchVoteMenu(p)
+        }
+    }
+}
+
+public ShowPostMatchVoteMenu(id)
+{
+    if(!is_user_connected(id) || is_user_bot(id)) return
+
+    new szCurrentMap[32]
+    get_mapname(szCurrentMap, charsmax(szCurrentMap))
+
+    new szTitle[128]
+    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND CW] Vote Next Match Map \r[%d sec]\w^n\dChoose the map for next Clan War / Mix:", g_iPostMatchVoteTimer)
+    new iMenu = menu_create(szTitle, "HandlePostMatchVoteMenu")
+
+    for(new i = 0; i < g_iPostMatchMapCount; i++)
+    {
+        new szData[8], szItem[96]
+        num_to_str(i, szData, charsmax(szData))
+        new v = g_iPostMatchVoteCount[i]
+
+        new szTag[32] = ""
+        if(equali(g_szPostMatchMaps[i], szCurrentMap))
+        {
+            copy(szTag, charsmax(szTag), " \y[Current Map]\w")
+        }
+
+        if(g_iPlayerPostMatchVote[id] == i)
+        {
+            formatex(szItem, charsmax(szItem), "\y[*] \r%s%s \y[VOTED] \d(%d vote%s)", g_szPostMatchMaps[i], szTag, v, (v == 1) ? "" : "s")
+        }
+        else
+        {
+            formatex(szItem, charsmax(szItem), "\w%s%s \d(%d vote%s)", g_szPostMatchMaps[i], szTag, v, (v == 1) ? "" : "s")
+        }
+        menu_additem(iMenu, szItem, szData)
+    }
+
+    menu_setprop(iMenu, MPROP_PERPAGE, 0)
+    menu_setprop(iMenu, MPROP_EXIT, MEXIT_NEVER)
+    menu_display(id, iMenu, 0)
+}
+
+public HandlePostMatchVoteMenu(id, iMenu, iItem)
+{
+    if(!is_user_connected(id))
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    if(iItem == MENU_EXIT)
+    {
+        menu_destroy(iMenu)
+        return PLUGIN_HANDLED
+    }
+
+    new szData[8], szName[64], iAccess, iCallback
+    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
+    menu_destroy(iMenu)
+
+    new mapIdx = str_to_num(szData)
+    if(mapIdx < 0 || mapIdx >= g_iPostMatchMapCount)
+        return PLUGIN_HANDLED
+
+    // Only 1 vote per player
+    if(g_iPlayerPostMatchVote[id] >= 0 && g_iPlayerPostMatchVote[id] != mapIdx)
+    {
+        new old = g_iPlayerPostMatchVote[id]
+        if(0 <= old < g_iPostMatchMapCount && g_iPostMatchVoteCount[old] > 0)
+        {
+            g_iPostMatchVoteCount[old]--
+        }
+    }
+
+    g_iPlayerPostMatchVote[id] = mapIdx
+    g_iPostMatchVoteCount[mapIdx]++
+
+    client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Your vote for ^4%s ^1was recorded! (^3%d votes^1)",
+        g_szPostMatchMaps[mapIdx], g_iPostMatchVoteCount[mapIdx])
+    client_cmd(id, "spk buttons/blip1")
+
+    // Check if all connected human players voted
+    new iVoted = 0, iTotal = 0
+    for(new p = 1; p <= MaxClients; p++)
+    {
+        if(is_user_connected(p) && !is_user_bot(p) && !is_user_hltv(p))
+        {
+            iTotal++
+            if(g_iPlayerPostMatchVote[p] >= 0) iVoted++
+        }
+    }
+
+    if(iVoted >= iTotal && iTotal > 0)
+    {
+        remove_task(TASK_POST_MATCH_MAP_VOTE)
+        FinishPostMatchMapVote()
+        return PLUGIN_HANDLED
+    }
+
+    return PLUGIN_HANDLED
+}
+
+public Task_PostMatchVoteTimer()
+{
+    g_iPostMatchVoteTimer--
+
+    if(g_iPostMatchVoteTimer <= 0)
+    {
+        remove_task(TASK_POST_MATCH_MAP_VOTE)
+        FinishPostMatchMapVote()
+        return
+    }
+
+    new bestIdx = 0, maxV = -1
+    for(new i = 0; i < g_iPostMatchMapCount; i++)
+    {
+        if(g_iPostMatchVoteCount[i] > maxV)
+        {
+            maxV = g_iPostMatchVoteCount[i]
+            bestIdx = i
+        }
+    }
+
+    set_dhudmessage(0, 220, 255, -1.0, 0.22, 0, 0.0, 1.0, 0.0, 0.1)
+    show_dhudmessage(0, "=== [ NEXT MAP VOTE ] ===^nVoting ends in: %d SECONDS^nLeader: %s (%d votes)",
+        g_iPostMatchVoteTimer, g_szPostMatchMaps[bestIdx], max(0, maxV))
+}
+
+public FinishPostMatchMapVote()
+{
+    remove_task(TASK_POST_MATCH_MAP_VOTE)
+
+    for(new i = 1; i <= MaxClients; i++)
+    {
+        if(is_user_connected(i)) show_menu(i, 0, "^n", 1)
+    }
+
+    new bestIdx = 0, maxV = -1
+    for(new i = 0; i < g_iPostMatchMapCount; i++)
+    {
+        if(g_iPostMatchVoteCount[i] > maxV)
+        {
+            maxV = g_iPostMatchVoteCount[i]
+            bestIdx = i
+        }
+    }
+
+    new szWinningMap[32]
+    copy(szWinningMap, charsmax(szWinningMap), g_szPostMatchMaps[bestIdx])
+
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3MAP VOTE COMPLETED!")
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^4Winning Next Map: ^3%s ^1with ^4%d votes^1!", szWinningMap, max(0, maxV))
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1Changing map in 5 seconds...")
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
+    client_cmd(0, "spk buttons/bell1")
+
+    set_dhudmessage(0, 255, 100, -1.0, 0.35, 0, 0.0, 5.0, 0.1, 0.2)
+    show_dhudmessage(0, "NEXT MAP: %s (%d votes)^nChanging level in 5 seconds...", szWinningMap, max(0, maxV))
+
+    new szChangeCmd[64]
+    formatex(szChangeCmd, charsmax(szChangeCmd), "changelevel %s", szWinningMap)
+    set_task(5.0, "Task_ExecChangelevel", _, szChangeCmd, sizeof(szChangeCmd))
 }
