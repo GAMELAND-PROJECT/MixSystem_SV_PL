@@ -215,6 +215,7 @@ public plugin_init()
 {
     register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR)
     register_cvar("gameland_mix_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
+    register_cvar("mix_base_hostname", "")
 
     register_dictionary("mix_system.txt")
 
@@ -422,6 +423,15 @@ DestroyCommandArrays()
 // -----------------------------------------------------------------------------
 InitBaseHostname()
 {
+    new szExplicitHost[64]
+    get_cvar_string("mix_base_hostname", szExplicitHost, charsmax(szExplicitHost))
+    trim(szExplicitHost)
+    if(szExplicitHost[0])
+    {
+        copy(g_szBaseHostname, charsmax(g_szBaseHostname), szExplicitHost)
+        return
+    }
+
     new szCurrentHost[64]
     get_cvar_string("hostname", szCurrentHost, charsmax(szCurrentHost))
     trim(szCurrentHost)
@@ -432,21 +442,28 @@ InitBaseHostname()
         return
     }
 
-    // Strip dynamic tags: " [WarmUp]", " [Pick]", " [Knife]", " CT ["
-    new iPos = containi(szCurrentHost, " [WarmUp]")
-    if(iPos != -1) szCurrentHost[iPos] = EOS
+    // Strip dynamic status tags
+    new const szTagsToStrip[][] = {
+        " [CW Ready 30s]",
+        " [CW Vote Captain]",
+        " [CW Pick Teams]",
+        " [CW WarmUp]",
+        " [CW Knife]",
+        " [CW]",
+        " [WarmUp]",
+        " [Warmup]",
+        " [Pick]",
+        " [Knife]",
+        " | CT [",
+        " CT ["
+    }
 
-    iPos = containi(szCurrentHost, " [Pick]")
-    if(iPos != -1) szCurrentHost[iPos] = EOS
-
-    iPos = containi(szCurrentHost, " [Knife]")
-    if(iPos != -1) szCurrentHost[iPos] = EOS
-
-    new iPos2 = containi(szCurrentHost, " | CT [")
-    if(iPos2 != -1) szCurrentHost[iPos2] = EOS
-
-    iPos = containi(szCurrentHost, " CT [")
-    if(iPos != -1) szCurrentHost[iPos] = EOS
+    for(new i = 0; i < sizeof(szTagsToStrip); i++)
+    {
+        new iPos = containi(szCurrentHost, szTagsToStrip[i])
+        if(iPos != -1)
+            szCurrentHost[iPos] = EOS
+    }
 
     trim(szCurrentHost)
     if(szCurrentHost[0])
@@ -813,6 +830,7 @@ public RG_CSGameRules_CheckWinConditions_Pre()
     // Supercede win condition checks completely during /rev1 mode (prevents 1v1 duel round ends!)
     if(g_bReviveMode)
     {
+        SetHookChainReturn(ATYPE_BOOL, false)
         return HC_SUPERCEDE
     }
     return HC_CONTINUE
@@ -826,6 +844,7 @@ public RG_RoundEnd_Pre(WinStatus:status, ScenarioEventEndRound:event, Float:tmDe
         if(event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
             return HC_CONTINUE
 
+        SetHookChainReturn(ATYPE_BOOL, false)
         return HC_SUPERCEDE
     }
     return HC_CONTINUE

@@ -331,6 +331,7 @@ public plugin_init()
     register_cvar("gameland_clanwar_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
     register_cvar("gameland_cw_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
     register_cvar("cw_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
+    register_cvar("cw_base_hostname", "")
     register_concmd("amx_cw_version", "Cmd_Version")
     register_clcmd("say /ver", "Cmd_SayVersion")
     register_clcmd("say_team /ver", "Cmd_SayVersion")
@@ -586,6 +587,15 @@ DestroyCommandArrays()
 // -----------------------------------------------------------------------------
 InitBaseHostname()
 {
+    new szExplicitHost[64]
+    get_cvar_string("cw_base_hostname", szExplicitHost, charsmax(szExplicitHost))
+    trim(szExplicitHost)
+    if(szExplicitHost[0])
+    {
+        copy(g_szBaseHostname, charsmax(g_szBaseHostname), szExplicitHost)
+        return
+    }
+
     new szCurrentHost[64]
     get_cvar_string("hostname", szCurrentHost, charsmax(szCurrentHost))
     trim(szCurrentHost)
@@ -596,21 +606,28 @@ InitBaseHostname()
         return
     }
 
-    // Strip dynamic tags: " [WarmUp]", " [Pick]", " [Knife]", " CT ["
-    new iPos = containi(szCurrentHost, " [WarmUp]")
-    if(iPos != -1) szCurrentHost[iPos] = EOS
+    // Strip all possible dynamic status tags
+    new const szTagsToStrip[][] = {
+        " [CW Ready 30s]",
+        " [CW Vote Captain]",
+        " [CW Pick Teams]",
+        " [CW WarmUp]",
+        " [CW Knife]",
+        " [CW]",
+        " [WarmUp]",
+        " [Warmup]",
+        " [Pick]",
+        " [Knife]",
+        " | CT [",
+        " CT ["
+    }
 
-    iPos = containi(szCurrentHost, " [Pick]")
-    if(iPos != -1) szCurrentHost[iPos] = EOS
-
-    iPos = containi(szCurrentHost, " [Knife]")
-    if(iPos != -1) szCurrentHost[iPos] = EOS
-
-    new iPos2 = containi(szCurrentHost, " | CT [")
-    if(iPos2 != -1) szCurrentHost[iPos2] = EOS
-
-    iPos = containi(szCurrentHost, " CT [")
-    if(iPos != -1) szCurrentHost[iPos] = EOS
+    for(new i = 0; i < sizeof(szTagsToStrip); i++)
+    {
+        new iPos = containi(szCurrentHost, szTagsToStrip[i])
+        if(iPos != -1)
+            szCurrentHost[iPos] = EOS
+    }
 
     trim(szCurrentHost)
     if(szCurrentHost[0])

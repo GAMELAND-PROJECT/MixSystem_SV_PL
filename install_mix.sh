@@ -260,6 +260,46 @@ if [ "${1:-}" == "--sync-all" ]; then
                 cp -f "${PROJECT_DIR}/cstrike/server.cfg" "${target_dir}/cstrike/" 2>/dev/null || true
             fi
 
+            # Resolve instance specific hostname from servers.json
+            inst_hostname=$(python3 -c '
+import json, sys
+iid = sys.argv[1]
+for p in ["'"${PROJECT_DIR}"'/instances/servers.json", "/opt/gameland/persistent/servers.json"]:
+    try:
+        with open(p) as f:
+            for s in json.load(f).get("servers", []):
+                if s.get("id") == iid:
+                    print(s.get("hostname") or s.get("name") or "")
+                    sys.exit(0)
+    except Exception: pass
+sys.exit(1)
+' "$s_id" 2>/dev/null || true)
+            if [ -n "$inst_hostname" ]; then
+                if [ -f "${target_dir}/cstrike/server.cfg" ]; then
+                    sed -i -E "s/^[[:space:]]*hostname[[:space:]]+.*/hostname \"${inst_hostname}\"/" "${target_dir}/cstrike/server.cfg" 2>/dev/null || true
+                    if ! grep -q '^[[:space:]]*hostname' "${target_dir}/cstrike/server.cfg"; then
+                        echo "hostname \"${inst_hostname}\"" >> "${target_dir}/cstrike/server.cfg"
+                    fi
+                fi
+                if [ -f "${target_dir}/cstrike/gameland.cfg" ]; then
+                    sed -i -E '/^[[:space:]]*hostname[[:space:]]+/d' "${target_dir}/cstrike/gameland.cfg" 2>/dev/null || true
+                fi
+                if [ -f "${PROJECT_DIR}/instances/${s_id}.env" ]; then
+                    sed -i -E "s/^[[:space:]]*HOSTNAME=.*/HOSTNAME=\"${inst_hostname}\"/" "${PROJECT_DIR}/instances/${s_id}.env" 2>/dev/null || true
+                    sed -i -E "s/^[[:space:]]*SERVER_NAME=.*/SERVER_NAME=\"${inst_hostname}\"/" "${PROJECT_DIR}/instances/${s_id}.env" 2>/dev/null || true
+                    if ! grep -q '^HOSTNAME=' "${PROJECT_DIR}/instances/${s_id}.env"; then
+                        echo "HOSTNAME=\"${inst_hostname}\"" >> "${PROJECT_DIR}/instances/${s_id}.env"
+                    fi
+                fi
+                # Also set in amxx.cfg so match plugins have direct access
+                amxx_cfg="${target_dir}/cstrike/addons/amxmodx/configs/amxx.cfg"
+                if [ -f "$amxx_cfg" ]; then
+                    sed -i -E '/^[[:space:]]*(cw_base_hostname|mix_base_hostname)[[:space:]]+/d' "$amxx_cfg" 2>/dev/null || true
+                    echo "cw_base_hostname \"${inst_hostname}\"" >> "$amxx_cfg"
+                    echo "mix_base_hostname \"${inst_hostname}\"" >> "$amxx_cfg"
+                fi
+            fi
+
             # Hitbox fixer config
             if [ -d "${target_dir}/cstrike/addons/hitbox_fixer" ]; then
                 mkdir -p "${target_dir}/cstrike/addons/hitbox_fixer/dlls" 2>/dev/null || true
