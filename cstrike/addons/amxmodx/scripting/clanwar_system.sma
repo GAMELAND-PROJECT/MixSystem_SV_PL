@@ -139,8 +139,10 @@ new g_iCwReadyTimer = 30
 new g_iPlayerCaptVotes[MAX_PLAYERS + 1]
 new g_iVotedForCapt[MAX_PLAYERS + 1]
 new g_iCaptVoteTimer = 20
-new g_iEligibleVoters[10]
+new g_iEligibleVoters[MAX_PLAYERS + 1]
 new g_iEligibleVoterCount = 0
+
+#define TASK_BIND_F3              3140
 
 new g_iCaptainCT = 0
 new g_iCaptainTR = 0
@@ -849,7 +851,7 @@ public client_putinserver(id)
         }
         if(iConnectedHumans > 10 && !HasAdminAccess(id))
         {
-            server_cmd("kick #%d ^"Server is full (10/10 Clan War slots)^"", get_user_userid(id))
+            rh_drop_client(id, "Server is full (10/10 Clan War slots)")
             return
         }
     }
@@ -869,8 +871,9 @@ public client_putinserver(id)
     g_iMatchPlants[id] = 0
     g_iMatchDefuses[id] = 0
     ResetPlayerF3Votes(id)
-    set_task(1.0, "Task_BindClientF3", id)
-    set_task(3.0, "Task_BindClientF3", id)
+    remove_task(TASK_BIND_F3 + id)
+    set_task(1.0, "Task_BindClientF3", TASK_BIND_F3 + id)
+    set_task(3.0, "Task_BindClientF3", TASK_BIND_F3 + id)
 
     if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
        g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
@@ -899,6 +902,7 @@ public client_disconnected(id)
 
     ExecuteForward(g_hFwdUserSave, g_iRet, id)
     ResetPlayerF3Votes(id)
+    remove_task(TASK_BIND_F3 + id)
 
     g_szUserName[id][0] = EOS
     if(task_exists(TASK_MIX_VOTE))
@@ -1022,8 +1026,8 @@ public RG_CBasePlayer_Spawn_Post(id)
 // -----------------------------------------------------------------------------
 public RG_CSGameRules_CheckWinConditions_Pre()
 {
-    // Supercede win condition checks completely during /rev1 mode or captain election / drafting
-    if(g_bReviveMode || g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
+    // Supercede win condition checks completely during warmup, countdown, captain election or drafting
+    if(g_bReviveMode || g_iMatchState == STATE_WARMUP || g_iMatchState == STATE_CAPTAIN_COUNTDOWN || g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
     {
         return HC_SUPERCEDE
     }
@@ -1032,8 +1036,8 @@ public RG_CSGameRules_CheckWinConditions_Pre()
 
 public RG_RoundEnd_Pre(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
 {
-    // Block any round ending during /rev1 mode or captain election / drafting
-    if(g_bReviveMode || g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
+    // Block any round ending during warmup, countdown, captain election or drafting
+    if(g_bReviveMode || g_iMatchState == STATE_WARMUP || g_iMatchState == STATE_CAPTAIN_COUNTDOWN || g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
     {
         if(event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
             return HC_CONTINUE
@@ -4631,17 +4635,18 @@ public StartCaptainElection()
         }
     }
 
-    // 2. Move all gathered players to Spectator// 2. Move all gathered players to Spectator & reset votes
+    // 2. Move all gathered players to Spectator safely without double-kill / ReGameDLL crash
     for(new i = 0; i < g_iEligibleVoterCount; i++)
     {
         new id = g_iEligibleVoters[i]
-        if(is_user_alive(id))
-        {
-            user_silentkill(id)
-        }
-        rg_set_user_team(id, TEAM_SPECTATOR)
+        if(!is_user_connected(id))
+            continue
+
         g_iPlayerCaptVotes[id] = 0
         g_iVotedForCapt[id] = 0
+
+        // In ReGameDLL, rg_set_user_team safely moves players to spectator without double-silentkill
+        rg_set_user_team(id, TEAM_SPECTATOR, MODEL_UNASSIGNED, true, false)
     }
 
     // Real human election without bots
@@ -4667,11 +4672,7 @@ public StartCaptainElection()
     }
 }
 
-stock g_iEligoterIndex(id)
-{
-    #pragma unused id
-    return g_iEligibleVoterCount++;
-}
+
 
 public ShowCaptainVoteMenu(id)
 {
@@ -4717,7 +4718,7 @@ public HandleCaptainVoteMenu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    if(iItem == MENU_EXIT)
+    if(iItem < 0)
     {
         menu_destroy(iMenu)
         return PLUGIN_HANDLED
@@ -4838,12 +4839,12 @@ public FinishCaptainElection()
 {
     remove_task(TASK_CW_CAPTAIN_VOTE)
 
-    // Close open menus
+    // Close open menus cleanly using newmenu API
     for(new i = 1; i <= MaxClients; i++)
     {
         if(is_user_connected(i))
         {
-            show_menu(i, 0, "^n", 1)
+            menu_cancel(i)
         }
     }
 
@@ -5414,7 +5415,7 @@ public Handle_F3Menu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    if(iItem == MENU_EXIT)
+    if(iItem < 0)
     {
         menu_destroy(iMenu)
         return PLUGIN_HANDLED
@@ -5498,7 +5499,7 @@ public HandleVoteKickMenu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    if(iItem == MENU_EXIT)
+    if(iItem < 0)
     {
         menu_destroy(iMenu)
         return PLUGIN_HANDLED
@@ -5621,7 +5622,7 @@ public HandleVoteMapMenu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    if(iItem == MENU_EXIT)
+    if(iItem < 0)
     {
         menu_destroy(iMenu)
         return PLUGIN_HANDLED
@@ -5904,7 +5905,7 @@ public HandlePostMatchVoteMenu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    if(iItem == MENU_EXIT)
+    if(iItem < 0)
     {
         menu_destroy(iMenu)
         return PLUGIN_HANDLED
@@ -6017,4 +6018,18 @@ public FinishPostMatchMapVote()
     new szChangeCmd[64]
     formatex(szChangeCmd, charsmax(szChangeCmd), "changelevel %s", szWinningMap)
     set_task(5.0, "Task_ExecChangelevel", _, szChangeCmd, sizeof(szChangeCmd))
+}
+
+
+public Task_BindClientF3(taskid)
+{
+    new id = taskid - TASK_BIND_F3
+    if(!is_user_connected(id) || is_user_bot(id) || is_user_hltv(id))
+        return
+
+    client_cmd(id, "bind F3 cw_menu")
+    client_cmd(id, "bind f3 cw_menu")
+    client_cmd(id, "bind F3 ^"cw_menu^"")
+    client_cmd(id, "bind f3 ^"cw_menu^"")
+    client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Press ^3[F3]^1 on your keyboard or type ^4/f3^1 to open the Player Action Menu!")
 }
