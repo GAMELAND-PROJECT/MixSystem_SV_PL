@@ -20,7 +20,7 @@
 #include <mix_system>
 
 #define PLUGIN_NAME        "GAMELAND Clan War Mode"
-#define PLUGIN_VERSION     "2.5.1-GL"
+#define PLUGIN_VERSION     "2.5.2-GL"
 #define PLUGIN_AUTHOR      "GAMELAND"
 
 // -----------------------------------------------------------------------------
@@ -139,6 +139,7 @@ new g_iCwReadyTimer = 30
 new g_iPlayerCaptVotes[MAX_PLAYERS + 1]
 new g_iVotedForCapt[MAX_PLAYERS + 1]
 new g_iCaptVoteTimer = 20
+new bool:g_bCaptainElectionFinished = false
 new g_iEligibleVoters[MAX_PLAYERS + 1]
 new g_iEligibleVoterCount = 0
 
@@ -2899,14 +2900,44 @@ public Task_HudDisplay()
 
     if(g_iMatchState == STATE_CAPTAIN_COUNTDOWN)
     {
-        formatex(szMsg, charsmax(szMsg), "== [ 10 PLAYERS READY ] ==^nCaptain Election in: %d seconds...", g_iCwReadyTimer)
+        formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - 10 PLAYERS READY ] ==^nCaptain Election starts in: %d seconds...", g_iCwReadyTimer)
         set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
         ShowSyncHudMsg(0, g_iHudSync, szMsg)
         return
     }
     else if(g_iMatchState == STATE_CAPTAIN_VOTE)
     {
-        formatex(szMsg, charsmax(szMsg), "== [ CAPTAIN ELECTION ] ==^nVoting ends in: %d seconds", g_iCaptVoteTimer)
+        new iTop1 = 0, iTop2 = 0
+        new iMax1 = -1, iMax2 = -1
+        for(new i = 0; i < g_iEligibleVoterCount; i++)
+        {
+            new p = g_iEligibleVoterCount > 0 ? g_iEligibleVoters[i] : 0
+            if(!is_user_connected(p)) continue
+            new v = g_iPlayerCaptVotes[p]
+            if(v > iMax1)
+            {
+                iMax2 = iMax1
+                iTop2 = iTop1
+                iMax1 = v
+                iTop1 = p
+            }
+            else if(v > iMax2)
+            {
+                iMax2 = v
+                iTop2 = p
+            }
+        }
+
+        if(iTop1 > 0 && iTop2 > 0 && (iMax1 > 0 || iMax2 > 0))
+        {
+            formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - CAPTAIN ELECTION ] ==^nTime: %d s | Leaders: #1 %s (%d) | #2 %s (%d)",
+                g_iCaptVoteTimer, g_szUserName[iTop1], max(0, iMax1), g_szUserName[iTop2], max(0, iMax2))
+        }
+        else
+        {
+            formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - CAPTAIN ELECTION ] ==^nTime Left: %d s | Cast your vote in the menu!", g_iCaptVoteTimer)
+        }
+
         set_hudmessage(0, 220, 255, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
         ShowSyncHudMsg(0, g_iHudSync, szMsg)
         return
@@ -2916,7 +2947,7 @@ public Task_HudDisplay()
         new activeCapt = (g_iCurrentDraftTurn == 1) ? g_iCaptainCT : g_iCaptainTR
         new szTeamName[32]
         copy(szTeamName, charsmax(szTeamName), (g_iCurrentDraftTurn == 1) ? "CT" : "TR")
-        formatex(szMsg, charsmax(szMsg), "== [ TEAM DRAFT: ROUND %d / 7 ] ==^nTurn: Captain %s (%s) [%d s]",
+        formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - TEAM DRAFT: ROUND %d / 7 ] ==^nTurn: Captain %s (%s) [%d s]",
             g_iDraftRound, g_szUserName[activeCapt], szTeamName, g_iPickTimer)
         set_hudmessage(255, 170, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
         ShowSyncHudMsg(0, g_iHudSync, szMsg)
@@ -2924,7 +2955,7 @@ public Task_HudDisplay()
     }
     else if(g_bPickMode)
     {
-        formatex(szMsg, charsmax(szMsg), "== [ CAPTAIN PICK ] ==^nPick Teams (/a, /st, /spec)")
+        formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - CAPTAIN PICK ] ==^nPick Teams (/a, /st, /spec)")
         set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
         ShowSyncHudMsg(0, g_iHudSync, szMsg)
         return
@@ -2934,28 +2965,31 @@ public Task_HudDisplay()
     {
         case STATE_WARMUP:
         {
-            new iInGame = GetActiveInGamePlayerCount()
-            if(iInGame >= 10)
+            if(!g_bPickMode && g_iMatchState == STATE_WARMUP)
             {
-                StartCaptainCountdown()
-                return
-            }
+                new iInGame = GetActiveInGamePlayerCount()
+                if(iInGame >= 10 && !task_exists(TASK_CW_COUNTDOWN))
+                {
+                    StartCaptainCountdown()
+                    return
+                }
 
-            if(g_bReviveMode)
-            {
-                formatex(szMsg, charsmax(szMsg), "== [ CW WARMUP (10 SLOTS) - REVIVE ON ] ==^nWaiting for 10 Players: [ %d / 10 ]^n(Admins can type /cw to force start)", iInGame)
-                set_hudmessage(0, 255, 120, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+                if(g_bReviveMode)
+                {
+                    formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - WARMUP (REVIVE ON) ] ==^nWaiting for 10 Players: [ %d / 10 ]^n(Type /cw for Admin Menu | Type /n for Player Menu)", iInGame)
+                    set_hudmessage(0, 255, 120, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+                }
+                else
+                {
+                    formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - WARMUP (10 SLOTS) ] ==^nWaiting for 10 Players: [ %d / 10 ]^n(Type /cw for Admin Menu | Type /n for Player Menu)", iInGame)
+                    set_hudmessage(0, 220, 255, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+                }
+                ShowSyncHudMsg(0, g_iHudSync, szMsg)
             }
-            else
-            {
-                formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR WARMUP (10 SLOTS) ] ==^nWaiting for 10 Players: [ %d / 10 ]^n(Admins can type /cw to force start)", iInGame)
-                set_hudmessage(0, 220, 255, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-            }
-            ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
         case STATE_KNIFE:
         {
-            formatex(szMsg, charsmax(szMsg), "== [ KNIFE ROUND ] ==")
+            formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - KNIFE ROUND ] ==")
             set_hudmessage(255, 170, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
             ShowSyncHudMsg(0, g_iHudSync, szMsg)
         }
@@ -2995,25 +3029,25 @@ public Task_HudDisplay()
 
                 if(g_iMatchState == STATE_FIRST_HALF)
                 {
-                    formatex(szMsg, charsmax(szMsg), "== [ 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
+                    formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
                         g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
                     set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
                 }
                 else if(g_iMatchState == STATE_SECOND_HALF)
                 {
-                    formatex(szMsg, charsmax(szMsg), "== [ 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
+                    formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
                         g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
                     set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
                 }
                 else if(g_iMatchState == STATE_OVERTIME_FIRST_HALF)
                 {
-                    formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
+                    formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - OVERTIME 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
                         g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
                     set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
                 }
                 else if(g_iMatchState == STATE_OVERTIME_SECOND_HALF)
                 {
-                    formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
+                    formatex(szMsg, charsmax(szMsg), "== [ CLAN WAR 5v5 - OVERTIME 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
                         g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
                     set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
                 }
@@ -4692,8 +4726,7 @@ public Task_CaptainCountdown()
         client_cmd(0, "spk buttons/blip1")
     }
 
-    set_dhudmessage(0, 220, 255, -1.0, 0.22, 0, 0.0, 1.0, 0.0, 0.1)
-    show_dhudmessage(0, "=== [ 10 PLAYERS READY ] ===^nCaptain Election starts in: %d SECONDS^nGet ready to elect your Team Captains!", g_iCwReadyTimer)
+    // Handled cleanly via Task_HudDisplay banner
 
     if(g_iCwReadyTimer <= 0)
     {
@@ -4710,6 +4743,7 @@ public StartCaptainElection()
 
     g_iMatchState = STATE_CAPTAIN_VOTE
     g_bPickMode = true
+    g_bCaptainElectionFinished = false
     UpdateServerHostname()
 
     // 1. Gather up to 10 human players from teams or spectator
@@ -4806,15 +4840,19 @@ public ShowCaptainVoteMenu(id)
 
 public HandleCaptainVoteMenu(id, iMenu, iItem)
 {
-    if(g_iMatchState != STATE_CAPTAIN_VOTE || !is_user_connected(id))
+    if(g_iMatchState != STATE_CAPTAIN_VOTE || g_bCaptainElectionFinished || !is_user_connected(id))
     {
         menu_destroy(iMenu)
+        show_menu(id, 0, "^n", 1)
+        menu_cancel(id)
         return PLUGIN_HANDLED
     }
 
     if(iItem < 0)
     {
         menu_destroy(iMenu)
+        show_menu(id, 0, "^n", 1)
+        menu_cancel(id)
         return PLUGIN_HANDLED
     }
 
@@ -4834,6 +4872,8 @@ public HandleCaptainVoteMenu(id, iMenu, iItem)
     if(g_iVotedForCapt[id] > 0)
     {
         client_print_color(id, print_team_default, "^4[GAMELAND CW] ^3You have already cast your vote! You cannot vote multiple times.")
+        show_menu(id, 0, "^n", 1)
+        menu_cancel(id)
         return PLUGIN_HANDLED
     }
 
@@ -4847,6 +4887,10 @@ public HandleCaptainVoteMenu(id, iMenu, iItem)
 
     g_iVotedForCapt[id] = candidateId
     g_iPlayerCaptVotes[candidateId]++
+
+    // Force dismiss menu on client screen immediately upon voting
+    show_menu(id, 0, "^n", 1)
+    menu_cancel(id)
 
     client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Your vote for ^4%s ^1as Captain is recorded! (Total votes: ^3%d^1)", g_szUserName[candidateId], g_iPlayerCaptVotes[candidateId])
     client_cmd(id, "spk buttons/blip1")
@@ -4894,53 +4938,31 @@ public Task_CaptVoteTimer()
         return
     }
 
-    // Find current top 2 leaders
-    new iTop1 = 0, iTop2 = 0
-    new iMax1 = -1, iMax2 = -1
-
-    for(new i = 0; i < g_iEligibleVoterCount; i++)
-    {
-        new p = g_iEligibleVoters[i]
-        if(!is_user_connected(p)) continue
-        new v = g_iPlayerCaptVotes[p]
-        if(v > iMax1)
-        {
-            iMax2 = iMax1
-            iTop2 = iTop1
-            iMax1 = v
-            iTop1 = p
-        }
-        else if(v > iMax2)
-        {
-            iMax2 = v
-            iTop2 = p
-        }
-    }
-
-    set_hudmessage(0, 200, 255, -1.0, 0.25, 0, 0.0, 0.9, 0.0, 0.1)
-    if(iTop1 > 0 && iTop2 > 0)
-    {
-        show_hudmessage(0, "Captain Election: %d seconds left^n#1: %s (%d votes) | #2: %s (%d votes)", 
-            g_iCaptVoteTimer, g_szUserName[iTop1], max(0, iMax1), g_szUserName[iTop2], max(0, iMax2))
-    }
-    else
-    {
-        show_hudmessage(0, "Captain Election: %d seconds left^nCast your votes in the menu!", g_iCaptVoteTimer)
-    }
+    // Leader display is handled cleanly via unified Task_HudDisplay synchronization
 }
 
 public FinishCaptainElection()
 {
+    if(g_bCaptainElectionFinished)
+        return
+
+    g_bCaptainElectionFinished = true
     remove_task(TASK_CW_CAPTAIN_VOTE)
 
-    // Close open menus cleanly using newmenu API
+    // Close open menus cleanly on all connected client screens
     for(new i = 1; i <= MaxClients; i++)
     {
         if(is_user_connected(i))
         {
+            show_menu(i, 0, "^n", 1)
             menu_cancel(i)
         }
     }
+
+    // Immediately mark as Picking phase so no late vote can re-trigger election
+    g_iMatchState = STATE_PICKING
+    g_bPickMode = true
+    UpdateServerHostname()
 
     // Sort candidates descending by votes
     new iCandidates[MAX_PLAYERS], iVotes[MAX_PLAYERS]
