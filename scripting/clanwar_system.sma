@@ -20,7 +20,7 @@
 #include <mix_system>
 
 #define PLUGIN_NAME        "GAMELAND Clan War Mode"
-#define PLUGIN_VERSION     "1.0.0-ReAPI"
+#define PLUGIN_VERSION     "2.5.0-GL"
 #define PLUGIN_AUTHOR      "GAMELAND"
 
 // -----------------------------------------------------------------------------
@@ -139,8 +139,10 @@ new g_iCwReadyTimer = 30
 new g_iPlayerCaptVotes[MAX_PLAYERS + 1]
 new g_iVotedForCapt[MAX_PLAYERS + 1]
 new g_iCaptVoteTimer = 20
-new g_iEligibleVoters[10]
+new g_iEligibleVoters[MAX_PLAYERS + 1]
 new g_iEligibleVoterCount = 0
+
+#define TASK_BIND_F3              3140
 
 new g_iCaptainCT = 0
 new g_iCaptainTR = 0
@@ -326,6 +328,20 @@ public plugin_init()
 {
     register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR)
     register_cvar("gameland_clanwar_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
+    register_cvar("gameland_cw_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
+    register_cvar("cw_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
+    register_concmd("gameland_cw_version", "Cmd_Version")
+    register_concmd("cw_version", "Cmd_Version")
+    register_clcmd("say /ver", "Cmd_SayVersion")
+    register_clcmd("say_team /ver", "Cmd_SayVersion")
+    register_clcmd("say /version", "Cmd_SayVersion")
+    register_clcmd("say_team /version", "Cmd_SayVersion")
+
+    // Built-in Teammate Semiclip to permanently prevent spawn overlapping / stuck
+    if(get_cvar_pointer("mp_semiclip"))
+        set_cvar_num("mp_semiclip", 1)
+    if(get_cvar_pointer("mp_semiclip_actions"))
+        set_cvar_num("mp_semiclip_actions", 3)
 
     register_dictionary("clanwar_system.txt")
 
@@ -409,12 +425,19 @@ public plugin_init()
     // Set visible maxplayers strictly to 10
     set_cvar_num("sv_visiblemaxplayers", 10)
 
-    // Player Action Menu [F3] (/f3, /menu)
+    // Player Action Menu [Key N & F3] (/n, /f3, /menu, nightvision)
+    register_clcmd("nightvision", "Cmd_F3Menu")
+    register_clcmd("client_buy_nightvision", "Cmd_F3Menu")
     register_clcmd("cw_menu", "Cmd_F3Menu")
+    register_clcmd("say /n", "Cmd_F3Menu")
+    register_clcmd("say_team /n", "Cmd_F3Menu")
     register_clcmd("say /f3", "Cmd_F3Menu")
     register_clcmd("say_team /f3", "Cmd_F3Menu")
     register_clcmd("say /menu", "Cmd_F3Menu")
     register_clcmd("say_team /menu", "Cmd_F3Menu")
+    register_clcmd("say /cwmenu", "Cmd_F3Menu")
+    register_clcmd("say_team /cwmenu", "Cmd_F3Menu")
+    register_clcmd("n", "Cmd_F3Menu")
     register_clcmd("f3", "Cmd_F3Menu")
     register_clcmd("menu", "Cmd_F3Menu")
 
@@ -849,7 +872,7 @@ public client_putinserver(id)
         }
         if(iConnectedHumans > 10 && !HasAdminAccess(id))
         {
-            server_cmd("kick #%d ^"Server is full (10/10 Clan War slots)^"", get_user_userid(id))
+            rh_drop_client(id, "Server is full (10/10 Clan War slots)")
             return
         }
     }
@@ -869,8 +892,9 @@ public client_putinserver(id)
     g_iMatchPlants[id] = 0
     g_iMatchDefuses[id] = 0
     ResetPlayerF3Votes(id)
-    set_task(1.0, "Task_BindClientF3", id)
-    set_task(3.0, "Task_BindClientF3", id)
+    remove_task(TASK_BIND_F3 + id)
+    set_task(1.0, "Task_BindClientF3", TASK_BIND_F3 + id)
+    set_task(3.0, "Task_BindClientF3", TASK_BIND_F3 + id)
 
     if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
        g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
@@ -899,6 +923,7 @@ public client_disconnected(id)
 
     ExecuteForward(g_hFwdUserSave, g_iRet, id)
     ResetPlayerF3Votes(id)
+    remove_task(TASK_BIND_F3 + id)
 
     g_szUserName[id][0] = EOS
     if(task_exists(TASK_MIX_VOTE))
@@ -969,10 +994,10 @@ public RG_CBasePlayer_Spawn_Post(id)
 
     if(!is_user_bot(id))
     {
+        client_cmd(id, "bind n nightvision")
+        client_cmd(id, "bind N nightvision")
         client_cmd(id, "bind F3 cw_menu")
         client_cmd(id, "bind f3 cw_menu")
-        client_cmd(id, "bind F3 ^"cw_menu^"")
-        client_cmd(id, "bind f3 ^"cw_menu^"")
     }
 
     if(g_bReviveMode)
@@ -1022,8 +1047,8 @@ public RG_CBasePlayer_Spawn_Post(id)
 // -----------------------------------------------------------------------------
 public RG_CSGameRules_CheckWinConditions_Pre()
 {
-    // Supercede win condition checks completely during /rev1 mode or captain election / drafting
-    if(g_bReviveMode || g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
+    // Supercede win condition checks completely during warmup, countdown, captain election or drafting
+    if(g_bReviveMode || g_iMatchState == STATE_WARMUP || g_iMatchState == STATE_CAPTAIN_COUNTDOWN || g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
     {
         return HC_SUPERCEDE
     }
@@ -1032,8 +1057,8 @@ public RG_CSGameRules_CheckWinConditions_Pre()
 
 public RG_RoundEnd_Pre(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
 {
-    // Block any round ending during /rev1 mode or captain election / drafting
-    if(g_bReviveMode || g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
+    // Block any round ending during warmup, countdown, captain election or drafting
+    if(g_bReviveMode || g_iMatchState == STATE_WARMUP || g_iMatchState == STATE_CAPTAIN_COUNTDOWN || g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
     {
         if(event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
             return HC_CONTINUE
@@ -1359,35 +1384,83 @@ stock LoadMapSpawns()
     }
 }
 
+stock bool:IsSpawnOccupied(Float:vecOrigin[3])
+{
+    new iPlayers[MAX_PLAYERS], iNum
+    get_players(iPlayers, iNum, "a")
+    for(new i = 0; i < iNum; i++)
+    {
+        new Float:pOrigin[3]
+        get_entvar(iPlayers[i], var_origin, pOrigin)
+        if(get_distance_f(vecOrigin, pOrigin) < 65.0)
+        {
+            return true
+        }
+    }
+    return false
+}
+
 stock TeleportToRandomSpawn(id)
 {
     new TeamName:team = get_member(id, m_iTeam)
     if(team == TEAM_CT && g_iTotalSpawnsCT > 0)
     {
-        new iIndex = random_num(0, g_iTotalSpawnsCT - 1)
+        new iChosen = -1
+        new iStartIdx = random_num(0, g_iTotalSpawnsCT - 1)
+        for(new i = 0; i < g_iTotalSpawnsCT; i++)
+        {
+            new idx = (iStartIdx + i) % g_iTotalSpawnsCT
+            new Float:testOrigin[3]
+            testOrigin[0] = g_vecSpawnsCT[idx][0]
+            testOrigin[1] = g_vecSpawnsCT[idx][1]
+            testOrigin[2] = g_vecSpawnsCT[idx][2] + 10.0
+            if(!IsSpawnOccupied(testOrigin))
+            {
+                iChosen = idx
+                break
+            }
+        }
+        if(iChosen == -1) iChosen = iStartIdx
+
         new Float:vecOrigin[3]
-        vecOrigin[0] = g_vecSpawnsCT[iIndex][0]
-        vecOrigin[1] = g_vecSpawnsCT[iIndex][1]
-        vecOrigin[2] = g_vecSpawnsCT[iIndex][2] + 10.0
+        vecOrigin[0] = g_vecSpawnsCT[iChosen][0]
+        vecOrigin[1] = g_vecSpawnsCT[iChosen][1]
+        vecOrigin[2] = g_vecSpawnsCT[iChosen][2] + 10.0
 
         set_entvar(id, var_origin, vecOrigin)
-        set_entvar(id, var_angles, g_vecAnglesCT[iIndex])
-        set_entvar(id, var_v_angle, g_vecAnglesCT[iIndex])
+        set_entvar(id, var_angles, g_vecAnglesCT[iChosen])
+        set_entvar(id, var_v_angle, g_vecAnglesCT[iChosen])
         set_entvar(id, var_fixangle, 1)
         set_entvar(id, var_velocity, Float:{0.0, 0.0, 0.0})
         rg_reset_maxspeed(id)
     }
     else if(team == TEAM_TERRORIST && g_iTotalSpawnsTR > 0)
     {
-        new iIndex = random_num(0, g_iTotalSpawnsTR - 1)
+        new iChosen = -1
+        new iStartIdx = random_num(0, g_iTotalSpawnsTR - 1)
+        for(new i = 0; i < g_iTotalSpawnsTR; i++)
+        {
+            new idx = (iStartIdx + i) % g_iTotalSpawnsTR
+            new Float:testOrigin[3]
+            testOrigin[0] = g_vecSpawnsTR[idx][0]
+            testOrigin[1] = g_vecSpawnsTR[idx][1]
+            testOrigin[2] = g_vecSpawnsTR[idx][2] + 10.0
+            if(!IsSpawnOccupied(testOrigin))
+            {
+                iChosen = idx
+                break
+            }
+        }
+        if(iChosen == -1) iChosen = iStartIdx
+
         new Float:vecOrigin[3]
-        vecOrigin[0] = g_vecSpawnsTR[iIndex][0]
-        vecOrigin[1] = g_vecSpawnsTR[iIndex][1]
-        vecOrigin[2] = g_vecSpawnsTR[iIndex][2] + 10.0
+        vecOrigin[0] = g_vecSpawnsTR[iChosen][0]
+        vecOrigin[1] = g_vecSpawnsTR[iChosen][1]
+        vecOrigin[2] = g_vecSpawnsTR[iChosen][2] + 10.0
 
         set_entvar(id, var_origin, vecOrigin)
-        set_entvar(id, var_angles, g_vecAnglesTR[iIndex])
-        set_entvar(id, var_v_angle, g_vecAnglesTR[iIndex])
+        set_entvar(id, var_angles, g_vecAnglesTR[iChosen])
+        set_entvar(id, var_v_angle, g_vecAnglesTR[iChosen])
         set_entvar(id, var_fixangle, 1)
         set_entvar(id, var_velocity, Float:{0.0, 0.0, 0.0})
         rg_reset_maxspeed(id)
@@ -2220,6 +2293,8 @@ public StartWarmup()
     set_cvar_num("mp_startmoney", g_iWarmMoney)
     set_cvar_float("mp_roundtime", 1.0)
     set_cvar_num("mp_friendlyfire", 0)
+    if(get_cvar_pointer("mp_semiclip")) set_cvar_num("mp_semiclip", 1)
+    if(get_cvar_pointer("mp_semiclip_actions")) set_cvar_num("mp_semiclip_actions", 3)
 
     // Warmup camera: Free spectating permitted
     set_cvar_num("mp_forcecamera", 0)
@@ -2469,6 +2544,8 @@ public StartKnifeRound()
     set_cvar_num("mp_freezetime", 3)
     set_cvar_num("mp_buytime", 0)
     set_cvar_float("mp_roundtime", 3.0)
+    if(get_cvar_pointer("mp_semiclip")) set_cvar_num("mp_semiclip", 1)
+    if(get_cvar_pointer("mp_semiclip_actions")) set_cvar_num("mp_semiclip_actions", 3)
 
     // Competitive camera: dead players can ONLY spectate alive teammates (NO enemies)
     set_cvar_num("mp_forcecamera", 2)
@@ -4631,17 +4708,18 @@ public StartCaptainElection()
         }
     }
 
-    // 2. Move all gathered players to Spectator// 2. Move all gathered players to Spectator & reset votes
+    // 2. Move all gathered players to Spectator safely without double-kill / ReGameDLL crash
     for(new i = 0; i < g_iEligibleVoterCount; i++)
     {
         new id = g_iEligibleVoters[i]
-        if(is_user_alive(id))
-        {
-            user_silentkill(id)
-        }
-        rg_set_user_team(id, TEAM_SPECTATOR)
+        if(!is_user_connected(id))
+            continue
+
         g_iPlayerCaptVotes[id] = 0
         g_iVotedForCapt[id] = 0
+
+        // In ReGameDLL, rg_set_user_team safely moves players to spectator without double-silentkill
+        rg_set_user_team(id, TEAM_SPECTATOR, MODEL_UNASSIGNED, true, false)
     }
 
     // Real human election without bots
@@ -4667,11 +4745,7 @@ public StartCaptainElection()
     }
 }
 
-stock g_iEligoterIndex(id)
-{
-    #pragma unused id
-    return g_iEligibleVoterCount++;
-}
+
 
 public ShowCaptainVoteMenu(id)
 {
@@ -4717,7 +4791,7 @@ public HandleCaptainVoteMenu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    if(iItem == MENU_EXIT)
+    if(iItem < 0)
     {
         menu_destroy(iMenu)
         return PLUGIN_HANDLED
@@ -4838,12 +4912,12 @@ public FinishCaptainElection()
 {
     remove_task(TASK_CW_CAPTAIN_VOTE)
 
-    // Close open menus
+    // Close open menus cleanly using newmenu API
     for(new i = 1; i <= MaxClients; i++)
     {
         if(is_user_connected(i))
         {
-            show_menu(i, 0, "^n", 1)
+            menu_cancel(i)
         }
     }
 
@@ -5363,7 +5437,7 @@ public Cmd_F3Menu(id)
         return PLUGIN_HANDLED
 
     new szTitle[128]
-    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND CW] Player Action Menu \r[F3]\w^n\dQuick Match & Team Management:")
+    formatex(szTitle, charsmax(szTitle), "\y[GAMELAND CW] Action Menu \r[N] \d(v%s)\w^n\dQuick Match & Team Management:", PLUGIN_VERSION)
     new iMenu = menu_create(szTitle, "Handle_F3Menu")
 
     new iCtRePick = 0, iTrRePick = 0
@@ -5414,7 +5488,7 @@ public Handle_F3Menu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    if(iItem == MENU_EXIT)
+    if(iItem < 0)
     {
         menu_destroy(iMenu)
         return PLUGIN_HANDLED
@@ -5498,7 +5572,7 @@ public HandleVoteKickMenu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    if(iItem == MENU_EXIT)
+    if(iItem < 0)
     {
         menu_destroy(iMenu)
         return PLUGIN_HANDLED
@@ -5621,7 +5695,7 @@ public HandleVoteMapMenu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    if(iItem == MENU_EXIT)
+    if(iItem < 0)
     {
         menu_destroy(iMenu)
         return PLUGIN_HANDLED
@@ -5904,7 +5978,7 @@ public HandlePostMatchVoteMenu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    if(iItem == MENU_EXIT)
+    if(iItem < 0)
     {
         menu_destroy(iMenu)
         return PLUGIN_HANDLED
@@ -6017,4 +6091,34 @@ public FinishPostMatchMapVote()
     new szChangeCmd[64]
     formatex(szChangeCmd, charsmax(szChangeCmd), "changelevel %s", szWinningMap)
     set_task(5.0, "Task_ExecChangelevel", _, szChangeCmd, sizeof(szChangeCmd))
+}
+
+
+public Cmd_SayVersion(id)
+{
+    client_print_color(0, print_team_default, "^4[GAMELAND CW] ^1System Version: ^3v%s ^1| ReAPI Dedicated Engine | Build: ^4%s", PLUGIN_VERSION, __DATE__)
+    return PLUGIN_HANDLED
+}
+
+public Cmd_Version(id)
+{
+    console_print(id, "=================================================")
+    console_print(id, " GAMELAND Clan War Dedicated System")
+    console_print(id, " Version: v%s (ReAPI / Auto-Knife / 10-Slot / Key N)", PLUGIN_VERSION)
+    console_print(id, " Build Date: %s %s", __DATE__, __TIME__)
+    console_print(id, "=================================================")
+    return PLUGIN_HANDLED
+}
+
+public Task_BindClientF3(taskid)
+{
+    new id = taskid - TASK_BIND_F3
+    if(!is_user_connected(id) || is_user_bot(id) || is_user_hltv(id))
+        return
+
+    client_cmd(id, "bind n nightvision")
+    client_cmd(id, "bind N nightvision")
+    client_cmd(id, "bind F3 cw_menu")
+    client_cmd(id, "bind f3 cw_menu")
+    client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1System: ^3v%s ^1| Press ^3[N]^1 (or ^3[F3]^1) or type ^4/n^1 for Player Menu!", PLUGIN_VERSION)
 }
