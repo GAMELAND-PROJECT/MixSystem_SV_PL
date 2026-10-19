@@ -813,6 +813,7 @@ public RG_CSGameRules_CheckWinConditions_Pre()
     // Supercede win condition checks completely during /rev1 mode (prevents 1v1 duel round ends!)
     if(g_bReviveMode)
     {
+        SetHookChainReturn(ATYPE_BOOL, false)
         return HC_SUPERCEDE
     }
     return HC_CONTINUE
@@ -826,6 +827,7 @@ public RG_RoundEnd_Pre(WinStatus:status, ScenarioEventEndRound:event, Float:tmDe
         if(event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
             return HC_CONTINUE
 
+        SetHookChainReturn(ATYPE_BOOL, false)
         return HC_SUPERCEDE
     }
     return HC_CONTINUE

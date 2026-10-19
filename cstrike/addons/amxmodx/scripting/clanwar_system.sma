@@ -20,7 +20,7 @@
 #include <mix_system>
 
 #define PLUGIN_NAME        "GAMELAND Clan War Mode"
-#define PLUGIN_VERSION     "2.5.2-GL"
+#define PLUGIN_VERSION     "2.5.3-GL"
 #define PLUGIN_AUTHOR      "GAMELAND"
 
 // -----------------------------------------------------------------------------
@@ -331,8 +331,7 @@ public plugin_init()
     register_cvar("gameland_clanwar_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
     register_cvar("gameland_cw_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
     register_cvar("cw_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
-    register_concmd("gameland_cw_version", "Cmd_Version")
-    register_concmd("cw_version", "Cmd_Version")
+    register_concmd("amx_cw_version", "Cmd_Version")
     register_clcmd("say /ver", "Cmd_SayVersion")
     register_clcmd("say_team /ver", "Cmd_SayVersion")
     register_clcmd("say /version", "Cmd_SayVersion")
@@ -1055,6 +1054,7 @@ public RG_CSGameRules_CheckWinConditions_Pre()
     // Supercede win condition checks completely during warmup, countdown, captain election or drafting
     if(g_bReviveMode || g_iMatchState == STATE_WARMUP || g_iMatchState == STATE_CAPTAIN_COUNTDOWN || g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
     {
+        SetHookChainReturn(ATYPE_BOOL, false)
         return HC_SUPERCEDE
     }
     return HC_CONTINUE
@@ -1068,6 +1068,7 @@ public RG_RoundEnd_Pre(WinStatus:status, ScenarioEventEndRound:event, Float:tmDe
         if(event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
             return HC_CONTINUE
 
+        SetHookChainReturn(ATYPE_BOOL, false)
         return HC_SUPERCEDE
     }
     return HC_CONTINUE
