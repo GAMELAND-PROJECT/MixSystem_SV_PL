@@ -20,7 +20,7 @@
 #include <mix_system>
 
 #define PLUGIN_NAME        "GAMELAND Clan War Mode"
-#define PLUGIN_VERSION     "2.5.0-GL"
+#define PLUGIN_VERSION     "2.5.1-GL"
 #define PLUGIN_AUTHOR      "GAMELAND"
 
 // -----------------------------------------------------------------------------
@@ -996,8 +996,12 @@ public RG_CBasePlayer_Spawn_Post(id)
     {
         client_cmd(id, "bind n nightvision")
         client_cmd(id, "bind N nightvision")
-        client_cmd(id, "bind F3 cw_menu")
-        client_cmd(id, "bind f3 cw_menu")
+    }
+
+    if(g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
+    {
+        MovePlayerToSpectator(id)
+        return
     }
 
     if(g_bReviveMode)
@@ -3472,9 +3476,22 @@ public Cmd_PassOff(id)
     return PLUGIN_HANDLED
 }
 
+stock MovePlayerToSpectator(id)
+{
+    if(!is_user_connected(id))
+        return
+
+    if(is_user_alive(id))
+    {
+        rg_remove_all_items(id)
+        user_silentkill(id)
+    }
+    rg_set_user_team(id, TEAM_SPECTATOR)
+}
+
 public Cmd_SpecAll(id)
 {
-    if(!HasAdminAccess(id))
+    if(id != 0 && !HasAdminAccess(id))
     {
         client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
         return PLUGIN_HANDLED
@@ -3485,12 +3502,7 @@ public Cmd_SpecAll(id)
 
     for(new i = 0; i < iNum; i++)
     {
-        new p = iPlayers[i]
-        if(is_user_alive(p))
-        {
-            user_silentkill(p)
-        }
-        rg_set_user_team(p, TEAM_SPECTATOR)
+        MovePlayerToSpectator(iPlayers[i])
     }
 
     g_bPickMode = true
@@ -3548,7 +3560,7 @@ public Cmd_MoveSpec(id)
     if(!iTarget)
         return PLUGIN_HANDLED
 
-    rg_set_user_team(iTarget, TEAM_SPECTATOR)
+    MovePlayerToSpectator(iTarget)
     client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^4SPECTATOR^1 by ^4%s^1.", g_szChatPrefix, g_szUserName[iTarget], g_szUserName[id])
     return PLUGIN_HANDLED
 }
@@ -4289,7 +4301,14 @@ public Menu_MovePlayerTargetHandler(id, iMenu, iItem)
 
     if(is_user_connected(iTarget))
     {
-        rg_set_user_team(iTarget, team)
+        if(team == TEAM_SPECTATOR)
+        {
+            MovePlayerToSpectator(iTarget)
+        }
+        else
+        {
+            rg_set_user_team(iTarget, team)
+        }
         client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^3%s ^1by ^4%s^1.",
             g_szChatPrefix, g_szUserName[iTarget],
             team == TEAM_CT ? "CT" : (team == TEAM_TERRORIST ? "TERRORIST" : "SPECTATOR"),
@@ -4603,7 +4622,9 @@ public RG_HandleMenu_ChooseTeam_Pre(const id, const MenuChooseTeam:slot)
 {
     if(g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
     {
-        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Team selection is locked during Captain Election and Drafting!")
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Captains are drafting teams! You cannot join manually.")
+        show_menu(id, 0, "^n", 1)
+        SetHookChainReturn(ATYPE_BOOL, false)
         return HC_SUPERCEDE
     }
     return HC_CONTINUE
@@ -4613,7 +4634,8 @@ public Cmd_BlockTeamChange(id)
 {
     if(g_iMatchState == STATE_CAPTAIN_VOTE || g_iMatchState == STATE_PICKING || g_bPickMode)
     {
-        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Team selection is locked during Captain Election and Drafting!")
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1Captains are drafting teams! You cannot join manually.")
+        show_menu(id, 0, "^n", 1)
         return PLUGIN_HANDLED
     }
     return PLUGIN_CONTINUE
@@ -4708,7 +4730,9 @@ public StartCaptainElection()
         }
     }
 
-    // 2. Move all gathered players to Spectator safely without double-kill / ReGameDLL crash
+    // 2. Move all players to Spectator cleanly using root /spec execution
+    Cmd_SpecAll(0)
+
     for(new i = 0; i < g_iEligibleVoterCount; i++)
     {
         new id = g_iEligibleVoters[i]
@@ -4717,9 +4741,6 @@ public StartCaptainElection()
 
         g_iPlayerCaptVotes[id] = 0
         g_iVotedForCapt[id] = 0
-
-        // In ReGameDLL, rg_set_user_team safely moves players to spectator without double-silentkill
-        rg_set_user_team(id, TEAM_SPECTATOR, MODEL_UNASSIGNED, true, false)
     }
 
     // Real human election without bots
@@ -5133,7 +5154,17 @@ public HandlePickMenu(id, iMenu, iItem)
         return PLUGIN_HANDLED
     }
 
-    if(iItem == MENU_EXIT)
+    new activeCaptain = (g_iCurrentDraftTurn == 1) ? g_iCaptainCT : g_iCaptainTR
+    if(id != activeCaptain || g_iPickTimer <= 0)
+    {
+        menu_destroy(iMenu)
+        show_menu(id, 0, "^n", 1)
+        menu_cancel(id)
+        client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1It is not your turn to pick or time has expired!")
+        return PLUGIN_HANDLED
+    }
+
+    if(iItem < 0 || iItem == MENU_EXIT)
     {
         menu_destroy(iMenu)
         return PLUGIN_HANDLED
@@ -5142,6 +5173,10 @@ public HandlePickMenu(id, iMenu, iItem)
     new szData[8], szName[64], iAccess, iCallback
     menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
     menu_destroy(iMenu)
+
+    // Force close menu on client screen immediately
+    show_menu(id, 0, "^n", 1)
+    menu_cancel(id)
 
     new pickedPlayer = str_to_num(szData)
     if(!is_user_connected(pickedPlayer) || get_member(pickedPlayer, m_iTeam) != TEAM_SPECTATOR)
@@ -5157,6 +5192,13 @@ public HandlePickMenu(id, iMenu, iItem)
 ApplyDraftPick(captainId, pickedId)
 {
     remove_task(TASK_CW_PICK_TIMER)
+
+    // Force dismiss captain menu so no double-pick can occur
+    if(is_user_connected(captainId))
+    {
+        show_menu(captainId, 0, "^n", 1)
+        menu_cancel(captainId)
+    }
 
     new TeamName:captainTeam = get_member(captainId, m_iTeam)
     rg_set_user_team(pickedId, captainTeam)
@@ -5208,6 +5250,13 @@ public Task_PickTimerCountdown()
     {
         remove_task(TASK_CW_PICK_TIMER)
 
+        // Force dismiss menu on active captain immediately upon timeout
+        if(is_user_connected(activeCaptain))
+        {
+            show_menu(activeCaptain, 0, "^n", 1)
+            menu_cancel(activeCaptain)
+        }
+
         // Find first available spectator to auto-pick
         new autoPick = 0
         for(new id = 1; id <= MaxClients; id++)
@@ -5240,6 +5289,16 @@ public FinishDraftPhase()
 {
     remove_task(TASK_CW_PICK_TIMER)
     g_bPickMode = false
+
+    // Close any lingering menus on all clients
+    for(new i = 1; i <= MaxClients; i++)
+    {
+        if(is_user_connected(i))
+        {
+            show_menu(i, 0, "^n", 1)
+            menu_cancel(i)
+        }
+    }
 
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3========================================")
     client_print_color(0, print_team_default, "^4[GAMELAND CW] ^3TEAMS FULLY DRAFTED! (5 CT vs 5 TR)")
@@ -6118,7 +6177,5 @@ public Task_BindClientF3(taskid)
 
     client_cmd(id, "bind n nightvision")
     client_cmd(id, "bind N nightvision")
-    client_cmd(id, "bind F3 cw_menu")
-    client_cmd(id, "bind f3 cw_menu")
-    client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1System: ^3v%s ^1| Press ^3[N]^1 (or ^3[F3]^1) or type ^4/n^1 for Player Menu!", PLUGIN_VERSION)
+    client_print_color(id, print_team_default, "^4[GAMELAND CW] ^1System: ^3v%s ^1| Press ^3[N]^1 on your keyboard or type ^4/n^1 for Player Menu!", PLUGIN_VERSION)
 }
