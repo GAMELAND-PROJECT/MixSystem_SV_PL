@@ -40,7 +40,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['deploy_clanwar']) ||
         $compileOutput = $compRes['output'];
 
         if ($compRes['success']) {
-            ServerCmd::controlService($activeServer['service_name'], 'restart');
             $msg = '⚔️ Clan War Mode (10 Slots) compiled and deployed successfully! Server restarted.';
             $msgType = 'success';
         } else {
@@ -59,10 +58,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['switch_mode'])) {
         $res = ServerCmd::switchServerMode($activeServer, $mode);
         $msg = $res['message'];
         $msgType = $res['success'] ? 'success' : 'danger';
-        if ($res['success']) {
-            ServerCmd::controlService($activeServer['service_name'], 'restart');
-            $msg .= ' 🔄 Server restarted with new mode!';
-        }
     }
 }
 
@@ -150,6 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compile_plugins'])) {
 $plugins     = ServerCmd::getPluginsList($activeServer);
 $gitStatus   = ServerCmd::getGitRepoStatus();
 $currentServerMode = ServerCmd::getCurrentServerMode($activeServer);
+$activeServerAfkGuard = ServerCmd::getServerAfkGuard($activeServer);
 
 $lastSyncFile = $activeServer['cstrike_dir'] . '/addons/amxmodx/configs/.mix_last_sync.json';
 $lastBuildFile = $activeServer['cstrike_dir'] . '/addons/amxmodx/configs/.mix_last_build.json';
@@ -198,6 +194,34 @@ foreach ($plugins as $p) {
     <span><?php echo htmlspecialchars($msg); ?></span>
 </div>
 <?php endif; ?>
+
+<!-- ══════════════════════════════════════════════════════
+     LEVEL 3: ONLINE WEB IDE & 1-CLICK CLOUD COMPILER
+═══════════════════════════════════════════════════════════ -->
+<div class="card" style="border: 1px solid rgba(56,189,248,0.4); background: linear-gradient(135deg, rgba(56,189,248,0.1), rgba(99,102,241,0.07)); margin-bottom: 1.25rem; box-shadow: 0 4px 20px rgba(56,189,248,0.15);">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+        <div style="display:flex; align-items:center; gap:0.9rem;">
+            <div style="width:48px; height:48px; border-radius:10px; background:rgba(56,189,248,0.15); border:1px solid rgba(56,189,248,0.3); display:flex; align-items:center; justify-content:center; font-size:1.6rem;">
+                ⚡
+            </div>
+            <div>
+                <div style="font-size:1.15rem; font-weight:800; color:#38bdf8; display:flex; align-items:center; gap:0.5rem;">
+                    <span>ادیتور آنلاین سورس کد با کامپایلر ابری (Web IDE &amp; 1-Click Compiler)</span>
+                    <span style="font-size:0.7rem; background:#0369a1; color:#fff; padding:2px 7px; border-radius:4px; font-weight:700;">سطح ۳ فعال</span>
+                </div>
+                <div style="font-size:0.83rem; color:var(--text-muted); margin-top:0.25rem;">
+                    ویرایش آنلاین و مستقیم سورس‌های <code style="color:#7dd3fc;">clanwar_system.sma</code> و <code style="color:#7dd3fc;">mix_system.sma</code>، فایل‌های زبان و کانفیگ‌ها + کامپایل ۱-کلیکه ابری و پشتیبان‌گیری خودکار.
+                </div>
+            </div>
+        </div>
+        <div style="display:flex; gap:0.6rem; align-items:center;">
+            <a href="editor.php?file=addons/amxmodx/scripting/clanwar_system.sma" class="btn"
+               style="background:linear-gradient(135deg,#0284c7,#4f46e5); color:#fff; font-weight:700; padding:0.65rem 1.2rem; border-radius:8px; text-decoration:none; box-shadow:0 3px 12px rgba(2,132,199,0.35); font-size:0.88rem;">
+                🚀 باز کردن ادیتور آنلاین (Launch Web IDE) →
+            </a>
+        </div>
+    </div>
+</div>
 
 <!-- ══════════════════════════════════════════════════════
      GITHUB REPO SYNC & DEPLOY WIDGET
@@ -446,13 +470,18 @@ function escHtml(str) {
      QUICK SERVER MODE SWITCHER
 ═══════════════════════════════════════════════════════════ -->
 <div class="card" style="background:linear-gradient(135deg,rgba(79,70,229,0.1),rgba(6,182,212,0.05)); border:1px solid rgba(79,70,229,0.25);">
-    <div class="card-title">
-        <span>⚡ Quick Server Mode Switcher</span>
-        <span style="font-size:0.8rem; color:var(--text-muted);">Switch plugin set + player slots + auto restart</span>
+    <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+        <div style="display:flex; align-items:center; gap:0.6rem;">
+            <span>⚡ Quick Server Mode Switcher</span>
+            <span class="badge" style="background:rgba(255,255,255,0.12); color:#fff; font-weight:700;">
+                Target: <?php echo htmlspecialchars($activeServer['name']); ?> (Port <?php echo (int)$activeServer['port']; ?>)
+            </span>
+        </div>
+        <span style="font-size:0.8rem; color:var(--text-muted);">Isolate plugins + slots + restart for this server only</span>
     </div>
 
-    <div style="margin-bottom:1rem; display:flex; align-items:center; gap:0.6rem; font-size:0.88rem; flex-wrap:wrap;">
-        <span style="color:var(--text-muted);">Current Active Server Mode:</span>
+    <div style="margin-bottom:0.85rem; display:flex; align-items:center; gap:0.6rem; font-size:0.88rem; flex-wrap:wrap;">
+        <span style="color:var(--text-muted);">Current Mode for «<?php echo htmlspecialchars($activeServer['name']); ?>»:</span>
         <?php if ($currentServerMode === 'clanwar'): ?>
             <span class="badge" style="background:rgba(245,158,11,0.2); color:#f59e0b; border:1px solid rgba(245,158,11,0.5); font-weight:700; padding:0.35rem 0.85rem; border-radius:999px; box-shadow:0 0 10px rgba(245,158,11,0.3);">
                 ⚔️ Clan War Mode (Strictly 10 Slots)
@@ -468,9 +497,13 @@ function escHtml(str) {
         <?php endif; ?>
     </div>
 
+    <p style="margin-bottom:1rem; font-size:0.82rem; color:var(--text-muted); line-height:1.5;">
+        💡 این تغییر وضعیت به صورت ۱۰۰٪ مجزا و اختصاصی بر روی همین سرور (پورت <?php echo (int)$activeServer['port']; ?>) اعمال شده و هیچ‌گونه تداخل یا ری‌استارتی در سایر سرورهای شما ایجاد نمی‌کند.
+    </p>
+
     <div style="display:flex; gap:1rem; flex-wrap:wrap;">
         <form method="POST" action="plugins.php"
-              onsubmit="return confirm('Switch server to Clan War mode (strictly 10 slots) and restart?')">
+              onsubmit="return confirm('تغییر سرور «<?php echo htmlspecialchars(addslashes($activeServer['name'])); ?>» به مود کلن وار (۱۰ اسلات) و ری‌استارت فقط همین سرور؟')">
             <input type="hidden" name="csrf_token" value="<?php echo Auth::csrf_token(); ?>">
             <input type="hidden" name="target_mode" value="clanwar">
             <button type="submit" name="switch_mode" class="btn <?php echo ($currentServerMode === 'clanwar') ? 'btn-primary' : 'btn-secondary'; ?>" 
@@ -480,7 +513,7 @@ function escHtml(str) {
         </form>
 
         <form method="POST" action="plugins.php"
-              onsubmit="return confirm('Switch server to 5v5 Match Server mode (18 slots) and restart?')">
+              onsubmit="return confirm('تغییر سرور «<?php echo htmlspecialchars(addslashes($activeServer['name'])); ?>» به مود میکس 5v5 (۱۸ اسلات) و ری‌استارت فقط همین سرور؟')">
             <input type="hidden" name="csrf_token" value="<?php echo Auth::csrf_token(); ?>">
             <input type="hidden" name="target_mode" value="mix5v5">
             <button type="submit" name="switch_mode" class="btn <?php echo ($currentServerMode === 'mix5v5') ? 'btn-primary' : 'btn-secondary'; ?>" 
@@ -490,7 +523,7 @@ function escHtml(str) {
         </form>
 
         <form method="POST" action="plugins.php"
-              onsubmit="return confirm('Switch server to Classic Public mode (24 slots) and restart?')">
+              onsubmit="return confirm('تغییر سرور «<?php echo htmlspecialchars(addslashes($activeServer['name'])); ?>» به مود پابلیک (۲۴ اسلات) و ری‌استارت فقط همین سرور؟')">
             <input type="hidden" name="csrf_token" value="<?php echo Auth::csrf_token(); ?>">
             <input type="hidden" name="target_mode" value="public">
             <button type="submit" name="switch_mode" class="btn <?php echo ($currentServerMode === 'public') ? 'btn-primary' : 'btn-secondary'; ?>" 
@@ -498,6 +531,63 @@ function escHtml(str) {
                 🎯 Classic Public Mode (24 Slots) <?php if($currentServerMode === 'public') echo '✓ Active'; ?>
             </button>
         </form>
+    </div>
+</div>
+
+
+
+<!-- ══════════════════════════════════════════════════════
+     AFK & IDLE PROTECTION CONTROLS (PER SERVER)
+═══════════════════════════════════════════════════════════ -->
+<div class="card" style="border:1px solid rgba(239,68,68,0.35); background:linear-gradient(135deg,rgba(239,68,68,0.06),rgba(245,158,11,0.03)); margin-bottom:1.5rem;">
+    <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+        <div style="display:flex; align-items:center; gap:0.6rem;">
+            <span>🛡️ کنترل AFK و کیک / انتقال به اسپکت — «<?php echo htmlspecialchars($activeServer['name']); ?>»</span>
+            <span class="badge" style="background:rgba(255,255,255,0.12); color:#fff; font-weight:700;">
+                پورت <?php echo (int)$activeServer['port']; ?>
+            </span>
+        </div>
+        <div id="afkBadgeContainer">
+            <?php if ($activeServerAfkGuard === 0): ?>
+                <span class="badge" style="background:rgba(239,68,68,0.25); color:#f87171; border:1px solid rgba(239,68,68,0.6); font-weight:700; padding:0.35rem 0.85rem; border-radius:999px; box-shadow:0 0 12px rgba(239,68,68,0.3);">
+                    🧪 غیرفعال (مخصوص تست) — بدون کیک و اسپکت
+                </span>
+            <?php elseif ($activeServerAfkGuard === 2): ?>
+                <span class="badge" style="background:rgba(245,158,11,0.25); color:#fbbf24; border:1px solid rgba(245,158,11,0.6); font-weight:700; padding:0.35rem 0.85rem; border-radius:999px; box-shadow:0 0 12px rgba(245,158,11,0.3);">
+                    👁️ فقط انتقال به اسپکت (بدون هیچ‌گونه کیک)
+                </span>
+            <?php else: ?>
+                <span class="badge" style="background:rgba(16,185,129,0.25); color:#34d399; border:1px solid rgba(16,185,129,0.6); font-weight:700; padding:0.35rem 0.85rem; border-radius:999px; box-shadow:0 0 12px rgba(16,185,129,0.3);">
+                    🛡️ فعال کامل — انتقال به اسپکت پس از ۲د و کیک پس از ۵د
+                </span>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <p style="margin-bottom:1rem; font-size:0.83rem; color:var(--text-muted); line-height:1.6;">
+        💡 <strong>ویژه تست پلاگین کلن‌وار:</strong> با فعال‌سازی حالت «مخصوص تست»، سیستم خودکار به هیچ بازیکنی کیک نمی‌دهد و کسی را به اسپکت منتقل نمی‌کند تا شما و همراهانتان بتوانید با خیال آسوده تنظیمات و گیم‌پلی کلن‌وار را آزمایش کنید. این کلید برای هر سرور کاملاً جداگانه عمل می‌کند و بلافاصله به صورت زنده (بدون نیاز به ری‌استارت) اعمال می‌گردد.
+    </p>
+
+    <div id="afkAlertBox" style="display:none; padding:0.75rem 1rem; border-radius:8px; margin-bottom:1rem; font-size:0.88rem;"></div>
+
+    <div style="display:flex; gap:0.85rem; flex-wrap:wrap;">
+        <button type="button" onclick="setServerAfk('<?php echo htmlspecialchars($activeServer['id']); ?>', 0)"
+                class="btn <?php echo ($activeServerAfkGuard === 0) ? 'btn-danger' : 'btn-secondary'; ?>"
+                style="padding:0.75rem 1.3rem; font-weight:700; <?php if($activeServerAfkGuard === 0) echo 'background:linear-gradient(135deg,#ef4444,#b91c1c); box-shadow:0 0 15px rgba(239,68,68,0.4); border-color:#ef4444; color:#fff;'; ?>">
+            🧪 غیرفعال کردن کیک و اسپکت (مخصوص تست کلن‌وار) <?php if($activeServerAfkGuard === 0) echo '✓ فعال'; ?>
+        </button>
+
+        <button type="button" onclick="setServerAfk('<?php echo htmlspecialchars($activeServer['id']); ?>', 2)"
+                class="btn <?php echo ($activeServerAfkGuard === 2) ? 'btn-warning' : 'btn-secondary'; ?>"
+                style="padding:0.75rem 1.3rem; font-weight:700; <?php if($activeServerAfkGuard === 2) echo 'background:linear-gradient(135deg,#f59e0b,#d97706); box-shadow:0 0 15px rgba(245,158,11,0.4); border-color:#f59e0b; color:#fff;'; ?>">
+            👁️ فقط انتقال به اسپکت (بدون کیک) <?php if($activeServerAfkGuard === 2) echo '✓ فعال'; ?>
+        </button>
+
+        <button type="button" onclick="setServerAfk('<?php echo htmlspecialchars($activeServer['id']); ?>', 1)"
+                class="btn <?php echo ($activeServerAfkGuard === 1) ? 'btn-primary' : 'btn-secondary'; ?>"
+                style="padding:0.75rem 1.3rem; font-weight:700; <?php if($activeServerAfkGuard === 1) echo 'box-shadow:0 0 15px rgba(16,185,129,0.4); border-color:#10b981;'; ?>">
+            🛡️ فعال‌سازی کامل محافظت AFK (حالت عادی سرور) <?php if($activeServerAfkGuard === 1) echo '✓ فعال'; ?>
+        </button>
     </div>
 </div>
 
@@ -647,6 +737,7 @@ function escHtml(str) {
                         <?php if ($isSpecialSec): ?>
                         <th style="width:130px;">Build Status</th>
                         <?php endif; ?>
+                        <th style="width:105px; text-align:center;">Web IDE</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -694,6 +785,14 @@ function escHtml(str) {
                             <?php endif; ?>
                         </td>
                         <?php endif; ?>
+                        <td style="text-align:center;">
+                            <a href="editor.php?file=addons/amxmodx/scripting/<?php echo urlencode($smaName); ?>"
+                               class="btn btn-sm"
+                               style="background:rgba(56,189,248,0.12); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); font-size:0.74rem; padding:2px 8px; border-radius:4px; text-decoration:none; font-weight:600; white-space:nowrap;"
+                               title="ویرایش در ادیتور آنلاین">
+                               ✏️ سورس IDE
+                            </a>
+                        </td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -778,6 +877,52 @@ function mixCmd(action) {
 
 function escHtml(str) {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function setServerAfk(serverId, mode) {
+    const alertBox = document.getElementById('afkAlertBox');
+    if (alertBox) {
+        alertBox.style.display = 'block';
+        alertBox.style.background = 'rgba(6,182,212,0.15)';
+        alertBox.style.border = '1px solid rgba(6,182,212,0.4)';
+        alertBox.style.color = 'var(--accent)';
+        alertBox.textContent = '⏳ در حال اعمال تنظیمات AFK به صورت زنده در سرور...';
+    }
+
+    const fd = new FormData();
+    fd.append('csrf_token', window.CSRF_TOKEN);
+    fd.append('action', 'set_afk_guard');
+    fd.append('server_id', serverId);
+    fd.append('afk_guard', mode);
+
+    fetch('api.php', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(d => {
+            if (d.success) {
+                if (alertBox) {
+                    alertBox.style.background = 'rgba(16,185,129,0.15)';
+                    alertBox.style.border = '1px solid rgba(16,185,129,0.4)';
+                    alertBox.style.color = 'var(--success)';
+                    alertBox.textContent = '✅ ' + (d.message || 'تنظیمات AFK با موفقیت اعمال شد.');
+                }
+                setTimeout(() => location.reload(), 800);
+            } else {
+                if (alertBox) {
+                    alertBox.style.background = 'rgba(239,68,68,0.15)';
+                    alertBox.style.border = '1px solid rgba(239,68,68,0.4)';
+                    alertBox.style.color = 'var(--danger)';
+                    alertBox.textContent = '❌ خطا: ' + (d.message || 'عملیات ناموفق بود.');
+                }
+            }
+        })
+        .catch(e => {
+            if (alertBox) {
+                alertBox.style.background = 'rgba(239,68,68,0.15)';
+                alertBox.style.border = '1px solid rgba(239,68,68,0.4)';
+                alertBox.style.color = 'var(--danger)';
+                alertBox.textContent = '❌ خطای ارتباط: ' + e.message;
+            }
+        });
 }
 </script>
 

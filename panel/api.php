@@ -85,6 +85,35 @@ switch ($action) {
         echo json_encode($res);
         break;
 
+    case 'restart_all_servers':
+        $res = ServerCmd::restartAllServersStaggered();
+        echo json_encode($res);
+        break;
+
+    case 'start_all_servers':
+        $res = ServerCmd::startAllServersStaggered();
+        echo json_encode($res);
+        break;
+
+    case 'stop_all_servers':
+        $res = ServerCmd::stopAllServers();
+        echo json_encode($res);
+        break;
+
+    case 'update_vps':
+        $res = ServerCmd::updateVpsFromRepo();
+        echo json_encode($res);
+        break;
+
+    case 'get_servers_list':
+        global $SERVERS;
+        $list = ServerCmd::getServerList($SERVERS);
+        echo json_encode([
+            'success' => true,
+            'servers' => $list
+        ]);
+        break;
+
     case 'create_server':
         $id = $_POST['server_id'] ?? '';
         $port = $_POST['port'] ?? '';
@@ -492,6 +521,79 @@ switch ($action) {
         }
 
         echo json_encode(['success' => true, 'diagnostics' => $diag]);
+        break;
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Web IDE & Cloud Compiler Endpoints
+    // ──────────────────────────────────────────────────────────────────────────
+
+    case 'ide_list_files':
+        $targetServer = $activeServer;
+        if (!empty($_POST['server_id']) && isset($SERVERS[$_POST['server_id']])) {
+            $targetServer = $SERVERS[$_POST['server_id']];
+        }
+        $files = ServerCmd::getIdeFileList($targetServer);
+        echo json_encode([
+            'success' => true,
+            'server_id' => $targetServer['id'] ?? 'main',
+            'server_name' => $targetServer['name'] ?? 'Server',
+            'files' => $files,
+        ]);
+        break;
+
+    case 'ide_load_file':
+        $targetServer = $activeServer;
+        if (!empty($_POST['server_id']) && isset($SERVERS[$_POST['server_id']])) {
+            $targetServer = $SERVERS[$_POST['server_id']];
+        }
+        $relPath = $_POST['file_path'] ?? '';
+        $res = ServerCmd::readIdeFile($targetServer, $relPath);
+        echo json_encode($res);
+        break;
+
+    case 'ide_save_file':
+        $targetServer = $activeServer;
+        if (!empty($_POST['server_id']) && isset($SERVERS[$_POST['server_id']])) {
+            $targetServer = $SERVERS[$_POST['server_id']];
+        }
+        $relPath = $_POST['file_path'] ?? '';
+        $content = $_POST['content'] ?? '';
+        $createBackup = isset($_POST['create_backup']) ? (bool)$_POST['create_backup'] : true;
+        $res = ServerCmd::saveIdeFile($targetServer, $relPath, $content, $createBackup);
+        echo json_encode($res);
+        break;
+
+    case 'ide_compile':
+        $targetServer = $activeServer;
+        if (!empty($_POST['server_id']) && isset($SERVERS[$_POST['server_id']])) {
+            $targetServer = $SERVERS[$_POST['server_id']];
+        }
+        $smaFile = $_POST['sma_file'] ?? '';
+        $propagate = !empty($_POST['propagate_to_all']);
+        $restart = !empty($_POST['restart_after']);
+        $res = ServerCmd::compileIdePlugin($targetServer, $smaFile, $propagate, $restart);
+        echo json_encode($res);
+        break;
+
+    case 'ide_list_backups':
+        $targetServer = $activeServer;
+        if (!empty($_POST['server_id']) && isset($SERVERS[$_POST['server_id']])) {
+            $targetServer = $SERVERS[$_POST['server_id']];
+        }
+        $relPath = $_POST['file_path'] ?? '';
+        $backups = ServerCmd::listIdeBackups($targetServer, $relPath);
+        echo json_encode(['success' => true, 'backups' => $backups]);
+        break;
+
+    case 'ide_restore_backup':
+        $targetServer = $activeServer;
+        if (!empty($_POST['server_id']) && isset($SERVERS[$_POST['server_id']])) {
+            $targetServer = $SERVERS[$_POST['server_id']];
+        }
+        $relPath = $_POST['file_path'] ?? '';
+        $backupName = $_POST['backup_name'] ?? '';
+        $res = ServerCmd::restoreIdeBackup($targetServer, $relPath, $backupName);
+        echo json_encode($res);
         break;
 
     default:
