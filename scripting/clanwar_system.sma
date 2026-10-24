@@ -98,6 +98,7 @@ new g_iOvertimeScore[TeamScore]
 new g_iSavedFrags[MAX_PLAYERS + 1]
 new g_iSavedDeaths[MAX_PLAYERS + 1]
 new bool:g_bHalftimePendingSync = false
+new bool:g_bHalftimeActive = false
 
 // Competitive Match Statistics
 new g_iMatchKills[MAX_PLAYERS + 1]
@@ -388,7 +389,15 @@ public plugin_init()
     register_clcmd("drop", "Cmd_BlockDrop")
     RegisterHookChain(RG_CBasePlayer_MakeBomber, "RG_CBasePlayer_MakeBomber_Pre", .post = false)
     RegisterHookChain(RG_CBasePlayer_Observer_IsValidTarget, "RG_Observer_IsValidTarget_Pre", .post = false)
+    RegisterHookChain(RG_CBasePlayer_Observer_SetMode, "RG_Observer_SetMode_Pre", .post = false)
+    RegisterHookChain(RG_CSGameRules_CanPlayerHearPlayer, "RG_CSGameRules_CanPlayerHearPlayer_Pre", .post = false)
     RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_HandleMenu_ChooseTeam_Pre", .post = false)
+
+    register_clcmd("buy", "Cmd_BlockBuyDuringHalftime")
+    register_clcmd("buyammo1", "Cmd_BlockBuyDuringHalftime")
+    register_clcmd("buyammo2", "Cmd_BlockBuyDuringHalftime")
+    register_clcmd("cl_autobuy", "Cmd_BlockBuyDuringHalftime")
+    register_clcmd("cl_rebuy", "Cmd_BlockBuyDuringHalftime")
 
     register_clcmd("jointeam", "Cmd_BlockTeamChange")
     register_clcmd("chooseteam", "Cmd_BlockTeamChange")
@@ -1521,11 +1530,30 @@ ApplySpectatorCameraSettings()
     }
     else
     {
-        // Competitive Match / Knife Round: Teammates only, locked in eye view, NO enemy spectating
-        set_cvar_num("mp_forcecamera", 2)
+        // Competitive Match / Knife Round: Strictly teammates only (prevents void camera glitch on click)
+        set_cvar_num("mp_forcecamera", 1)
         set_cvar_num("mp_forcechasecam", 2)
         set_cvar_num("mp_fadetoblack", 0)
     }
+}
+
+public RG_Observer_SetMode_Pre(const id, iMode)
+{
+    if(!is_user_connected(id) || g_iMatchState == STATE_WARMUP)
+        return HC_CONTINUE
+
+    new TeamName:team = get_member(id, m_iTeam)
+    if(team != TEAM_CT && team != TEAM_TERRORIST)
+        return HC_CONTINUE
+
+    // Block free-roam camera modes in competitive match so clicking never drops player into void:
+    // 3 = OBS_ROAMING, 5 = OBS_MAP_FREE, 6 = OBS_MAP_CHASE
+    if(iMode == 3 || iMode == 5 || iMode == 6)
+    {
+        SetHookChainArg(2, ATYPE_INTEGER, 4) // Force OBS_IN_EYE
+    }
+
+    return HC_CONTINUE
 }
 
 public RG_Observer_IsValidTarget_Pre(const id, iTargetIndex, bool:bSameTeam)
@@ -1537,22 +1565,30 @@ public RG_Observer_IsValidTarget_Pre(const id, iTargetIndex, bool:bSameTeam)
     }
 
     // In Mix Mode (Knife, Live match, Halftime, Overtime):
-    // If the spectator player is on CT or Terrorist, they can ONLY spectate their own team!
-    if(is_user_connected(id) && is_user_connected(iTargetIndex))
+    // Spectator can ONLY spectate ALIVE teammates!
+    if(!is_user_connected(id))
+        return HC_CONTINUE
+
+    new TeamName:iMyTeam = get_member(id, m_iTeam)
+    if(iMyTeam != TEAM_TERRORIST && iMyTeam != TEAM_CT)
+        return HC_CONTINUE
+
+    // Target must be valid, connected, ALIVE, on same team, and not self!
+    if(!iTargetIndex || !is_user_connected(iTargetIndex) || !is_user_alive(iTargetIndex) || iTargetIndex == id)
     {
-        new TeamName:iMyTeam = get_member(id, m_iTeam)
-        if(iMyTeam == TEAM_TERRORIST || iMyTeam == TEAM_CT)
-        {
-            new TeamName:iTargetTeam = get_member(iTargetIndex, m_iTeam)
-            if(iMyTeam != iTargetTeam)
-            {
-                SetHookChainReturn(ATYPE_INTEGER, 0)
-                return HC_SUPERCEDE
-            }
-        }
+        SetHookChainReturn(ATYPE_INTEGER, 0)
+        return HC_SUPERCEDE
     }
 
-    return HC_CONTINUE
+    new TeamName:iTargetTeam = get_member(iTargetIndex, m_iTeam)
+    if(iMyTeam != iTargetTeam)
+    {
+        SetHookChainReturn(ATYPE_INTEGER, 0)
+        return HC_SUPERCEDE
+    }
+
+    SetHookChainReturn(ATYPE_INTEGER, 1)
+    return HC_SUPERCEDE
 }
 
 public Task_EnforceTeammateObserver(id)
@@ -1570,7 +1606,7 @@ public Task_EnforceTeammateObserver(id)
     new iTarget = get_member(id, m_hObserverTarget)
     new bool:bNeedsFix = false
 
-    if(!iTarget || !is_user_connected(iTarget) || !is_user_alive(iTarget))
+    if(!iTarget || !is_user_connected(iTarget) || !is_user_alive(iTarget) || iTarget == id)
     {
         bNeedsFix = true
     }
@@ -1588,12 +1624,50 @@ public Task_EnforceTeammateObserver(id)
             new p = iPlayers[i]
             if(p != id && is_user_alive(p))
             {
+                rg_set_observer_mode(id, 4) // OBS_IN_EYE
+                set_entvar(id, var_iuser1, 4)
+                set_entvar(id, var_iuser2, p)
                 set_member(id, m_hObserverTarget, p)
-                set_member(id, m_iObserverLastMode, 4) // OBS_IN_EYE
                 break
             }
         }
     }
+}
+
+public RG_CSGameRules_CanPlayerHearPlayer_Pre(const iListener, const iSender)
+{
+    if(!is_user_connected(iListener) || !is_user_connected(iSender))
+        return HC_CONTINUE
+
+    // Warmup or AllTalk 1: Everyone hears everyone
+    if(g_iMatchState == STATE_WARMUP || get_cvar_num("sv_alltalk") == 1)
+    {
+        SetHookChainReturn(ATYPE_BOOL, true)
+        return HC_SUPERCEDE
+    }
+
+    new TeamName:teamListener = get_member(iListener, m_iTeam)
+    new TeamName:teamSender = get_member(iSender, m_iTeam)
+
+    // Competitive Match (Live, Knife, Halftime, Overtime):
+    // Teammates on the SAME TEAM can ALWAYS hear each other (Dead <-> Alive):
+    if((teamListener == TEAM_CT && teamSender == TEAM_CT) ||
+       (teamListener == TEAM_TERRORIST && teamSender == TEAM_TERRORIST))
+    {
+        SetHookChainReturn(ATYPE_BOOL, true)
+        return HC_SUPERCEDE
+    }
+
+    // Spectators can hear all players
+    if(teamListener == TEAM_SPECTATOR)
+    {
+        SetHookChainReturn(ATYPE_BOOL, true)
+        return HC_SUPERCEDE
+    }
+
+    // Enemy teams: NEVER hear each other
+    SetHookChainReturn(ATYPE_BOOL, false)
+    return HC_SUPERCEDE
 }
 
 public RG_PlantBomb_Post(const index, Float:vecStart[3], Float:vecVelocity[3])
@@ -1637,8 +1711,25 @@ public RG_CBasePlayer_MakeBomber_Pre(const this)
 // -----------------------------------------------------------------------------
 // Knife-Only Enforcement: Block gun buying, pickup, equip, and knife dropping
 // -----------------------------------------------------------------------------
+public Cmd_BlockBuyDuringHalftime(id)
+{
+    if(g_bHalftimeActive)
+    {
+        client_print_color(id, print_team_default, "^4%s ^1خرید اسلحه در زمان استراحت نیمه اول (Halftime) غیرمجاز است!", g_szChatPrefix)
+        return PLUGIN_HANDLED
+    }
+    return PLUGIN_CONTINUE
+}
+
 public RG_CBasePlayer_HasRestrictItem_Pre(const id, ItemID:item, ItemRestType:type)
 {
+    // Completely block buying weapons & equipment during Halftime intermission
+    if(g_bHalftimeActive)
+    {
+        SetHookChainReturn(ATYPE_BOOL, true)
+        return HC_SUPERCEDE
+    }
+
     if(g_iMatchState == STATE_KNIFE)
     {
         // Only Knife and Kevlar are allowed during Knife Round!
@@ -2184,6 +2275,9 @@ TriggerHalftime()
     // Atomically swap all players using ReAPI native
     rg_swap_all_players()
 
+    // Activate Halftime buying lock & strip weapons / money
+    g_bHalftimeActive = true
+
     // Save player frags and deaths across the halftime restart
     new iPlayers[MAX_PLAYERS], iNum
     get_players(iPlayers, iNum, "ch")
@@ -2192,6 +2286,10 @@ TriggerHalftime()
         new id = iPlayers[i]
         g_iSavedFrags[id] = floatround(Float:get_entvar(id, var_frags))
         g_iSavedDeaths[id] = get_member(id, m_iDeaths)
+        // Reset money to $800 and strip weapons so leftover 1st half cash cannot be used
+        rg_add_account(id, 800, AS_SET, true)
+        rg_remove_all_items(id)
+        rg_give_item(id, "weapon_knife")
     }
     g_bHalftimePendingSync = true
 
@@ -2225,6 +2323,17 @@ public Task_HalftimeRestart1()
     SyncTeamScores()
     RestoreHalftimePlayerStats()
 
+    // Reinforce weapon strip & $800 money on all players
+    for(new i = 1; i <= MAX_PLAYERS; i++)
+    {
+        if(is_user_connected(i))
+        {
+            rg_add_account(i, 800, AS_SET, true)
+            rg_remove_all_items(i)
+            rg_give_item(i, "weapon_knife")
+        }
+    }
+
     client_print_color(0, print_team_default, "^4%s ^3[1/3] Restart 1/3 Completed! ^1Next restart in ^45s^1...", g_szChatPrefix)
     set_dhudmessage(255, 200, 0, -1.0, 0.35, 0, 0.0, 3.0, 0.1, 0.5)
     show_dhudmessage(0, "--- RESTART 1/3 ---\nNext restart in 5 seconds...")
@@ -2239,6 +2348,17 @@ public Task_HalftimeRestart2()
     SyncTeamScores()
     RestoreHalftimePlayerStats()
 
+    // Reinforce weapon strip & $800 money on all players
+    for(new i = 1; i <= MAX_PLAYERS; i++)
+    {
+        if(is_user_connected(i))
+        {
+            rg_add_account(i, 800, AS_SET, true)
+            rg_remove_all_items(i)
+            rg_give_item(i, "weapon_knife")
+        }
+    }
+
     client_print_color(0, print_team_default, "^4%s ^3[2/3] Restart 2/3 Completed! ^1Final restart in ^43s ^3(LIVE)^1...", g_szChatPrefix)
     set_dhudmessage(255, 140, 0, -1.0, 0.35, 0, 0.0, 2.5, 0.1, 0.5)
     show_dhudmessage(0, "--- RESTART 2/3 ---\nFinal restart in 3 seconds!")
@@ -2249,17 +2369,28 @@ public Task_HalftimeRestart2()
 
 public Task_HalftimeRestart3()
 {
+    // Halftime complete: Unlock buying and set fresh starting cash for 2nd half pistol round
+    g_bHalftimeActive = false
+
     set_cvar_num("mp_freezetime", 15)
     rg_restart_round()
     SyncTeamScores()
     RestoreHalftimePlayerStats()
 
+    for(new i = 1; i <= MAX_PLAYERS; i++)
+    {
+        if(is_user_connected(i))
+        {
+            rg_add_account(i, 800, AS_SET, true)
+        }
+    }
+
     set_cvar_num("sv_alltalk", 3)
     if(get_cvar_pointer("allow_spectators"))
         set_cvar_num("allow_spectators", 1)
 
-    // Competitive camera: dead players can ONLY spectate alive teammates (NO enemies)
-    set_cvar_num("mp_forcecamera", 2)
+    // Competitive camera: strictly teammates only, no void camera glitch
+    set_cvar_num("mp_forcecamera", 1)
     set_cvar_num("mp_forcechasecam", 2)
     set_cvar_num("mp_fadetoblack", 0)
 
