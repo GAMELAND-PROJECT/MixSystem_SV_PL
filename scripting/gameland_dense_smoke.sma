@@ -123,6 +123,14 @@ static Float: amx_smokegren_color[4]
 static Float: amx_smokegren_pieces
 static Float: amx_smokegren_lifetime
 
+#define MAX_ACTIVE_SMOKES 20
+static Float: g_vecActiveSmokes[MAX_ACTIVE_SMOKES][3]
+static Float: g_fSmokeExpireTime[MAX_ACTIVE_SMOKES]
+static g_iActiveSmokeCount = 0
+
+static g_iMsgScreenFade
+static bool: g_bInsideSmoke[33]
+
 public plugin_precache() {
     #if (!defined PluginDescription)
         register_plugin(PluginName, PluginVersion, PluginAuthor)
@@ -137,12 +145,22 @@ public plugin_init() {
     register_event("HLTV", "CSGameRules_RestartRound", "a", "1=0", "2=0")
 
     register_forward(FM_PlaybackEvent, "EV_Playback", ._post = false)
+    register_forward(FM_AddToFullPack, "Fwd_AddToFullPack_Post", ._post = true)
     RegisterHam(Ham_Think, g_baseClassname, "CNullEntity_Think", .Post = false)
+
+    g_iMsgScreenFade = get_user_msgid("ScreenFade")
+    set_task(0.1, "Task_SmokePlayerCheck", .flags = "b")
 
     Create_ConVars(.createConfigFile = true)
 
     if (amx_smokegren_fix_waterrender)
         ChangeRenderMode("func_water", kRenderNormal)
+}
+
+public client_disconnected(id) {
+    if (id >= 1 && id <= 32) {
+        g_bInsideSmoke[id] = false
+    }
 }
 
 public EV_Playback(flags, invoker, eventIndex, Float: delay, Float: origin[3],
@@ -178,6 +196,15 @@ static bool: EV_CreateSmoke(const Float: origin[3]) {
     if (amx_smokegren_replacemode >= 2)
         CreateSmokePop(origin, colors)
 
+    // Track active smoke cloud for real-time raycast line-of-sight occlusion
+    if (g_iActiveSmokeCount < MAX_ACTIVE_SMOKES) {
+        g_vecActiveSmokes[g_iActiveSmokeCount][0] = origin[0]
+        g_vecActiveSmokes[g_iActiveSmokeCount][1] = origin[1]
+        g_vecActiveSmokes[g_iActiveSmokeCount][2] = origin[2]
+        g_fSmokeExpireTime[g_iActiveSmokeCount] = get_gametime() + amx_smokegren_lifetime
+        g_iActiveSmokeCount++
+    }
+
     return true
 }
 
@@ -192,6 +219,9 @@ public CNullEntity_Think(const entity) {
 }
 
 public CSGameRules_RestartRound() {
+    g_iActiveSmokeCount = 0
+    arrayset(g_bInsideSmoke, false, sizeof(g_bInsideSmoke))
+
     new entity = MaxClients
     while ((entity = engfunc(EngFunc_FindEntityByString, entity, "classname", g_className))) {
         set_pev(entity, pev_flags, pev(entity, pev_flags) | FL_KILLME)
@@ -248,25 +278,25 @@ static CPartSmokeGrenade_Think(const entity) {
     if (initialAlpha <= 0.0)
         initialAlpha = 245.0
 
-    // Smooth volumetric scaling up to 6.2 max to prevent texture stretching
+    // Ultra-Dense 2X Volumetric scaling (expands up to 12.5 max for complete sphere coverage)
     static Float: scale
     pev(entity, pev_scale, scale)
     new Float: scaleSpd
     pev(entity, _pev_scaleSpeed, scaleSpd)
-    if (scale < 9.6 && scaleSpd > 0.0) {
+    if (scale < 12.5 && scaleSpd > 0.0) {
         scale += scaleSpd
         set_pev(entity, pev_scale, scale)
     } else {
         set_pev(entity, _pev_scaleSpeed, 0.0)
     }
 
-    // Ultra-Dense Opacity Curve:
-    // Remains 100% totally solid, turbid and opaque for at least 16+ full seconds!
-    // Dissipates slowly and naturally only in the final 8 seconds of lifetime!
-    if (remainingTime > 8.0) {
+    // Ultra-Dense 100% Solid Opacity Curve:
+    // Remains 100% completely solid, turbid and impenetrable for at least 19+ full seconds!
+    // Dissipates slowly and naturally only in the final 6 seconds of lifetime!
+    if (remainingTime > 6.0) {
         set_pev(entity, pev_renderamt, 255.0)
     } else if (remainingTime > 0.0) {
-        new Float: fadeRatio = remainingTime / 8.0
+        new Float: fadeRatio = remainingTime / 6.0
         set_pev(entity, pev_renderamt, 255.0 * fadeRatio)
     } else {
         // Lifetime expired: Cleanly remove particle
@@ -290,7 +320,7 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
         .origin = origin,
         .velocity = velocity,
         .model = g_sprFile,
-        .scale = random_float(6.5, 8.2),
+        .scale = random_float(8.5, 10.8),
         .color = color
     )
 
@@ -669,4 +699,168 @@ static stock entityCount(const add = 0) {
     count += add
 
     return count
+}
+
+
+// ============================================================================
+// 100% OPAQUE ANTI-SEE-THROUGH RAYCAST OCCLUSION & INSIDE-SMOKE SCREEN BLINDING
+// ============================================================================
+
+stock bool:DoesSegmentIntersectSphere(const Float:p1[3], const Float:p2[3], const Float:center[3], const Float:radius) {
+    static Float:d[3], Float:m[3]
+    xs_vec_sub(p2, p1, d)
+    xs_vec_sub(p1, center, m)
+
+    new Float:c = xs_vec_dot(m, m) - (radius * radius)
+    if (c <= 0.0)
+        return true // Origin is inside the smoke cloud
+
+    new Float:b = xs_vec_dot(m, d)
+    if (b > 0.0)
+        return false // Sphere is behind the ray
+
+    new Float:a = xs_vec_dot(d, d)
+    if (a == 0.0)
+        return false
+
+    new Float:discr = (b * b) - (a * c)
+    if (discr < 0.0)
+        return false // Ray misses sphere completely
+
+    new Float:sqrtDiscr = floatsqroot(discr)
+    new Float:t1 = (-b - sqrtDiscr) / a
+    if (t1 >= 0.0 && t1 <= 1.0)
+        return true
+
+    new Float:t2 = (-b + sqrtDiscr) / a
+    if (t2 >= 0.0 && t2 <= 1.0)
+        return true
+
+    return false
+}
+
+public Fwd_AddToFullPack_Post(es_handle, e, ent, host, hostflags, player, pSet) {
+    if (!player || !g_iActiveSmokeCount)
+        return FMRES_IGNORED
+
+    if (ent == host || !is_user_alive(ent) || !is_user_alive(host))
+        return FMRES_IGNORED
+
+    // In CS: 1 = Terrorist, 2 = CT. Never block teammates!
+    if (get_user_team(ent) == get_user_team(host))
+        return FMRES_IGNORED
+
+    static Float: vHostEye[3], Float: vHostOrigin[3], Float: vHostViewOfs[3]
+    pev(host, pev_origin, vHostOrigin)
+    pev(host, pev_view_ofs, vHostViewOfs)
+    xs_vec_add(vHostOrigin, vHostViewOfs, vHostEye)
+
+    static Float: vTargetOrigin[3]
+    pev(ent, pev_origin, vTargetOrigin)
+    vTargetOrigin[2] += 12.0 // Center of chest
+
+    new Float: gametime = get_gametime()
+    const Float: smokeRadius = 122.0
+
+    for (new i = 0; i < g_iActiveSmokeCount; i++) {
+        if (gametime > g_fSmokeExpireTime[i])
+            continue
+
+        if (DoesSegmentIntersectSphere(vHostEye, vTargetOrigin, g_vecActiveSmokes[i], smokeRadius)) {
+            // Block enemy model rendering completely - 100% impenetrable anti-see-through!
+            set_es(es_handle, ES_Effects, get_es(es_handle, ES_Effects) | EF_NODRAW)
+            return FMRES_HANDLED
+        }
+    }
+
+    return FMRES_IGNORED
+}
+
+public Task_SmokePlayerCheck() {
+    if (!g_iActiveSmokeCount)
+        return
+
+    new Float: gametime = get_gametime()
+
+    // Compact expired smokes
+    for (new i = 0; i < g_iActiveSmokeCount; i++) {
+        if (gametime > g_fSmokeExpireTime[i]) {
+            for (new j = i; j < g_iActiveSmokeCount - 1; j++) {
+                g_vecActiveSmokes[j] = g_vecActiveSmokes[j + 1]
+                g_fSmokeExpireTime[j] = g_fSmokeExpireTime[j + 1]
+            }
+            g_iActiveSmokeCount--
+            i--
+        }
+    }
+
+    if (!g_iActiveSmokeCount) {
+        for (new p = 1; p <= MaxClients; p++) {
+            if (g_bInsideSmoke[p]) {
+                g_bInsideSmoke[p] = false
+                if (is_user_connected(p))
+                    SendSmokeFade(p, false)
+            }
+        }
+        return
+    }
+
+    static Float: pOrigin[3]
+    const Float: insideRadius = 100.0
+
+    for (new p = 1; p <= MaxClients; p++) {
+        if (!is_user_connected(p) || !is_user_alive(p)) {
+            g_bInsideSmoke[p] = false
+            continue
+        }
+
+        pev(p, pev_origin, pOrigin)
+        new bool: bIsInside = false
+
+        for (new i = 0; i < g_iActiveSmokeCount; i++) {
+            if (get_distance_f(pOrigin, g_vecActiveSmokes[i]) < insideRadius) {
+                bIsInside = true
+                break
+            }
+        }
+
+        if (bIsInside) {
+            if (!g_bInsideSmoke[p]) {
+                g_bInsideSmoke[p] = true
+                SendSmokeFade(p, true)
+            }
+        } else {
+            if (g_bInsideSmoke[p]) {
+                g_bInsideSmoke[p] = false
+                SendSmokeFade(p, false)
+            }
+        }
+    }
+}
+
+stock SendSmokeFade(id, bool:bInside) {
+    if (!id || !is_user_connected(id))
+        return
+
+    message_begin(MSG_ONE_UNRELIABLE, g_iMsgScreenFade, _, id)
+    if (bInside) {
+        // Solid grey smoke overlay while inside the cloud (duration 0.2s, hold 0.2s, stay out)
+        write_short(1 << 12)        // Duration (1.0s)
+        write_short(1 << 12)        // Hold time
+        write_short(0x0004)         // FFADE_STAYOUT
+        write_byte(95)              // R
+        write_byte(95)              // G
+        write_byte(95)              // B
+        write_byte(255)             // Alpha (100% solid)
+    } else {
+        // Clear fade smoothly
+        write_short(1 << 11)        // Duration (0.5s)
+        write_short(0)              // Hold time
+        write_short(0x0001)         // FFADE_IN
+        write_byte(95)              // R
+        write_byte(95)              // G
+        write_byte(95)              // B
+        write_byte(0)               // Alpha
+    }
+    message_end()
 }
