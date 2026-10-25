@@ -94,6 +94,7 @@
 #include <hamsandwich>
 #include <fakemeta>
 #include <xs>
+#include <reapi>
 
 
 public stock const PluginName[]        = "Server-Side SmokeNade"
@@ -109,12 +110,16 @@ static const g_baseClassname[]  = "info_null"
 static const g_className[]      = "particle_smokegren"
 
 enum _: CustomPEV {
-    _pev_spawnInside    = pev_iuser1,
-    _pev_popCreated     = pev_iuser2,
+    _pev_spawnInside     = pev_iuser1,
+    _pev_popCreated      = pev_iuser2,
+    _pev_isClearing      = pev_iuser3, // 0 = normal, 1 = blast clearing, 2 = reforming
 
-    _pev_targetScale    = pev_fuser2,
-    _pev_dieTime        = pev_fuser3,
-    _pev_timeCreated    = pev_fuser4,
+    _pev_clearedUntil    = pev_fuser1, // Float: timestamp when cleared state ends
+    _pev_targetScale     = pev_fuser2, // Float: maximum volumetric scale (~3.95)
+    _pev_dieTime         = pev_fuser3, // Float: lifetime expiry
+    _pev_timeCreated     = pev_fuser4, // Float: creation timestamp
+
+    _pev_restoreOrigin   = pev_vuser1, // Float: [3] original rest position
 }
 
 static        amx_smokegren_replacemode
@@ -126,7 +131,15 @@ static Float: amx_smokegren_lifetime
 #define MAX_ACTIVE_SMOKES 20
 static Float: g_vecActiveSmokes[MAX_ACTIVE_SMOKES][3]
 static Float: g_fSmokeExpireTime[MAX_ACTIVE_SMOKES]
+static Float: g_fSmokeClearedUntil[MAX_ACTIVE_SMOKES]
 static g_iActiveSmokeCount = 0
+
+// CS2-style Bullet Tunnels through smoke
+#define MAX_BULLET_TUNNELS 12
+static Float: g_vecTunnelSrc[MAX_BULLET_TUNNELS][3]
+static Float: g_vecTunnelEnd[MAX_BULLET_TUNNELS][3]
+static Float: g_fTunnelExpire[MAX_BULLET_TUNNELS]
+static g_iTunnelHead = 0
 
 static g_iMsgScreenFade
 static bool: g_bInsideSmoke[33]
@@ -151,6 +164,10 @@ public plugin_init() {
     g_iMsgScreenFade = get_user_msgid("ScreenFade")
     set_task(0.1, "Task_SmokePlayerCheck", .flags = "b")
 
+    // CS2 Mechanics: HE Grenade smoke clearing & Bullet holes
+    RegisterHookChain(RG_CGrenade_ExplodeHeGrenade, "On_HEGrenade_Explode_Post", .post = true)
+    RegisterHookChain(RG_CBaseEntity_FireBullets3, "On_FireBullets3_Post", .post = true)
+
     Create_ConVars(.createConfigFile = true)
 
     if (amx_smokegren_fix_waterrender)
@@ -171,6 +188,15 @@ public EV_Playback(flags, invoker, eventIndex, Float: delay, Float: origin[3],
     static m_usCreateSmoke
     if (!m_usCreateSmoke)
         m_usCreateSmoke = engfunc(EngFunc_PrecacheEvent, 1, "events/createsmoke.sc")
+
+    static m_usCreateExplosion
+    if (!m_usCreateExplosion)
+        m_usCreateExplosion = engfunc(EngFunc_PrecacheEvent, 1, "events/createexplosion.sc")
+
+    if (eventIndex == m_usCreateExplosion && g_iActiveSmokeCount > 0) {
+        Trigger_Smoke_Clearing(origin)
+        return FMRES_IGNORED
+    }
 
     if (eventIndex != m_usCreateSmoke)
         return FMRES_IGNORED
@@ -220,7 +246,14 @@ public CNullEntity_Think(const entity) {
 
 public CSGameRules_RestartRound() {
     g_iActiveSmokeCount = 0
+    g_iTunnelHead = 0
     arrayset(g_bInsideSmoke, false, sizeof(g_bInsideSmoke))
+    for (new i = 0; i < MAX_ACTIVE_SMOKES; i++) {
+        g_fSmokeClearedUntil[i] = 0.0
+    }
+    for (new i = 0; i < MAX_BULLET_TUNNELS; i++) {
+        g_fTunnelExpire[i] = 0.0
+    }
 
     new entity = MaxClients
     while ((entity = engfunc(EngFunc_FindEntityByString, entity, "classname", g_className))) {
@@ -230,6 +263,147 @@ public CSGameRules_RestartRound() {
             entityCount(-1)
         #endif
     }
+}
+
+
+// ============================================================================
+// CS2 MECHANICS: HE GRENADE BLAST CLEARING & REFORMING
+// ============================================================================
+
+public On_HEGrenade_Explode_Post(const this, tracehandle, const bitsDamageType) {
+    if (!g_iActiveSmokeCount)
+        return HC_CONTINUE
+
+    static Float: explosionOrigin[3]
+    pev(this, pev_origin, explosionOrigin)
+    Trigger_Smoke_Clearing(explosionOrigin)
+
+    return HC_CONTINUE
+}
+
+static Trigger_Smoke_Clearing(const Float: explosionOrigin[3]) {
+    new Float: gametime = get_gametime()
+    const Float: BLAST_CLEAR_RADIUS = 250.0
+
+    // 1. Temporarily clear line-of-sight occlusion on nearby smoke clouds (2.8 seconds)
+    for (new i = 0; i < g_iActiveSmokeCount; i++) {
+        if (gametime > g_fSmokeExpireTime[i])
+            continue
+
+        if (get_distance_f(explosionOrigin, g_vecActiveSmokes[i]) < (BLAST_CLEAR_RADIUS + 75.0)) {
+            g_fSmokeClearedUntil[i] = gametime + 2.8
+        }
+    }
+
+    // 2. Displace & dissolve smoke puffs in the blast crater zone
+    new entity = MaxClients
+    while ((entity = engfunc(EngFunc_FindEntityByString, entity, "classname", g_className))) {
+        static Float: puffOrigin[3]
+        pev(entity, pev_origin, puffOrigin)
+        new Float: dist = get_distance_f(puffOrigin, explosionOrigin)
+        if (dist < BLAST_CLEAR_RADIUS) {
+            // Save original rest position so it can billow back smoothly
+            static Float: restPos[3]
+            pev(entity, _pev_restoreOrigin, restPos)
+            if (xs_vec_equal(restPos, Float:{0.0, 0.0, 0.0})) {
+                set_pev(entity, _pev_restoreOrigin, puffOrigin)
+            }
+
+            // Radial blast impulse: violently blow puffs away from explosion
+            static Float: blastDir[3]
+            xs_vec_sub(puffOrigin, explosionOrigin, blastDir)
+            if (xs_vec_len(blastDir) < 1.0) {
+                blastDir[0] = random_float(-1.0, 1.0)
+                blastDir[1] = random_float(-1.0, 1.0)
+                blastDir[2] = 0.6
+            }
+            xs_vec_normalize(blastDir, blastDir)
+
+            new Float: force = (1.0 - (dist / BLAST_CLEAR_RADIUS)) * 160.0 + 50.0
+            static Float: blastVel[3]
+            blastVel[0] = blastDir[0] * force
+            blastVel[1] = blastDir[1] * force
+            blastVel[2] = (blastDir[2] * force) + 28.0
+            set_pev(entity, pev_velocity, blastVel)
+
+            // Mark cleared state for 2.8s
+            set_pev(entity, _pev_clearedUntil, gametime + 2.8)
+            set_pev(entity, _pev_isClearing, 1)
+        }
+    }
+
+    // 3. Clear inside-smoke fog for any player caught in the blast clearing zone
+    static Float: pOrigin[3]
+    for (new p = 1; p <= MaxClients; p++) {
+        if (!is_user_connected(p) || !is_user_alive(p))
+            continue
+
+        pev(p, pev_origin, pOrigin)
+        if (get_distance_f(pOrigin, explosionOrigin) < BLAST_CLEAR_RADIUS) {
+            if (g_bInsideSmoke[p]) {
+                g_bInsideSmoke[p] = false
+                SendSmokeFade(p, false)
+            }
+        }
+    }
+}
+
+// ============================================================================
+// CS2 MECHANICS: BULLET HOLES & VISION TUNNELS THROUGH SMOKE
+// ============================================================================
+
+public On_FireBullets3_Post(pEntity, Float:vecSrc[3], Float:vecDirShooting[3], Float:vecSpread, Float:flDistance, iPenetration, iBulletType, iDamage, Float:flRangeModifier, pevAttacker, bool:bPistol, shared_rand) {
+    if (!g_iActiveSmokeCount || pEntity < 1 || pEntity > MaxClients)
+        return HC_CONTINUE
+
+    new Float: gametime = get_gametime()
+
+    // Bullet end trajectory
+    static Float: vecEnd[3]
+    vecEnd[0] = vecSrc[0] + (vecDirShooting[0] * flDistance)
+    vecEnd[1] = vecSrc[1] + (vecDirShooting[1] * flDistance)
+    vecEnd[2] = vecSrc[2] + (vecDirShooting[2] * flDistance)
+
+    // Check if bullet passes through any active smoke
+    const Float: smokeRadius = 132.0
+    new bool: bHitSmoke = false
+
+    for (new i = 0; i < g_iActiveSmokeCount; i++) {
+        if (gametime > g_fSmokeExpireTime[i])
+            continue
+
+        if (DoesSegmentIntersectSphere(vecSrc, vecEnd, g_vecActiveSmokes[i], smokeRadius)) {
+            bHitSmoke = true
+            break
+        }
+    }
+
+    if (!bHitSmoke)
+        return HC_CONTINUE
+
+    // 1. Register temporary vision tunnel through the smoke (0.40s duration)
+    g_vecTunnelSrc[g_iTunnelHead] = vecSrc
+    g_vecTunnelEnd[g_iTunnelHead] = vecEnd
+    g_fTunnelExpire[g_iTunnelHead] = gametime + 0.40
+    g_iTunnelHead = (g_iTunnelHead + 1) % MAX_BULLET_TUNNELS
+
+    // 2. Visual reaction: part/compress puffs along the bullet path
+    new entity = MaxClients
+    while ((entity = engfunc(EngFunc_FindEntityByString, entity, "classname", g_className))) {
+        static Float: puffOrigin[3]
+        pev(entity, pev_origin, puffOrigin)
+        new Float: distToBullet = DistancePointToSegment(puffOrigin, vecSrc, vecEnd)
+        if (distToBullet < 38.0) {
+            // Shrink scale temporarily to open a physical bullet seam
+            static Float: curScale
+            pev(entity, pev_scale, curScale)
+            if (curScale > 1.6) {
+                set_pev(entity, pev_scale, curScale * 0.68)
+            }
+        }
+    }
+
+    return HC_CONTINUE
 }
 
 static CPartSmokeGrenade_Create(const Float: origin[3], const Float: velocity[3],
@@ -271,11 +445,93 @@ static CPartSmokeGrenade_Think(const entity) {
     pev(entity, pev_scale, scale)
     pev(entity, _pev_targetScale, targetScale)
 
-    // ------------------------------------------------------------------------
-    // CS2-Style Volumetric Bloom / Billowing Animation Phase (First 1.25s)
-    // ------------------------------------------------------------------------
+    new isClearing = pev(entity, _pev_isClearing)
+    new Float: clearedUntil
+    pev(entity, _pev_clearedUntil, clearedUntil)
+
+    // ========================================================================
+    // CS2 Blast Dispersion & Reforming Logic
+    // ========================================================================
+    if (isClearing == 1) {
+        // State 1: Puffs actively blown away and dissolving by HE blast
+        if (gametime < clearedUntil) {
+            static Float: velocity[3]
+            pev(entity, pev_velocity, velocity)
+            xs_vec_mul_scalar(velocity, 0.90, velocity)
+            set_pev(entity, pev_velocity, velocity)
+
+            if (scale > 1.2) {
+                scale *= 0.88
+                set_pev(entity, pev_scale, scale)
+            }
+
+            new Float: amt
+            pev(entity, pev_renderamt, amt)
+            amt *= 0.65
+            set_pev(entity, pev_renderamt, amt)
+
+            if (amt < 10.0) {
+                set_pev(entity, pev_effects, pev(entity, pev_effects) | EF_NODRAW)
+            }
+
+            set_pev(entity, pev_nextthink, gametime + 0.05)
+            return
+        } else {
+            // Time to reform! Switch to State 2
+            set_pev(entity, _pev_isClearing, 2)
+            set_pev(entity, pev_effects, pev(entity, pev_effects) & ~EF_NODRAW)
+            isClearing = 2
+        }
+    }
+
+    if (isClearing == 2) {
+        // State 2: CS2-Style Inward Billow (Smoke rushes back into place!)
+        static Float: currPos[3], Float: restPos[3], Float: returnVel[3]
+        pev(entity, pev_origin, currPos)
+        pev(entity, _pev_restoreOrigin, restPos)
+
+        xs_vec_sub(restPos, currPos, returnVel)
+        new Float: distToRest = xs_vec_len(returnVel)
+        if (distToRest > 4.0) {
+            xs_vec_normalize(returnVel, returnVel)
+            xs_vec_mul_scalar(returnVel, floatmin(distToRest * 1.5, 95.0), returnVel)
+            set_pev(entity, pev_velocity, returnVel)
+        } else {
+            set_pev(entity, pev_velocity, Float:{0.0, 0.0, 0.0})
+        }
+
+        // Expand scale smoothly back towards target
+        if (scale < targetScale) {
+            scale += (targetScale - scale) * 0.15 + 0.05
+            if (scale > targetScale)
+                scale = targetScale
+            set_pev(entity, pev_scale, scale)
+        }
+
+        // Fade renderamt back to 255.0
+        new Float: amt
+        pev(entity, pev_renderamt, amt)
+        if (amt < 255.0) {
+            amt += 22.0
+            if (amt > 255.0)
+                amt = 255.0
+            set_pev(entity, pev_renderamt, amt)
+        }
+
+        // Fully reformed?
+        if (amt >= 255.0 && scale >= (targetScale - 0.1)) {
+            set_pev(entity, _pev_isClearing, 0)
+            set_pev(entity, pev_velocity, Float:{0.0, 0.0, 0.0})
+        }
+
+        set_pev(entity, pev_nextthink, gametime + 0.05)
+        return
+    }
+
+    // ========================================================================
+    // CS2-Style Initial Volumetric Bloom Phase (First 1.25s)
+    // ========================================================================
     if (age < 1.25) {
-        // Drag deceleration on outward velocity (creates mushrooming volumetric bloom)
         static Float: velocity[3]
         pev(entity, pev_velocity, velocity)
         if (velocity[0] != 0.0 || velocity[1] != 0.0 || velocity[2] != 0.0) {
@@ -283,7 +539,6 @@ static CPartSmokeGrenade_Think(const entity) {
             set_pev(entity, pev_velocity, velocity)
         }
 
-        // Smooth exponential easing expansion: fast initial blossom, then gentle cushion
         if (scale < targetScale) {
             scale += (targetScale - scale) * 0.17
             if (scale > targetScale)
@@ -291,22 +546,22 @@ static CPartSmokeGrenade_Think(const entity) {
             set_pev(entity, pev_scale, scale)
         }
     } else {
-        // Mature cloud: ensure scale has reached full target
+        // Normal mature cloud: ease scale back if displaced by bullets
         if (scale < targetScale) {
-            set_pev(entity, pev_scale, targetScale)
+            scale += (targetScale - scale) * 0.14
+            if (scale > targetScale)
+                scale = targetScale
+            set_pev(entity, pev_scale, scale)
         }
     }
 
-    // Dense 100% Solid Opacity Curve:
-    // Remains completely solid, pure white and impenetrable during active smoke time!
-    // Dissipates smoothly only in the final 3.5 seconds!
+    // Dense 100% Solid Opacity Curve (Dissipates in final 3.5s)
     if (remainingTime > 3.5) {
         set_pev(entity, pev_renderamt, 255.0)
     } else if (remainingTime > 0.0) {
         new Float: fadeRatio = remainingTime / 3.5
         set_pev(entity, pev_renderamt, 255.0 * fadeRatio)
     } else {
-        // Lifetime expired: Cleanly remove particle
         set_pev(entity, pev_renderamt, 0.0)
         set_pev(entity, pev_effects, EF_NODRAW)
         set_pev(entity, pev_flags, pev(entity, pev_flags) | FL_KILLME)
@@ -579,6 +834,26 @@ static stock entityCount(const add = 0) {
 // 100% OPAQUE ANTI-SEE-THROUGH RAYCAST OCCLUSION & INSIDE-SMOKE SCREEN BLINDING
 // ============================================================================
 
+stock Float:DistancePointToSegment(const Float:p[3], const Float:a[3], const Float:b[3]) {
+    static Float:ab[3], Float:ap[3]
+    xs_vec_sub(b, a, ab)
+    xs_vec_sub(p, a, ap)
+
+    new Float:abLenSq = xs_vec_dot(ab, ab)
+    if (abLenSq <= 0.0)
+        return get_distance_f(p, a)
+
+    new Float:t = xs_vec_dot(ap, ab) / abLenSq
+    t = floatclamp(t, 0.0, 1.0)
+
+    static Float:closest[3]
+    closest[0] = a[0] + (ab[0] * t)
+    closest[1] = a[1] + (ab[1] * t)
+    closest[2] = a[2] + (ab[2] * t)
+
+    return get_distance_f(p, closest)
+}
+
 stock bool:DoesSegmentIntersectSphere(const Float:p1[3], const Float:p2[3], const Float:center[3], const Float:radius) {
     static Float:d[3], Float:m[3]
     xs_vec_sub(p2, p1, d)
@@ -640,10 +915,26 @@ public Fwd_AddToFullPack_Post(es_handle, e, ent, host, hostflags, player, pSet) 
     vTargetOrigin[2] += 12.0 // Center of chest
 
     new Float: gametime = get_gametime()
-    const Float: smokeRadius = 132.0 // +15% from 115.0
+
+    // 1. CS2-Style Bullet Tunnel Peeking:
+    // If a bullet recently pierced through the smoke near the enemy, reveal them for that split second!
+    for (new t = 0; t < MAX_BULLET_TUNNELS; t++) {
+        if (gametime < g_fTunnelExpire[t]) {
+            if (DistancePointToSegment(vTargetOrigin, g_vecTunnelSrc[t], g_vecTunnelEnd[t]) < 44.0) {
+                return FMRES_IGNORED
+            }
+        }
+    }
+
+    // 2. Smoke Occlusion Spheres
+    const Float: smokeRadius = 132.0
 
     for (new i = 0; i < g_iActiveSmokeCount; i++) {
         if (gametime > g_fSmokeExpireTime[i])
+            continue
+
+        // If this smoke cloud was recently cleaved by an HE Grenade, line of sight is 100% open!
+        if (gametime < g_fSmokeClearedUntil[i])
             continue
 
         if (DoesSegmentIntersectSphere(vHostEye, vTargetOrigin, g_vecActiveSmokes[i], smokeRadius)) {
@@ -698,6 +989,10 @@ public Task_SmokePlayerCheck() {
         new bool: bIsInside = false
 
         for (new i = 0; i < g_iActiveSmokeCount; i++) {
+            // If smoke is currently cleaved by HE blast, don't blind the player with fog
+            if (gametime < g_fSmokeClearedUntil[i])
+                continue
+
             if (get_distance_f(pOrigin, g_vecActiveSmokes[i]) < insideRadius) {
                 bIsInside = true
                 break
