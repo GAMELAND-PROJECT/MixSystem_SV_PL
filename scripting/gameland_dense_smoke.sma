@@ -103,7 +103,7 @@ public stock const PluginURL[]         = "https://github.com/wopox1337/ServerSid
 public stock const PluginDescription[] = "Replacing client smoke with Server-Side SmokeNade."
 
 
-static const g_sprFile[]        = "sprites/gameland_smoke.spr"
+static const g_sprFile[]        = "sprites/gas_puff_02.spr"
 // https://github.com/s1lentq/ReGameDLL_CS/blob/1e49d947927e7f6f2fd70d8398e4a9519a34450a/regamedll/dlls/subs.h#L31
 static const g_baseClassname[]  = "info_null"
 static const g_className[]      = "particle_smokegren"
@@ -234,7 +234,7 @@ public CSGameRules_RestartRound() {
 
 static CPartSmokeGrenade_Create(const Float: origin[3], const Float: velocity[3],
                         const model[], const Float: scale,
-                        const Float: color[4] = { 175.0, 175.0, 175.0, 190.0 }) {
+                        const Float: color[4] = { 255.0, 255.0, 255.0, 255.0 }) {
 
     new entity = engfunc(EngFunc_CreateNamedEntity, engfunc(EngFunc_AllocString, g_baseClassname))
     set_pev(entity, pev_classname, g_className)
@@ -276,27 +276,27 @@ static CPartSmokeGrenade_Think(const entity) {
     new Float: initialAlpha
     pev(entity, pev_fuser1, initialAlpha)
     if (initialAlpha <= 0.0)
-        initialAlpha = 245.0
+        initialAlpha = 255.0
 
-    // Ultra-Dense 2X Volumetric scaling (expands up to 12.5 max for complete sphere coverage)
+    // Realistic competitive scaling (expands up to 3.4 max for natural choke-point coverage)
     static Float: scale
     pev(entity, pev_scale, scale)
     new Float: scaleSpd
     pev(entity, _pev_scaleSpeed, scaleSpd)
-    if (scale < 14.5 && scaleSpd > 0.0) {
+    if (scale < 3.4 && scaleSpd > 0.0) {
         scale += scaleSpd
         set_pev(entity, pev_scale, scale)
     } else {
         set_pev(entity, _pev_scaleSpeed, 0.0)
     }
 
-    // Ultra-Dense 100% Solid Opacity Curve:
-    // Remains 100% completely solid, turbid and impenetrable for at least 20+ full seconds!
-    // Dissipates slowly and naturally only in the final 5 seconds of lifetime!
-    if (remainingTime > 5.0) {
+    // Dense 100% Solid Opacity Curve:
+    // Remains completely solid, pure white and impenetrable during active smoke time!
+    // Dissipates smoothly only in the final 3.5 seconds!
+    if (remainingTime > 3.5) {
         set_pev(entity, pev_renderamt, 255.0)
     } else if (remainingTime > 0.0) {
-        new Float: fadeRatio = remainingTime / 5.0
+        new Float: fadeRatio = remainingTime / 3.5
         set_pev(entity, pev_renderamt, 255.0 * fadeRatio)
     } else {
         // Lifetime expired: Cleanly remove particle
@@ -320,7 +320,7 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
         .origin = origin,
         .velocity = velocity,
         .model = g_sprFile,
-        .scale = random_float(9.5, 12.0),
+        .scale = random_float(2.2, 2.7),
         .color = color
     )
 
@@ -328,9 +328,9 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
     new Float: gametime = get_gametime()
     new Float: dieTime = gametime + amx_smokegren_lifetime
 
-    const Float: scaleFactor = 1.25
-    const Float: maxRotateVelocity = 8.0
-    const Float: scaleSpeed = 0.035
+    const Float: scaleFactor = 1.35
+    const Float: maxRotateVelocity = 6.0
+    const Float: scaleSpeed = 0.018
 
     if (insideCloud) {
         avelocity[2] = random_float(-(maxRotateVelocity / scaleFactor), (maxRotateVelocity / scaleFactor))
@@ -363,199 +363,51 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
 
         static Float: velocity[3]
         for (new i; i < sizeof(velocity); i++) {
-            velocity[i] = (vForward[i] * 115) + (vUp[i] * 65)
+            velocity[i] = (vForward[i] * 24) + (vUp[i] * 12)
         }
 
         CreateGasSmoke(origin, velocity, color, .insideCloud = false)
     }
-
-    for (new Float: angleStep = 0.0; angleStep < 360.0; angleStep += step) {
-        angles[XS_YAW] += angleStep
-
-        engfunc(EngFunc_AngleVectors, angles, vForward, vRight, vUp)
-        xs_vec_normalize(vForward, vForward)
-
-        new Float: velocity[3]
-        for (new i; i < sizeof(velocity); i++) {
-            velocity[i] = (vForward[i] * 135) + (vUp[i] * 95)
-        }
-
-        CreateGasSmoke(origin, velocity, color, .insideCloud = false)
-    }
-
-    #if (defined CLIENT_WIERD_CODE_DONT_USE_THIS)
-    {
-        angles[XS_YAW] = 45.0
-
-        engfunc(EngFunc_AngleVectors, angles, vForward, vRight, vUp)
-        xs_vec_normalize(vForward, vForward)
-
-        static Float: velocity[3]
-        for (new i; i < sizeof(velocity); i++) {
-            velocity[i] = (vForward[i] * 375) + (vUp[i] * 120)
-        }
-
-        CreateGasSmoke(origin , velocity, color, .insideCloud = false)
-
-        angles[XS_YAW] = 270.0
-        engfunc(EngFunc_AngleVectors, angles, vForward, vRight, vUp)
-        xs_vec_normalize(vForward, vForward)
-
-        for (new i; i < sizeof(velocity); i++) {
-            velocity[i] = (vForward[i] * 375) + (vUp[i] * 120)
-        }
-
-        CreateGasSmoke(origin, velocity, color, .insideCloud = false)
-    }
-    #endif
 }
 
 static CreateGasInside(const Float: origin[3], Float: color[4]) {
-    // -------------------------------------------------------------
-    // 1. DENSE VOLUMETRIC CORE (Multi-height center pillar: 6 points)
-    // -------------------------------------------------------------
+    // 1. Center Core Puffs (3 vertical heights: 10, 24, 38)
     new Float: centerPos[3]
-    static const Float: flVerticalHeights[6] = { 10.0, 25.0, 40.0, 55.0, 70.0, 85.0 }
-    for(new h = 0; h < 6; h++) {
+    static const Float: flVerticalHeights[3] = { 10.0, 24.0, 38.0 }
+    for(new h = 0; h < 3; h++) {
         centerPos = origin
         centerPos[2] += flVerticalHeights[h]
         CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
     }
 
-    // -------------------------------------------------------------
-    // 2. INNER DENSE MATRIX (Radius 20 units: 8 points x 2 heights)
-    // -------------------------------------------------------------
-    static const Float: flInnerOffsets[8][2] = {
-        { 20.0, 0.0 }, { -20.0, 0.0 }, { 0.0, 20.0 }, { 0.0, -20.0 },
-        { 14.0, 14.0 }, { -14.0, 14.0 }, { 14.0, -14.0 }, { -14.0, -14.0 }
-    }
-    for(new i = 0; i < 8; i++) {
-        centerPos[0] = origin[0] + flInnerOffsets[i][0]
-        centerPos[1] = origin[1] + flInnerOffsets[i][1]
-        centerPos[2] = origin[2] + 20.0
-        CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-
-        centerPos[2] = origin[2] + 50.0
-        CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-    }
-
-    // -------------------------------------------------------------
-    // 3. MID-INNER SPHERE (Radius 42 units: 10 points x 2 heights)
-    // -------------------------------------------------------------
+    // 2. Inner Ring (Radius 16 units: 5 points at z + 16)
     static Float: vAngles[3], Float: vForward[3], Float: vRight[3], Float: vUp[3]
-    new Float: stepMid1 = 360.0 / 10.0
-    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepMid1) {
+    new Float: stepInner = 360.0 / 5.0
+    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepInner) {
         vAngles[XS_YAW] = fAngle
         engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
         xs_vec_normalize(vForward, vForward)
 
         new Float: pos[3]
-        pos[0] = origin[0] + (vForward[0] * 42.0)
-        pos[1] = origin[1] + (vForward[1] * 42.0)
-
-        pos[2] = origin[2] + 25.0
-        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-
-        pos[2] = origin[2] + 55.0
+        pos[0] = origin[0] + (vForward[0] * 16.0)
+        pos[1] = origin[1] + (vForward[1] * 16.0)
+        pos[2] = origin[2] + 16.0
         CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
     }
 
-    // -------------------------------------------------------------
-    // 4. MID-OUTER SPHERE (Radius 68 units: 12 points x 3 heights)
-    // -------------------------------------------------------------
-    new Float: stepMid2 = 360.0 / 12.0
-    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepMid2) {
-        vAngles[XS_YAW] = fAngle + (stepMid2 * 0.5)
+    // 3. Perimeter Ring (Radius 28 units: 6 points at z + 22)
+    new Float: stepMid = 360.0 / 6.0
+    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepMid) {
+        vAngles[XS_YAW] = fAngle + (stepMid * 0.5)
         engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
         xs_vec_normalize(vForward, vForward)
 
         new Float: pos[3]
-        pos[0] = origin[0] + (vForward[0] * 68.0)
-        pos[1] = origin[1] + (vForward[1] * 68.0)
-
-        pos[2] = origin[2] + 20.0
-        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-
-        pos[2] = origin[2] + 45.0
-        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-
-        pos[2] = origin[2] + 70.0
+        pos[0] = origin[0] + (vForward[0] * 28.0)
+        pos[1] = origin[1] + (vForward[1] * 28.0)
+        pos[2] = origin[2] + 22.0
         CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
     }
-
-    // -------------------------------------------------------------
-    // 5. OUTER VOLUMETRIC RING (Radius 95 units: 14 points x 2 heights)
-    // -------------------------------------------------------------
-    new Float: stepOuter = 360.0 / 14.0
-    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepOuter) {
-        vAngles[XS_YAW] = fAngle
-        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
-        xs_vec_normalize(vForward, vForward)
-
-        new Float: pos[3]
-        pos[0] = origin[0] + (vForward[0] * 95.0)
-        pos[1] = origin[1] + (vForward[1] * 95.0)
-
-        pos[2] = origin[2] + 25.0
-        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-
-        pos[2] = origin[2] + 55.0
-        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-    }
-
-    // -------------------------------------------------------------
-    // 6. TOP DOME CROWN (Radius 35 units: 8 points at height 88)
-    // -------------------------------------------------------------
-    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += 45.0) {
-        vAngles[XS_YAW] = fAngle
-        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
-        xs_vec_normalize(vForward, vForward)
-
-        new Float: pos[3]
-        pos[0] = origin[0] + (vForward[0] * 35.0)
-        pos[1] = origin[1] + (vForward[1] * 35.0)
-        pos[2] = origin[2] + 88.0
-        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-    }
-
-    #if (defined CLIENT_WIERD_CODE_DONT_USE_THIS)
-    {
-        vAngles[XS_YAW] = 45.0
-
-        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
-        xs_vec_normalize(vForward, vForward)
-
-        static Float: _origin[3]
-        for (new i; i < sizeof(_origin); i++) {
-            _origin[i] = origin[i] + (vForward[i] * 45) + (vUp[i] * 55)
-        }
-
-        CreateGasSmoke(
-            _origin,
-            Float: {0.0, 0.0, 0.0},
-            color,
-            .insideCloud = false
-        )
-
-        _origin = Float: {0.0, 0.0, 0.0}
-
-        vAngles[XS_YAW] = 270.0
-
-        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
-        xs_vec_normalize(vForward, vForward)
-
-        for (new i; i < sizeof(_origin); i++) {
-            _origin[i] = origin[i] + (vForward[i] * 45) + (vUp[i] * 55)
-        }
-
-        CreateGasSmoke(
-            _origin,
-            Float: {0.0, 0.0, 0.0},
-            color,
-            .insideCloud = false
-        )
-    }
-    #endif
 }
 
 static Create_ConVars(const bool: createConfigFile = true) {
@@ -585,7 +437,7 @@ static Create_ConVars(const bool: createConfigFile = true) {
 
     bind_pcvar_float(
         create_cvar(
-            "amx_smokegren_pieces", "10",
+            "amx_smokegren_pieces", "8",
             .has_min = true, .min_val = 2.0,
             .has_max = true, .max_val = 16.0,
             .description = "Number of smoke particles for one smoke cloud."
@@ -595,18 +447,18 @@ static Create_ConVars(const bool: createConfigFile = true) {
 
     hook_cvar_change(
         create_cvar(
-            "amx_smokegren_color", "70 70 70 255",
+            "amx_smokegren_color", "255 255 255 255",
             .description = "The color of the smoke cloud is in the format [R G B A]. ^n\
                             `-1 -1 -1` - random color.^n\
                             `A` - is the opacity (transparency)"
         ),
         "CVarChange_amx_smokegren_color"
     )
-    CVarChange_amx_smokegren_color(0, "", "70 70 70 255")
+    CVarChange_amx_smokegren_color(0, "", "255 255 255 255")
 
     bind_pcvar_float(
         create_cvar(
-            "amx_smokegren_lifetime", "25.0",
+            "amx_smokegren_lifetime", "20.0",
             .has_min = true, .min_val = 6.0,
             .has_max = true, .max_val = 60.0,
             .description = "Smoke cloud lifetime (in seconds)."
@@ -760,7 +612,7 @@ public Fwd_AddToFullPack_Post(es_handle, e, ent, host, hostflags, player, pSet) 
     vTargetOrigin[2] += 12.0 // Center of chest
 
     new Float: gametime = get_gametime()
-    const Float: smokeRadius = 122.0
+    const Float: smokeRadius = 115.0
 
     for (new i = 0; i < g_iActiveSmokeCount; i++) {
         if (gametime > g_fSmokeExpireTime[i])
@@ -806,7 +658,7 @@ public Task_SmokePlayerCheck() {
     }
 
     static Float: pOrigin[3]
-    const Float: insideRadius = 100.0
+    const Float: insideRadius = 88.0
 
     for (new p = 1; p <= MaxClients; p++) {
         if (!is_user_connected(p) || !is_user_alive(p)) {
@@ -844,22 +696,22 @@ stock SendSmokeFade(id, bool:bInside) {
 
     message_begin(MSG_ONE_UNRELIABLE, g_iMsgScreenFade, _, id)
     if (bInside) {
-        // Solid grey smoke overlay while inside the cloud (duration 0.2s, hold 0.2s, stay out)
+        // Pure white dense smoke overlay while inside the cloud (duration 1.0s, hold 1.0s, stay out)
         write_short(1 << 12)        // Duration (1.0s)
         write_short(1 << 12)        // Hold time
         write_short(0x0004)         // FFADE_STAYOUT
-        write_byte(95)              // R
-        write_byte(95)              // G
-        write_byte(95)              // B
+        write_byte(245)             // R (White)
+        write_byte(245)             // G (White)
+        write_byte(245)             // B (White)
         write_byte(255)             // Alpha (100% solid)
     } else {
         // Clear fade smoothly
         write_short(1 << 11)        // Duration (0.5s)
         write_short(0)              // Hold time
         write_short(0x0001)         // FFADE_IN
-        write_byte(95)              // R
-        write_byte(95)              // G
-        write_byte(95)              // B
+        write_byte(245)             // R
+        write_byte(245)             // G
+        write_byte(245)             // B
         write_byte(0)               // Alpha
     }
     message_end()

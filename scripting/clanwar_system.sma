@@ -1578,21 +1578,10 @@ public HookCmdStart_Spectator(id, ucHandle, seed)
         return FMRES_IGNORED
 
     new buttons = get_uc(ucHandle, UC_Buttons)
-    new oldbuttons = get_user_oldbutton(id)
 
-    // Single press of Space (+jump) while dead:
-    // Seamlessly cycle to next alive teammate (same as Left Click)!
-    if((buttons & IN_JUMP) && !(oldbuttons & IN_JUMP))
-    {
-        new Float:fDeadTime = Float:get_member(id, m_fDeadTime)
-        if(fDeadTime <= 0.0 || (get_gametime() - fDeadTime) >= 3.0)
-        {
-            SwitchToTeammate(id, false)
-        }
-    }
-
-    // Strip IN_JUMP and IN_DUCK completely so ReGameDLL's Observer_HandleButtons
-    // NEVER receives them and NEVER cycles mode to roaming, 3rd person or enemy!
+    // Strip IN_JUMP, IN_DUCK, IN_USE completely so ReGameDLL's Observer_HandleButtons
+    // NEVER receives them and NEVER cycles mode, jumps, or switches camera!
+    // Space is completely disabled per user requirement (does NOT switch between players).
     if(buttons & (IN_JUMP | IN_DUCK | IN_USE))
     {
         buttons &= ~(IN_JUMP | IN_DUCK | IN_USE)
@@ -1640,7 +1629,6 @@ public Cmd_BlockSpecCmd(id)
 {
     if(g_iMatchState != STATE_WARMUP && is_user_connected(id) && !is_user_alive(id))
     {
-        rg_set_observer_mode(id, 4)
         return PLUGIN_HANDLED
     }
     return PLUGIN_CONTINUE
@@ -1693,17 +1681,17 @@ public RG_Observer_SetMode_Pre(const id, iMode)
     }
 
     // In competitive 5v5 mix / clanwar: STRICTLY FIRST PERSON ONLY (OBS_IN_EYE = 4)
-    // Always force mode argument to 4 and let ReGameDLL execute OBS_IN_EYE properly!
+    // If the player is already in first-person (OBS_IN_EYE = 4) and presses Ctrl (+duck) or any mode change,
+    // SUPERCEDE the call completely so the camera stays solidly inside the teammate without desync/void!
     if(iMode != 4)
     {
-        SetHookChainArg(1, ATYPE_INTEGER, 4)
-    }
+        new iCurMode = get_entvar(id, var_iuser1)
+        if(iCurMode == 4)
+        {
+            return HC_SUPERCEDE
+        }
 
-    // Strict Team Enforcement: If current target is an enemy, dead or 0, redirect immediately!
-    new iCurTarget = get_member(id, m_hObserverTarget)
-    if(!iCurTarget || !is_user_connected(iCurTarget) || !is_user_alive(iCurTarget) || get_member(iCurTarget, m_iTeam) != team)
-    {
-        SwitchToTeammate(id, false)
+        SetHookChainArg(1, ATYPE_INTEGER, 4) // Force OBS_IN_EYE (Arg 1)
     }
 
     return HC_CONTINUE
