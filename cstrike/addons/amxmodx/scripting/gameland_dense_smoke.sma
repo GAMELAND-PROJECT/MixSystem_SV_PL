@@ -234,7 +234,7 @@ public CSGameRules_RestartRound() {
 
 static CPartSmokeGrenade_Create(const Float: origin[3], const Float: velocity[3],
                         const model[], const Float: scale,
-                        const Float: color[4] = { 255.0, 255.0, 255.0, 255.0 }) {
+                        const Float: color[4] = { 255.0, 255.0, 255.0, 242.0 }) {
 
     new entity = engfunc(EngFunc_CreateNamedEntity, engfunc(EngFunc_AllocString, g_baseClassname))
     set_pev(entity, pev_classname, g_className)
@@ -297,14 +297,14 @@ static CPartSmokeGrenade_Think(const entity) {
         }
     }
 
-    // Dense 100% Solid Opacity Curve:
-    // Remains completely solid, pure white and impenetrable during active smoke time!
+    // Dense Opacity Curve with 5% natural translucency (242.0 / 255.0):
+    // Softens the over-solid chalky look while keeping perfect volumetric density!
     // Dissipates smoothly only in the final 3.5 seconds!
     if (remainingTime > 3.5) {
-        set_pev(entity, pev_renderamt, 255.0)
+        set_pev(entity, pev_renderamt, 242.0)
     } else if (remainingTime > 0.0) {
         new Float: fadeRatio = remainingTime / 3.5
-        set_pev(entity, pev_renderamt, 255.0 * fadeRatio)
+        set_pev(entity, pev_renderamt, 242.0 * fadeRatio)
     } else {
         // Lifetime expired: Cleanly remove particle
         set_pev(entity, pev_renderamt, 0.0)
@@ -323,9 +323,9 @@ static CPartSmokeGrenade_Think(const entity) {
 static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
                     const Float: color[4], bool: insideCloud) {
 
-    // Initial scale starts compact (~1.9 to 2.3) to allow the CS2 mushroom bloom animation
-    new Float: flInitialScale = random_float(1.9, 2.3)
-    new Float: flTargetScale = random_float(4.25, 4.45) // Exact +10% size increase from 3.95
+    // Initial scale starts compact (~1.8 to 2.18) to allow the CS2 mushroom bloom animation
+    new Float: flInitialScale = random_float(1.8, 2.18)
+    new Float: flTargetScale = random_float(4.04, 4.23) // Balanced -5% size adjustment
 
     new entity = CPartSmokeGrenade_Create(
         .origin = origin,
@@ -373,7 +373,7 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
 
         static Float: velocity[3]
         for (new i; i < sizeof(velocity); i++) {
-            velocity[i] = (vForward[i] * 57.0) + (vUp[i] * 24.0)
+            velocity[i] = (vForward[i] * 54.0) + (vUp[i] * 23.0)
         }
 
         CreateGasSmoke(origin, velocity, color, .insideCloud = false)
@@ -381,17 +381,17 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
 }
 
 static CreateGasInside(const Float: origin[3], Float: color[4]) {
-    // 1. Center Core Puffs (3 vertical heights: 11, 31, 53) with slight upward balloon drift
+    // 1. Center Core Puffs (3 vertical heights: 10.5, 29.5, 50.0) with slight upward balloon drift
     new Float: centerPos[3]
-    static const Float: flVerticalHeights[3] = { 11.0, 31.0, 53.0 }
+    static const Float: flVerticalHeights[3] = { 10.5, 29.5, 50.0 }
     for(new h = 0; h < 3; h++) {
         centerPos = origin
         centerPos[2] += flVerticalHeights[h]
-        new Float: vCoreVel[3] = { 0.0, 0.0, 15.0 }
+        new Float: vCoreVel[3] = { 0.0, 0.0, 14.2 }
         CreateGasSmoke(centerPos, vCoreVel, color, .insideCloud = true)
     }
 
-    // 2. Inner Ring (Radius 13.5 units: 6 points at z + 22) with outward bloom velocity
+    // 2. Inner Ring (Radius 12.8 units: 6 points at z + 21) with outward bloom velocity
     static Float: vAngles[3], Float: vForward[3], Float: vRight[3], Float: vUp[3]
     new Float: stepInner = 360.0 / 6.0
     for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepInner) {
@@ -400,18 +400,18 @@ static CreateGasInside(const Float: origin[3], Float: color[4]) {
         xs_vec_normalize(vForward, vForward)
 
         new Float: pos[3], Float: vel[3]
-        pos[0] = origin[0] + (vForward[0] * 13.5)
-        pos[1] = origin[1] + (vForward[1] * 13.5)
-        pos[2] = origin[2] + 22.0
+        pos[0] = origin[0] + (vForward[0] * 12.8)
+        pos[1] = origin[1] + (vForward[1] * 12.8)
+        pos[2] = origin[2] + 21.0
 
-        vel[0] = vForward[0] * 20.0
-        vel[1] = vForward[1] * 20.0
-        vel[2] = 9.0
+        vel[0] = vForward[0] * 19.0
+        vel[1] = vForward[1] * 19.0
+        vel[2] = 8.5
 
         CreateGasSmoke(pos, vel, color, .insideCloud = true)
     }
 
-    // 3. Perimeter Ring (Radius 20.0 units: 8 points at z + 28) with outward bloom velocity
+    // 3. Perimeter Ring (Radius 19.0 units: 8 points at z + 27) with outward bloom velocity
     new Float: stepMid = 360.0 / 8.0
     for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepMid) {
         vAngles[XS_YAW] = fAngle + (stepMid * 0.5)
@@ -419,13 +419,13 @@ static CreateGasInside(const Float: origin[3], Float: color[4]) {
         xs_vec_normalize(vForward, vForward)
 
         new Float: pos[3], Float: vel[3]
-        pos[0] = origin[0] + (vForward[0] * 20.0)
-        pos[1] = origin[1] + (vForward[1] * 20.0)
-        pos[2] = origin[2] + 28.0
+        pos[0] = origin[0] + (vForward[0] * 19.0)
+        pos[1] = origin[1] + (vForward[1] * 19.0)
+        pos[2] = origin[2] + 27.0
 
-        vel[0] = vForward[0] * 35.0
-        vel[1] = vForward[1] * 35.0
-        vel[2] = 11.0
+        vel[0] = vForward[0] * 33.0
+        vel[1] = vForward[1] * 33.0
+        vel[2] = 10.5
 
         CreateGasSmoke(pos, vel, color, .insideCloud = true)
     }
@@ -468,14 +468,14 @@ static Create_ConVars(const bool: createConfigFile = true) {
 
     hook_cvar_change(
         create_cvar(
-            "amx_smokegren_color", "255 255 255 255",
+            "amx_smokegren_color", "255 255 255 242",
             .description = "The color of the smoke cloud is in the format [R G B A]. ^n\
                             `-1 -1 -1` - random color.^n\
                             `A` - is the opacity (transparency)"
         ),
         "CVarChange_amx_smokegren_color"
     )
-    CVarChange_amx_smokegren_color(0, "", "255 255 255 255")
+    CVarChange_amx_smokegren_color(0, "", "255 255 255 242")
 
     bind_pcvar_float(
         create_cvar(
@@ -640,7 +640,7 @@ public Fwd_AddToFullPack_Post(es_handle, e, ent, host, hostflags, player, pSet) 
     vTargetOrigin[2] += 12.0 // Center of chest
 
     new Float: gametime = get_gametime()
-    const Float: smokeRadius = 145.0 // +10% from 132.0
+    const Float: smokeRadius = 138.0 // Balanced -5% size adjustment
 
     for (new i = 0; i < g_iActiveSmokeCount; i++) {
         if (gametime > g_fSmokeExpireTime[i])
@@ -686,7 +686,7 @@ public Task_SmokePlayerCheck() {
     }
 
     static Float: pOrigin[3]
-    const Float: insideRadius = 108.0 // +10% from 98.0
+    const Float: insideRadius = 103.0 // Balanced -5% size adjustment
 
     for (new p = 1; p <= MaxClients; p++) {
         if (!is_user_connected(p) || !is_user_alive(p)) {
