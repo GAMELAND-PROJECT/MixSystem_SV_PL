@@ -283,7 +283,7 @@ static CPartSmokeGrenade_Think(const entity) {
     pev(entity, pev_scale, scale)
     new Float: scaleSpd
     pev(entity, _pev_scaleSpeed, scaleSpd)
-    if (scale < 12.5 && scaleSpd > 0.0) {
+    if (scale < 14.5 && scaleSpd > 0.0) {
         scale += scaleSpd
         set_pev(entity, pev_scale, scale)
     } else {
@@ -291,12 +291,12 @@ static CPartSmokeGrenade_Think(const entity) {
     }
 
     // Ultra-Dense 100% Solid Opacity Curve:
-    // Remains 100% completely solid, turbid and impenetrable for at least 19+ full seconds!
-    // Dissipates slowly and naturally only in the final 6 seconds of lifetime!
-    if (remainingTime > 6.0) {
+    // Remains 100% completely solid, turbid and impenetrable for at least 20+ full seconds!
+    // Dissipates slowly and naturally only in the final 5 seconds of lifetime!
+    if (remainingTime > 5.0) {
         set_pev(entity, pev_renderamt, 255.0)
     } else if (remainingTime > 0.0) {
-        new Float: fadeRatio = remainingTime / 6.0
+        new Float: fadeRatio = remainingTime / 5.0
         set_pev(entity, pev_renderamt, 255.0 * fadeRatio)
     } else {
         // Lifetime expired: Cleanly remove particle
@@ -320,7 +320,7 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
         .origin = origin,
         .velocity = velocity,
         .model = g_sprFile,
-        .scale = random_float(8.5, 10.8),
+        .scale = random_float(9.5, 12.0),
         .color = color
     )
 
@@ -595,14 +595,14 @@ static Create_ConVars(const bool: createConfigFile = true) {
 
     hook_cvar_change(
         create_cvar(
-            "amx_smokegren_color", "95 95 95 255",
+            "amx_smokegren_color", "70 70 70 255",
             .description = "The color of the smoke cloud is in the format [R G B A]. ^n\
                             `-1 -1 -1` - random color.^n\
                             `A` - is the opacity (transparency)"
         ),
         "CVarChange_amx_smokegren_color"
     )
-    CVarChange_amx_smokegren_color(0, "", "95 95 95 255")
+    CVarChange_amx_smokegren_color(0, "", "70 70 70 255")
 
     bind_pcvar_float(
         create_cvar(

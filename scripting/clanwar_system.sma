@@ -391,6 +391,8 @@ public plugin_init()
     RegisterHookChain(RG_CBasePlayer_Observer_IsValidTarget, "RG_Observer_IsValidTarget_Pre", .post = false)
     RegisterHookChain(RG_CBasePlayer_Observer_FindNextPlayer, "RG_Observer_FindNextPlayer_Pre", .post = false)
     RegisterHookChain(RG_CBasePlayer_Observer_SetMode, "RG_Observer_SetMode_Pre", .post = false)
+    RegisterHookChain(RG_CBasePlayer_Observer_Think, "RG_Observer_Think_Post", .post = true)
+    register_forward(FM_CmdStart, "HookCmdStart_Spectator", 1)
     register_clcmd("spec_menu", "Cmd_BlockSpecCmd")
     register_clcmd("spec_mode", "Cmd_BlockSpecCmd")
     register_clcmd("spec_help", "Cmd_BlockSpecCmd")
@@ -1566,6 +1568,74 @@ ApplySpectatorCameraSettings()
     }
 }
 
+public HookCmdStart_Spectator(id, ucHandle, seed)
+{
+    if(!is_user_connected(id) || is_user_alive(id) || g_iMatchState == STATE_WARMUP)
+        return FMRES_IGNORED
+
+    new TeamName:team = get_member(id, m_iTeam)
+    if(team != TEAM_CT && team != TEAM_TERRORIST)
+        return FMRES_IGNORED
+
+    new buttons = get_uc(ucHandle, UC_Buttons)
+    new oldbuttons = get_user_oldbutton(id)
+
+    // Single press of Space (+jump) while dead:
+    // Seamlessly cycle to next alive teammate (same as Left Click)!
+    if((buttons & IN_JUMP) && !(oldbuttons & IN_JUMP))
+    {
+        new Float:fDeadTime = Float:get_member(id, m_fDeadTime)
+        if(fDeadTime <= 0.0 || (get_gametime() - fDeadTime) >= 3.0)
+        {
+            SwitchToTeammate(id, false)
+        }
+    }
+
+    // Strip IN_JUMP and IN_DUCK completely so ReGameDLL's Observer_HandleButtons
+    // NEVER receives them and NEVER cycles mode to roaming, 3rd person or enemy!
+    if(buttons & (IN_JUMP | IN_DUCK | IN_USE))
+    {
+        buttons &= ~(IN_JUMP | IN_DUCK | IN_USE)
+        set_uc(ucHandle, UC_Buttons, buttons)
+        return FMRES_HANDLED
+    }
+
+    return FMRES_IGNORED
+}
+
+public RG_Observer_Think_Post(const id)
+{
+    if(!is_user_connected(id) || is_user_alive(id) || g_iMatchState == STATE_WARMUP)
+        return
+
+    new TeamName:iMyTeam = get_member(id, m_iTeam)
+    if(iMyTeam != TEAM_TERRORIST && iMyTeam != TEAM_CT)
+        return
+
+    // During natural 3.0s death sequence: let natural killer cam finish
+    new Float:fDeadTime = Float:get_member(id, m_fDeadTime)
+    if(fDeadTime > 0.0 && (get_gametime() - fDeadTime) < 3.0)
+        return
+
+    // Strictly enforce first-person mode (OBS_IN_EYE = 4)
+    if(get_entvar(id, var_iuser1) != 4)
+    {
+        set_entvar(id, var_iuser1, 4)
+        rg_set_observer_mode(id, 4)
+    }
+
+    // Anti-Void & Anti-Enemy Guard: Must NEVER spectate an enemy, dead player or NULL!
+    new iTarget = get_member(id, m_hObserverTarget)
+    if(!iTarget)
+        iTarget = get_entvar(id, var_iuser2)
+
+    if(!iTarget || !is_user_connected(iTarget) || !is_user_alive(iTarget) || get_member(iTarget, m_iTeam) != iMyTeam)
+    {
+        // Instantly snap to a valid alive teammate on the player's own team!
+        SwitchToTeammate(id, false)
+    }
+}
+
 public Cmd_BlockSpecCmd(id)
 {
     if(g_iMatchState != STATE_WARMUP && is_user_connected(id) && !is_user_alive(id))
@@ -1627,6 +1697,13 @@ public RG_Observer_SetMode_Pre(const id, iMode)
     if(iMode != 4)
     {
         SetHookChainArg(1, ATYPE_INTEGER, 4)
+    }
+
+    // Strict Team Enforcement: If current target is an enemy, dead or 0, redirect immediately!
+    new iCurTarget = get_member(id, m_hObserverTarget)
+    if(!iCurTarget || !is_user_connected(iCurTarget) || !is_user_alive(iCurTarget) || get_member(iCurTarget, m_iTeam) != team)
+    {
+        SwitchToTeammate(id, false)
     }
 
     return HC_CONTINUE
