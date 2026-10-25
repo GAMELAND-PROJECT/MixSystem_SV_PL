@@ -248,12 +248,12 @@ static CPartSmokeGrenade_Think(const entity) {
     if (initialAlpha <= 0.0)
         initialAlpha = 245.0
 
-    // Smooth volumetric scaling up to 5.8 max to prevent texture stretching
+    // Smooth volumetric scaling up to 6.2 max to prevent texture stretching
     static Float: scale
     pev(entity, pev_scale, scale)
     new Float: scaleSpd
     pev(entity, _pev_scaleSpeed, scaleSpd)
-    if (scale < 5.8 && scaleSpd > 0.0) {
+    if (scale < 6.2 && scaleSpd > 0.0) {
         scale += scaleSpd
         set_pev(entity, pev_scale, scale)
     } else {
@@ -290,7 +290,7 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
         .origin = origin,
         .velocity = velocity,
         .model = g_sprFile,
-        .scale = random_float(3.2, 4.2),
+        .scale = random_float(4.0, 5.0),
         .color = color
     )
 
@@ -300,7 +300,7 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
 
     const Float: scaleFactor = 1.25
     const Float: maxRotateVelocity = 8.0
-    const Float: scaleSpeed = 0.04
+    const Float: scaleSpeed = 0.035
 
     if (insideCloud) {
         avelocity[2] = random_float(-(maxRotateVelocity / scaleFactor), (maxRotateVelocity / scaleFactor))
@@ -333,7 +333,7 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
 
         static Float: velocity[3]
         for (new i; i < sizeof(velocity); i++) {
-            velocity[i] = (vForward[i] * 375) + (vUp[i] * 165)
+            velocity[i] = (vForward[i] * 115) + (vUp[i] * 65)
         }
 
         CreateGasSmoke(origin, velocity, color, .insideCloud = false)
@@ -347,7 +347,7 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
 
         new Float: velocity[3]
         for (new i; i < sizeof(velocity); i++) {
-            velocity[i] = (vForward[i] * 375) + (vUp[i] * 265)
+            velocity[i] = (vForward[i] * 135) + (vUp[i] * 95)
         }
 
         CreateGasSmoke(origin, velocity, color, .insideCloud = false)
@@ -381,55 +381,100 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
 }
 
 static CreateGasInside(const Float: origin[3], Float: color[4]) {
-    new Float: step = 360.0 / amx_smokegren_pieces
+    // -------------------------------------------------------------
+    // 1. DENSE VOLUMETRIC CORE (Packs the center - 100% impenetrable)
+    // -------------------------------------------------------------
+    new Float: centerPos[3]
 
-    static Float: vAngles[3]
-    static Float: vForward[3], Float: vRight[3], Float: vUp[3]
+    // Vertical center pillar at 3 heights
+    centerPos = origin; centerPos[2] += 15.0
+    CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
 
-    for (new Float: fAngleStep = 0.0; fAngleStep < 360.0; fAngleStep += step) {
-        vAngles[XS_YAW] += fAngleStep
+    centerPos = origin; centerPos[2] += 45.0
+    CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
 
+    centerPos = origin; centerPos[2] += 75.0
+    CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
+
+    // Inner cross at radius 30 (height 25 and 55)
+    static const Float: flCrossOffsets[4][2] = {
+        { 30.0, 0.0 }, { -30.0, 0.0 }, { 0.0, 30.0 }, { 0.0, -30.0 }
+    }
+    for(new i = 0; i < 4; i++) {
+        centerPos[0] = origin[0] + flCrossOffsets[i][0]
+        centerPos[1] = origin[1] + flCrossOffsets[i][1]
+        centerPos[2] = origin[2] + 25.0
+        CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
+
+        centerPos[2] = origin[2] + 55.0
+        CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
+    }
+
+    // Inner diagonal cross at radius 45 (height 40)
+    static const Float: flDiagOffsets[4][2] = {
+        { 32.0, 32.0 }, { -32.0, 32.0 }, { 32.0, -32.0 }, { -32.0, -32.0 }
+    }
+    for(new i = 0; i < 4; i++) {
+        centerPos[0] = origin[0] + flDiagOffsets[i][0]
+        centerPos[1] = origin[1] + flDiagOffsets[i][1]
+        centerPos[2] = origin[2] + 40.0
+        CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
+    }
+
+    // -------------------------------------------------------------
+    // 2. MID VOLUMETRIC RING (Radius 65-72 units)
+    // -------------------------------------------------------------
+    new Float: stepMid = 360.0 / 8.0
+    static Float: vAngles[3], Float: vForward[3], Float: vRight[3], Float: vUp[3]
+
+    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepMid) {
+        vAngles[XS_YAW] = fAngle
         engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
         xs_vec_normalize(vForward, vForward)
 
-        new Float: _origin[3]
-        for (new i; i < sizeof(_origin); i++) {
-            _origin[i] = origin[i] + (vForward[i] * random_num(90, 110)) + (vUp[i] * 45)
-        }
+        new Float: pos[3]
+        pos[0] = origin[0] + (vForward[0] * 68.0)
+        pos[1] = origin[1] + (vForward[1] * 68.0)
+        pos[2] = origin[2] + 35.0
+        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
 
-        CreateGasSmoke(
-            _origin,
-            Float: {0.0, 0.0, 0.0},
-            color,
-            .insideCloud = true
-        )
+        pos[2] = origin[2] + 60.0
+        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
     }
 
-    for (new Float: fAngleStep = 0.0; fAngleStep < 360.0; fAngleStep += step) {
-        vAngles[XS_YAW] += fAngleStep
-
+    // -------------------------------------------------------------
+    // 3. OUTER VOLUMETRIC RING (Radius 95-105 units)
+    // -------------------------------------------------------------
+    new Float: stepOuter = 360.0 / amx_smokegren_pieces
+    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepOuter) {
+        vAngles[XS_YAW] = fAngle + (stepOuter * 0.5)
         engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
         xs_vec_normalize(vForward, vForward)
 
-        new Float: _origin[3]
-        for (new i; i < sizeof(_origin); i++) {
-            _origin[i] = origin[i] + (vForward[i] * 90) + (vUp[i] * 60)
-        }
+        new Float: pos[3]
+        pos[0] = origin[0] + (vForward[0] * 98.0)
+        pos[1] = origin[1] + (vForward[1] * 98.0)
+        pos[2] = origin[2] + 25.0
+        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
 
-        CreateGasSmoke(
-            _origin,
-            Float: {0.0, 0.0, 0.0},
-            color,
-            .insideCloud = true
-        )
+        pos[2] = origin[2] + 50.0
+        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
     }
 
-    CreateGasSmoke(
-        origin,
-        Float: {0.0, 0.0, 0.0},
-        color,
-        .insideCloud = false
-    )
+    // -------------------------------------------------------------
+    // 4. TOP DOME CROWN (Radius 40 units, height 85)
+    // -------------------------------------------------------------
+    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += 90.0) {
+        vAngles[XS_YAW] = fAngle
+        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        new Float: pos[3]
+        pos[0] = origin[0] + (vForward[0] * 40.0)
+        pos[1] = origin[1] + (vForward[1] * 40.0)
+        pos[2] = origin[2] + 85.0
+        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
+    }
 
     #if (defined CLIENT_WIERD_CODE_DONT_USE_THIS)
     {
@@ -508,14 +553,14 @@ static Create_ConVars(const bool: createConfigFile = true) {
 
     hook_cvar_change(
         create_cvar(
-            "amx_smokegren_color", "165 165 165 245",
+            "amx_smokegren_color", "115 115 115 255",
             .description = "The color of the smoke cloud is in the format [R G B A]. ^n\
                             `-1 -1 -1` - random color.^n\
                             `A` - is the opacity (transparency)"
         ),
         "CVarChange_amx_smokegren_color"
     )
-    CVarChange_amx_smokegren_color(0, "", "165 165 165 245")
+    CVarChange_amx_smokegren_color(0, "", "115 115 115 255")
 
     bind_pcvar_float(
         create_cvar(

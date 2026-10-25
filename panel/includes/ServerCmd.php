@@ -1713,7 +1713,7 @@ class ServerCmd {
             }
         }
 
-        return 1; // Default: Full Guard
+        return 0; // Default: Disabled for competitive 5v5 mix
     }
 
     /**

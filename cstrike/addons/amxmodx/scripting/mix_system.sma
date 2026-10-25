@@ -1046,18 +1046,10 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
         return
     }
 
-    // In competitive modes (Knife & Match Live), enforce that the dead player's camera switches to a teammate (never enemy)
-    set_task(0.4, "Task_FixSpectatorClientCmd", iVictim)
-    set_task(1.0, "Task_EnforceTeammateObserver", iVictim)
-
-    // If other dead teammates were observing this victim, immediately switch them to another alive teammate
-    for(new i = 1; i <= MAX_PLAYERS; i++)
-    {
-        if(is_user_connected(i) && !is_user_alive(i) && get_member(i, m_hObserverTarget) == iVictim)
-        {
-            SwitchToTeammate(i, false)
-        }
-    }
+    // In competitive modes (Knife & Match Live):
+    // Allow natural ~3.0s Counter-Strike deathcam / killer tracking to play completely unhindered!
+    // Never abruptly rip the camera away; let the natural death animation and killer follow finish.
+    set_task(3.5, "Task_EnforceTeammateObserver", iVictim)
 
     // 3. Knife Round Elimination Detection: Instant winner detection & menu trigger
     if(g_iMatchState == STATE_KNIFE)
@@ -1141,6 +1133,10 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
 
 ApplySpectatorCameraSettings()
 {
+    // AFK Guard is ALWAYS disabled by default for 5v5 competitive mix to prevent accidental kicks
+    set_cvar_num("gameland_afk_guard", 0)
+    set_cvar_num("mp_autokick", 0)
+
     if(g_iMatchState == STATE_WARMUP)
     {
         // Warmup: Allow players to spectate freely, any team, any mode
@@ -1166,11 +1162,23 @@ public RG_Observer_SetMode_Pre(const id, iMode)
     if(team != TEAM_CT && team != TEAM_TERRORIST)
         return HC_CONTINUE
 
+    // If still within ~3.0s death sequence / killer follow cam, NEVER interfere!
+    new Float:fDeadTime = Float:get_member(id, m_fDeadTime)
+    if(fDeadTime > 0.0 && (get_gametime() - fDeadTime) < 3.0)
+    {
+        return HC_CONTINUE
+    }
+
     // Block free-roaming / out-of-bounds spectator modes in competitive match:
     // 2 = OBS_CHASE_FREE, 3 = OBS_ROAMING, 5 = OBS_MAP_FREE, 6 = OBS_MAP_CHASE
+    // Allow classic OBS_CHASE_LOCKED (1) and OBS_IN_EYE (4) so player can switch naturally with Jump
     if(iMode == 2 || iMode == 3 || iMode == 5 || iMode == 6)
     {
-        SetHookChainArg(1, ATYPE_INTEGER, 4) // Force OBS_IN_EYE (Arg 1)
+        new iCurMode = get_entvar(id, var_iuser1)
+        if(iCurMode != 1 && iCurMode != 4)
+            iCurMode = 1 // Default to classic third-person chase behind teammate
+
+        SetHookChainArg(1, ATYPE_INTEGER, iCurMode)
     }
 
     return HC_CONTINUE
@@ -1227,7 +1235,7 @@ stock bool:SwitchToTeammate(id, bool:bReverse)
         new iMode = get_entvar(id, var_iuser1)
         if(iMode != 1 && iMode != 4)
         {
-            iMode = 4 // Default to OBS_IN_EYE
+            iMode = 1 // Default to classic CS third-person chase
         }
 
         rg_set_observer_mode(id, iMode)
@@ -1296,6 +1304,9 @@ public Task_EnforceTeammateObserver(id)
     {
         SwitchToTeammate(id, false)
     }
+
+    // Clean up stuck duck flag from dying while ducking
+    client_cmd(id, "+duck;-duck")
 }
 
 public RG_CSGameRules_CanPlayerHearPlayer_Pre(const iListener, const iSender)

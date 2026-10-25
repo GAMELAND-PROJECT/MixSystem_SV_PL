@@ -157,7 +157,7 @@ public plugin_init()
 	g_pForceChaseCam = get_cvar_pointer("mp_forcechasecam")
 	g_pFadeToBlack = get_cvar_pointer("mp_fadetoblack")
 	g_pJoinMode = register_cvar("gameland_join_mode", "1")
-	g_pAfkGuard = register_cvar("gameland_afk_guard", "1")
+	g_pAfkGuard = register_cvar("gameland_afk_guard", "0")
 	g_pAfkIdleTime = register_cvar("gameland_afk_idle_time", "120")
 	g_pAfkSpecGrace = register_cvar("gameland_afk_spec_grace", "300")
 	g_iJoinMode = clamp(get_pcvar_num(g_pJoinMode), 0, 2)
@@ -1871,7 +1871,7 @@ public HookChooseTeam_Pre(id, MenuChooseTeam:slot)
 
 	if(slot == MenuChoose_T || slot == MenuChoose_CT || slot == MenuChoose_AutoSelect || slot == MenuChoose_Spec)
 	{
-		SetHookChainReturn(ATYPE_INTEGER, 0)
+		SetHookChainReturn(ATYPE_BOOL, false)
 		if(slot == MenuChoose_T)
 		{
 			ApplyRestrictedJoinKey(id, 0, true)
