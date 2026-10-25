@@ -94,7 +94,6 @@
 #include <hamsandwich>
 #include <fakemeta>
 #include <xs>
-#include <reapi>
 
 
 public stock const PluginName[]        = "Server-Side SmokeNade"
@@ -164,9 +163,10 @@ public plugin_init() {
     g_iMsgScreenFade = get_user_msgid("ScreenFade")
     set_task(0.1, "Task_SmokePlayerCheck", .flags = "b")
 
-    // CS2 Mechanics: HE Grenade smoke clearing & Bullet holes
-    RegisterHookChain(RG_CGrenade_ExplodeHeGrenade, "On_HEGrenade_Explode_Post", .post = true)
-    RegisterHookChain(RG_CBaseEntity_FireBullets3, "On_FireBullets3_Post", .post = true)
+    // CS2 Mechanics: HE Grenade smoke clearing & Bullet holes (Pure HamSandwich & FakeMeta)
+    RegisterHam(Ham_Think, "grenade", "Fwd_GrenadeThink_Post", .Post = true)
+    RegisterHam(Ham_TraceAttack, "worldspawn", "Fwd_TraceAttack_Post", .Post = true)
+    RegisterHam(Ham_TraceAttack, "player", "Fwd_TraceAttack_Post", .Post = true)
 
     Create_ConVars(.createConfigFile = true)
 
@@ -196,6 +196,19 @@ public EV_Playback(flags, invoker, eventIndex, Float: delay, Float: origin[3],
     if (eventIndex == m_usCreateExplosion && g_iActiveSmokeCount > 0) {
         Trigger_Smoke_Clearing(origin)
         return FMRES_IGNORED
+    }
+
+    if (invoker >= 1 && invoker <= MaxClients && g_iActiveSmokeCount > 0) {
+        static Float: vEye[3], Float: vAim[3], Float: vEnd[3]
+        static Float: vViewOfs[3]
+        pev(invoker, pev_origin, vEye)
+        pev(invoker, pev_view_ofs, vViewOfs)
+        xs_vec_add(vEye, vViewOfs, vEye)
+
+        velocity_by_aim(invoker, 4096, vAim)
+        xs_vec_add(vEye, vAim, vEnd)
+
+        On_Bullet_Fired(vEye, vEnd)
     }
 
     if (eventIndex != m_usCreateSmoke)
@@ -270,15 +283,23 @@ public CSGameRules_RestartRound() {
 // CS2 MECHANICS: HE GRENADE BLAST CLEARING & REFORMING
 // ============================================================================
 
-public On_HEGrenade_Explode_Post(const this, tracehandle, const bitsDamageType) {
-    if (!g_iActiveSmokeCount)
-        return HC_CONTINUE
+public Fwd_GrenadeThink_Post(const ent) {
+    if (!g_iActiveSmokeCount || !pev_valid(ent))
+        return HAM_IGNORED
 
-    static Float: explosionOrigin[3]
-    pev(this, pev_origin, explosionOrigin)
-    Trigger_Smoke_Clearing(explosionOrigin)
-
-    return HC_CONTINUE
+    static Float: flDmg
+    pev(ent, pev_dmg, flDmg)
+    // HE grenades have pev_dmg > 40.0; flashbang and smoke have pev_dmg == 0
+    if (flDmg > 40.0) {
+        static Float: flNextThink
+        pev(ent, pev_nextthink, flNextThink)
+        if (flNextThink <= 0.0 || (pev(ent, pev_flags) & FL_KILLME)) {
+            static Float: explosionOrigin[3]
+            pev(ent, pev_origin, explosionOrigin)
+            Trigger_Smoke_Clearing(explosionOrigin)
+        }
+    }
+    return HAM_IGNORED
 }
 
 static Trigger_Smoke_Clearing(const Float: explosionOrigin[3]) {
@@ -352,19 +373,24 @@ static Trigger_Smoke_Clearing(const Float: explosionOrigin[3]) {
 // CS2 MECHANICS: BULLET HOLES & VISION TUNNELS THROUGH SMOKE
 // ============================================================================
 
-public On_FireBullets3_Post(pEntity, Float:vecSrc[3], Float:vecDirShooting[3], Float:vecSpread, Float:flDistance, iPenetration, iBulletType, iDamage, Float:flRangeModifier, pevAttacker, bool:bPistol, shared_rand) {
-    if (!g_iActiveSmokeCount || pEntity < 1 || pEntity > MaxClients)
-        return HC_CONTINUE
+public Fwd_TraceAttack_Post(victim, attacker, Float:damage, Float:direction[3], tr, bitsDamageType) {
+    if (!g_iActiveSmokeCount || attacker < 1 || attacker > MaxClients || !is_user_connected(attacker))
+        return HAM_IGNORED
 
+    static Float: vecSrc[3], Float: vecEnd[3]
+    static Float: vViewOfs[3]
+    pev(attacker, pev_origin, vecSrc)
+    pev(attacker, pev_view_ofs, vViewOfs)
+    xs_vec_add(vecSrc, vViewOfs, vecSrc)
+
+    get_tr2(tr, TR_vecEndPos, vecEnd)
+
+    On_Bullet_Fired(vecSrc, vecEnd)
+    return HAM_IGNORED
+}
+
+static On_Bullet_Fired(const Float: vecSrc[3], const Float: vecEnd[3]) {
     new Float: gametime = get_gametime()
-
-    // Bullet end trajectory
-    static Float: vecEnd[3]
-    vecEnd[0] = vecSrc[0] + (vecDirShooting[0] * flDistance)
-    vecEnd[1] = vecSrc[1] + (vecDirShooting[1] * flDistance)
-    vecEnd[2] = vecSrc[2] + (vecDirShooting[2] * flDistance)
-
-    // Check if bullet passes through any active smoke
     const Float: smokeRadius = 132.0
     new bool: bHitSmoke = false
 
@@ -379,7 +405,7 @@ public On_FireBullets3_Post(pEntity, Float:vecSrc[3], Float:vecDirShooting[3], F
     }
 
     if (!bHitSmoke)
-        return HC_CONTINUE
+        return
 
     // 1. Register temporary vision tunnel through the smoke (0.40s duration)
     g_vecTunnelSrc[g_iTunnelHead] = vecSrc
@@ -402,8 +428,6 @@ public On_FireBullets3_Post(pEntity, Float:vecSrc[3], Float:vecDirShooting[3], F
             }
         }
     }
-
-    return HC_CONTINUE
 }
 
 static CPartSmokeGrenade_Create(const Float: origin[3], const Float: velocity[3],
