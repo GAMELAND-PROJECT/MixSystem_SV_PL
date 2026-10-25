@@ -389,7 +389,10 @@ public plugin_init()
     register_clcmd("drop", "Cmd_BlockDrop")
     RegisterHookChain(RG_CBasePlayer_MakeBomber, "RG_CBasePlayer_MakeBomber_Pre", .post = false)
     RegisterHookChain(RG_CBasePlayer_Observer_IsValidTarget, "RG_Observer_IsValidTarget_Pre", .post = false)
+    RegisterHookChain(RG_CBasePlayer_Observer_FindNextPlayer, "RG_Observer_FindNextPlayer_Pre", .post = false)
     RegisterHookChain(RG_CBasePlayer_Observer_SetMode, "RG_Observer_SetMode_Pre", .post = false)
+    register_clcmd("spec_menu", "Cmd_BlockSpecCmd")
+    register_clcmd("spec_mode", "Cmd_BlockSpecCmd")
     RegisterHookChain(RG_CBasePlayer_SwitchTeam, "RG_CBasePlayer_SwitchTeam_Pre", .post = false)
     RegisterHookChain(RG_CSGameRules_CanPlayerHearPlayer, "RG_CSGameRules_CanPlayerHearPlayer_Pre", .post = false)
     RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_HandleMenu_ChooseTeam_Pre", .post = false)
@@ -1546,6 +1549,15 @@ ApplySpectatorCameraSettings()
     }
 }
 
+public Cmd_BlockSpecCmd(id)
+{
+    if(g_iMatchState != STATE_WARMUP && is_user_connected(id) && !is_user_alive(id))
+    {
+        return PLUGIN_HANDLED
+    }
+    return PLUGIN_CONTINUE
+}
+
 public RG_Observer_SetMode_Pre(const id, iMode)
 {
     if(!is_user_connected(id) || g_iMatchState == STATE_WARMUP)
@@ -1563,10 +1575,37 @@ public RG_Observer_SetMode_Pre(const id, iMode)
     }
 
     // In competitive 5v5 mix / clanwar: STRICTLY FIRST PERSON ONLY (OBS_IN_EYE = 4)
-    // Third person chase (1), Free look (2), Roaming (3), Map (5, 6) are strictly blocked!
+    // If the player is already in first-person (OBS_IN_EYE = 4) and presses Ctrl (+duck) or Space (+jump),
+    // SUPERCEDE the call completely so the camera stays solidly inside the teammate without desync/void!
     if(iMode != 4)
     {
+        new iCurMode = get_entvar(id, var_iuser1)
+        if(iCurMode == 4)
+        {
+            return HC_SUPERCEDE
+        }
+
         SetHookChainArg(1, ATYPE_INTEGER, 4) // Force OBS_IN_EYE (Arg 1)
+    }
+
+    return HC_CONTINUE
+}
+
+public RG_Observer_FindNextPlayer_Pre(const id, bool:bReverse, const szName[])
+{
+    if(!is_user_connected(id) || is_user_alive(id))
+        return HC_CONTINUE
+
+    if(g_iMatchState == STATE_WARMUP)
+        return HC_CONTINUE
+
+    // During the 3.0s natural death sequence / killer follow cam:
+    // STRICTLY prevent skipping or switching between teammates!
+    // Player MUST stay on their killer / death view for the full 3 seconds like vanilla CS!
+    new Float:fDeadTime = Float:get_member(id, m_fDeadTime)
+    if(fDeadTime > 0.0 && (get_gametime() - fDeadTime) < 3.0)
+    {
+        return HC_SUPERCEDE
     }
 
     return HC_CONTINUE
@@ -1581,21 +1620,24 @@ public RG_Observer_IsValidTarget_Pre(const id, iTargetIndex, bool:bSameTeam)
     if(iMyTeam != TEAM_TERRORIST && iMyTeam != TEAM_CT)
         return HC_CONTINUE
 
-    // Target must be valid, connected, ALIVE, on same team, and not self
+    // If target is invalid, dead, disconnected, or self: reject!
     if(!iTargetIndex || !is_user_connected(iTargetIndex) || !is_user_alive(iTargetIndex) || iTargetIndex == id)
     {
         SetHookChainReturn(ATYPE_INTEGER, 0)
         return HC_SUPERCEDE
     }
 
+    // If target is on the opposite/enemy team: reject!
     if(get_member(iTargetIndex, m_iTeam) != iMyTeam)
     {
         SetHookChainReturn(ATYPE_INTEGER, 0)
         return HC_SUPERCEDE
     }
 
-    SetHookChainReturn(ATYPE_INTEGER, iTargetIndex)
-    return HC_SUPERCEDE
+    // TARGET IS A VALID ALIVE TEAMMATE:
+    // RETURN HC_CONTINUE so ReGameDLL returns its internal CBasePlayer* pointer!
+    // Never pass integer index as pointer which previously corrupted memory & dropped into void (0,0,0)!
+    return HC_CONTINUE
 }
 
 public RG_CBasePlayer_SwitchTeam_Pre(const id)
@@ -1672,8 +1714,7 @@ public Task_FixSpectatorClientCmd(id)
 {
     if(is_user_connected(id) && !is_user_alive(id))
     {
-        // Fixes classic CS 1.6 stuck duck state & spectator menu desync
-        client_cmd(id, "+duck;-duck;spec_menu 0")
+        client_cmd(id, "spec_menu 0")
     }
 }
 
@@ -1724,8 +1765,6 @@ public Task_EnforceTeammateObserver(id)
         set_entvar(id, var_iuser1, 4)
     }
 
-    // Clean up stuck duck flag from dying while ducking
-    client_cmd(id, "+duck;-duck")
 }
 
 public RG_CSGameRules_CanPlayerHearPlayer_Pre(const iListener, const iSender)
