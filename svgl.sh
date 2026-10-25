@@ -865,14 +865,7 @@ case "$cmd" in
         fi
         ;;
     console) attach_console "${2:-main}" ;;
-    logs)
-        lfile="$(log_file_for "${2:-main}")"
-        if [[ -f "$lfile" ]]; then
-            tail -n 50 -f "$lfile"
-        else
-            journalctl -u "$(service_name_for "${2:-main}")" -f
-        fi
-        ;;
+    logs) journalctl -u "$(service_name_for "${2:-main}")" -f ;;
     tail) tail -f "$(log_file_for "${2:-main}")" ;;
     update) bash "${PROJECT_DIR}/update.sh" ;;
     build|compile) shift; build_server_plugins "$@" ;;

@@ -131,8 +131,8 @@ if [ -f "gameland_admin_tools.sma" ]; then
     echo "  -> gameland_admin_tools.amxx compiled successfully!"
 fi
 
-# Compile GameLand Performance, Fixer, Weapons, Smoke and Drop Plugins
-for p in gameland_lan_optimizer gameland_sound_optimizer gameland_fastduck_fix gameland_dense_smoke gameland_only_enforcer player_drop backweapons; do
+# Compile GameLand Performance, Fixer, Weapons and Drop Plugins
+for p in gameland_lan_optimizer gameland_sound_optimizer gameland_fastduck_fix gameland_only_enforcer player_drop backweapons; do
     if [ -f "${p}.sma" ]; then
         echo "[3c/5] Compiling ${p}.sma..."
         ./amxxpc "${p}.sma" -i"include" -o"${PLUGINS_DIR}/${p}.amxx" || true
@@ -150,7 +150,6 @@ cd "${PROJECT_DIR}"
 # ─── 4. Register in plugins.ini & modules.ini ───────────
 echo "[4/5] Registering plugins and modules..."
 MODULES_INI="${CONFIGS_DIR}/modules.ini"
-sed -i -E 's/^[[:space:]]*reapi([[:space:]]|$)/;reapi/' "${MODULES_INI}" 2>/dev/null || true
 if ! grep -qE '^[[:space:]]*nextclientapi([[:space:]]|$)' "${MODULES_INI}"; then
     printf '\nnextclientapi\n' >> "${MODULES_INI}"
     echo "  -> Ensured nextclientapi in modules.ini"
