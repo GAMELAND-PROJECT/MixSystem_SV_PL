@@ -112,7 +112,7 @@ enum _: CustomPEV {
     _pev_spawnInside    = pev_iuser1,
     _pev_popCreated     = pev_iuser2,
 
-    _pev_scaleSpeed     = pev_fuser2,
+    _pev_targetScale    = pev_fuser2,
     _pev_dieTime        = pev_fuser3,
     _pev_timeCreated    = pev_fuser4,
 }
@@ -260,34 +260,41 @@ static CPartSmokeGrenade_Create(const Float: origin[3], const Float: velocity[3]
 }
 
 static CPartSmokeGrenade_Think(const entity) {
-    if (!pev(entity, _pev_popCreated)) {
-        set_pev(entity, _pev_popCreated, true)
+    new Float: gametime = get_gametime()
+    new Float: timeCreated, Float: dieTime
+    pev(entity, _pev_timeCreated, timeCreated)
+    pev(entity, _pev_dieTime, dieTime)
+    new Float: age = gametime - timeCreated
+    new Float: remainingTime = dieTime - gametime
 
+    static Float: scale, Float: targetScale
+    pev(entity, pev_scale, scale)
+    pev(entity, _pev_targetScale, targetScale)
+
+    // ------------------------------------------------------------------------
+    // CS2-Style Volumetric Bloom / Billowing Animation Phase (First 1.25s)
+    // ------------------------------------------------------------------------
+    if (age < 1.25) {
+        // Drag deceleration on outward velocity (creates mushrooming volumetric bloom)
         static Float: velocity[3]
         pev(entity, pev_velocity, velocity)
-        xs_vec_mul_scalar(velocity, 0.035, velocity)
+        if (velocity[0] != 0.0 || velocity[1] != 0.0 || velocity[2] != 0.0) {
+            xs_vec_mul_scalar(velocity, 0.87, velocity)
+            set_pev(entity, pev_velocity, velocity)
+        }
 
-        set_pev(entity, pev_velocity, velocity, sizeof(velocity))
-    }
-
-    new Float: gametime = get_gametime()
-    new Float: remainingTime = pev(entity, _pev_dieTime) - gametime
-
-    new Float: initialAlpha
-    pev(entity, pev_fuser1, initialAlpha)
-    if (initialAlpha <= 0.0)
-        initialAlpha = 255.0
-
-    // Realistic competitive scaling (expands up to 3.4 max for natural choke-point coverage)
-    static Float: scale
-    pev(entity, pev_scale, scale)
-    new Float: scaleSpd
-    pev(entity, _pev_scaleSpeed, scaleSpd)
-    if (scale < 3.4 && scaleSpd > 0.0) {
-        scale += scaleSpd
-        set_pev(entity, pev_scale, scale)
+        // Smooth exponential easing expansion: fast initial blossom, then gentle cushion
+        if (scale < targetScale) {
+            scale += (targetScale - scale) * 0.17
+            if (scale > targetScale)
+                scale = targetScale
+            set_pev(entity, pev_scale, scale)
+        }
     } else {
-        set_pev(entity, _pev_scaleSpeed, 0.0)
+        // Mature cloud: ensure scale has reached full target
+        if (scale < targetScale) {
+            set_pev(entity, pev_scale, targetScale)
+        }
     }
 
     // Dense 100% Solid Opacity Curve:
@@ -316,11 +323,15 @@ static CPartSmokeGrenade_Think(const entity) {
 static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
                     const Float: color[4], bool: insideCloud) {
 
+    // Initial scale starts compact (~1.7 to 2.1) to allow the CS2 mushroom bloom animation
+    new Float: flInitialScale = random_float(1.7, 2.1)
+    new Float: flTargetScale = random_float(3.85, 4.05) // Exact +15% size from 3.4
+
     new entity = CPartSmokeGrenade_Create(
         .origin = origin,
         .velocity = velocity,
         .model = g_sprFile,
-        .scale = random_float(2.2, 2.7),
+        .scale = flInitialScale,
         .color = color
     )
 
@@ -329,22 +340,21 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
     new Float: dieTime = gametime + amx_smokegren_lifetime
 
     const Float: scaleFactor = 1.35
-    const Float: maxRotateVelocity = 6.0
-    const Float: scaleSpeed = 0.018
+    const Float: maxRotateVelocity = 7.0
 
     if (insideCloud) {
         avelocity[2] = random_float(-(maxRotateVelocity / scaleFactor), (maxRotateVelocity / scaleFactor))
-        set_pev(entity, _pev_scaleSpeed, scaleSpeed / scaleFactor)
+        set_pev(entity, _pev_targetScale, flTargetScale)
         set_pev(entity, _pev_dieTime, dieTime)
     } else {
         avelocity[2] = random_float(-maxRotateVelocity, maxRotateVelocity)
-        set_pev(entity, _pev_scaleSpeed, scaleSpeed)
+        set_pev(entity, _pev_targetScale, flTargetScale)
         set_pev(entity, _pev_dieTime, dieTime)
     }
 
     set_pev(entity, _pev_spawnInside, insideCloud)
     set_pev(entity, pev_avelocity, avelocity)
-    set_pev(entity, pev_nextthink, gametime + 0.15)
+    set_pev(entity, pev_nextthink, gametime + 0.05)
 
     return entity
 }
@@ -363,7 +373,7 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
 
         static Float: velocity[3]
         for (new i; i < sizeof(velocity); i++) {
-            velocity[i] = (vForward[i] * 24) + (vUp[i] * 12)
+            velocity[i] = (vForward[i] * 52.0) + (vUp[i] * 22.0)
         }
 
         CreateGasSmoke(origin, velocity, color, .insideCloud = false)
@@ -371,42 +381,53 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
 }
 
 static CreateGasInside(const Float: origin[3], Float: color[4]) {
-    // 1. Center Core Puffs (3 vertical heights: 10, 24, 38)
+    // 1. Center Core Puffs (3 vertical heights: 10, 28, 48) with slight upward balloon drift
     new Float: centerPos[3]
-    static const Float: flVerticalHeights[3] = { 10.0, 24.0, 38.0 }
+    static const Float: flVerticalHeights[3] = { 10.0, 28.0, 48.0 }
     for(new h = 0; h < 3; h++) {
         centerPos = origin
         centerPos[2] += flVerticalHeights[h]
-        CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
+        new Float: vCoreVel[3] = { 0.0, 0.0, 14.0 }
+        CreateGasSmoke(centerPos, vCoreVel, color, .insideCloud = true)
     }
 
-    // 2. Inner Ring (Radius 16 units: 5 points at z + 16)
+    // 2. Inner Ring (Radius 19 units: 6 points at z + 20) with outward bloom velocity
     static Float: vAngles[3], Float: vForward[3], Float: vRight[3], Float: vUp[3]
-    new Float: stepInner = 360.0 / 5.0
+    new Float: stepInner = 360.0 / 6.0
     for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepInner) {
         vAngles[XS_YAW] = fAngle
         engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
         xs_vec_normalize(vForward, vForward)
 
-        new Float: pos[3]
-        pos[0] = origin[0] + (vForward[0] * 16.0)
-        pos[1] = origin[1] + (vForward[1] * 16.0)
-        pos[2] = origin[2] + 16.0
-        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
+        new Float: pos[3], Float: vel[3]
+        pos[0] = origin[0] + (vForward[0] * 12.0)
+        pos[1] = origin[1] + (vForward[1] * 12.0)
+        pos[2] = origin[2] + 20.0
+
+        vel[0] = vForward[0] * 18.0
+        vel[1] = vForward[1] * 18.0
+        vel[2] = 8.0
+
+        CreateGasSmoke(pos, vel, color, .insideCloud = true)
     }
 
-    // 3. Perimeter Ring (Radius 28 units: 6 points at z + 22)
-    new Float: stepMid = 360.0 / 6.0
+    // 3. Perimeter Ring (Radius 34 units: 8 points at z + 26) with outward bloom velocity
+    new Float: stepMid = 360.0 / 8.0
     for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepMid) {
         vAngles[XS_YAW] = fAngle + (stepMid * 0.5)
         engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
         xs_vec_normalize(vForward, vForward)
 
-        new Float: pos[3]
-        pos[0] = origin[0] + (vForward[0] * 28.0)
-        pos[1] = origin[1] + (vForward[1] * 28.0)
-        pos[2] = origin[2] + 22.0
-        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
+        new Float: pos[3], Float: vel[3]
+        pos[0] = origin[0] + (vForward[0] * 18.0)
+        pos[1] = origin[1] + (vForward[1] * 18.0)
+        pos[2] = origin[2] + 26.0
+
+        vel[0] = vForward[0] * 32.0
+        vel[1] = vForward[1] * 32.0
+        vel[2] = 10.0
+
+        CreateGasSmoke(pos, vel, color, .insideCloud = true)
     }
 }
 
@@ -563,9 +584,16 @@ stock bool:DoesSegmentIntersectSphere(const Float:p1[3], const Float:p2[3], cons
     xs_vec_sub(p2, p1, d)
     xs_vec_sub(p1, center, m)
 
+    new Float:dist = xs_vec_len(d)
     new Float:c = xs_vec_dot(m, m) - (radius * radius)
-    if (c <= 0.0)
-        return true // Origin is inside the smoke cloud
+
+    if (c <= 0.0) {
+        // Host (p1) is inside the smoke cloud:
+        // Allow close-quarter combat if enemy is near (< 120 units)
+        if (dist < 120.0)
+            return false
+        return true // Far enemy is blocked by dense smoke fog
+    }
 
     new Float:b = xs_vec_dot(m, d)
     if (b > 0.0)
@@ -612,7 +640,7 @@ public Fwd_AddToFullPack_Post(es_handle, e, ent, host, hostflags, player, pSet) 
     vTargetOrigin[2] += 12.0 // Center of chest
 
     new Float: gametime = get_gametime()
-    const Float: smokeRadius = 115.0
+    const Float: smokeRadius = 132.0 // +15% from 115.0
 
     for (new i = 0; i < g_iActiveSmokeCount; i++) {
         if (gametime > g_fSmokeExpireTime[i])
@@ -658,7 +686,7 @@ public Task_SmokePlayerCheck() {
     }
 
     static Float: pOrigin[3]
-    const Float: insideRadius = 88.0
+    const Float: insideRadius = 98.0 // +15% from 88.0
 
     for (new p = 1; p <= MaxClients; p++) {
         if (!is_user_connected(p) || !is_user_alive(p)) {
@@ -696,14 +724,15 @@ stock SendSmokeFade(id, bool:bInside) {
 
     message_begin(MSG_ONE_UNRELIABLE, g_iMsgScreenFade, _, id)
     if (bInside) {
-        // Pure white dense smoke overlay while inside the cloud (duration 1.0s, hold 1.0s, stay out)
+        // Realistic volumetric white misty fog (dense atmosphere, but NOT 100% pitch-white blinded)
+        // Player can see weapon model, crosshair, and immediately adjacent floor/walls
         write_short(1 << 12)        // Duration (1.0s)
         write_short(1 << 12)        // Hold time
         write_short(0x0004)         // FFADE_STAYOUT
         write_byte(245)             // R (White)
         write_byte(245)             // G (White)
         write_byte(245)             // B (White)
-        write_byte(255)             // Alpha (100% solid)
+        write_byte(192)             // Alpha (75% opacity - balanced misty fog!)
     } else {
         // Clear fade smoothly
         write_short(1 << 11)        // Duration (0.5s)
