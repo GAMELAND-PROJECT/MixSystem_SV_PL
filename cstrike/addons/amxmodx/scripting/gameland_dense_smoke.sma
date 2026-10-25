@@ -145,7 +145,6 @@ public plugin_init() {
     register_event("HLTV", "CSGameRules_RestartRound", "a", "1=0", "2=0")
 
     register_forward(FM_PlaybackEvent, "EV_Playback", ._post = false)
-    register_forward(FM_AddToFullPack, "Fwd_AddToFullPack_Post", ._post = true)
     RegisterHam(Ham_Think, g_baseClassname, "CNullEntity_Think", .Post = false)
 
     g_iMsgScreenFade = get_user_msgid("ScreenFade")
@@ -155,6 +154,14 @@ public plugin_init() {
 
     if (amx_smokegren_fix_waterrender)
         ChangeRenderMode("func_water", kRenderNormal)
+}
+
+public client_putinserver(id) {
+    if (id >= 1 && id <= 32 && is_user_connected(id) && !is_user_bot(id)) {
+        // Enforce true 3D volumetric smoke rendering on client engine (fastsprites 0 = 3D volumetric, NOT flat 2D)
+        client_cmd(id, "fastsprites 0")
+        client_cmd(id, "max_smokepuffs 300")
+    }
 }
 
 public client_disconnected(id) {
@@ -323,9 +330,9 @@ static CPartSmokeGrenade_Think(const entity) {
 static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
                     const Float: color[4], bool: insideCloud) {
 
-    // Initial scale starts compact (~1.8 to 2.18) to allow the CS2 mushroom bloom animation
-    new Float: flInitialScale = random_float(1.8, 2.18)
-    new Float: flTargetScale = random_float(4.04, 4.23) // Balanced -5% size adjustment
+    // Initial scale starts compact (~1.6 to 2.1) to allow the volumetric bloom expansion
+    new Float: flInitialScale = random_float(1.6, 2.1)
+    new Float: flTargetScale = random_float(3.75, 4.15) // Natural tournament scale
 
     new entity = CPartSmokeGrenade_Create(
         .origin = origin,
@@ -339,19 +346,15 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
     new Float: gametime = get_gametime()
     new Float: dieTime = gametime + amx_smokegren_lifetime
 
-    const Float: scaleFactor = 1.35
-    const Float: maxRotateVelocity = 7.0
+    const Float: maxRotateVelocity = 12.0
 
-    if (insideCloud) {
-        avelocity[2] = random_float(-(maxRotateVelocity / scaleFactor), (maxRotateVelocity / scaleFactor))
-        set_pev(entity, _pev_targetScale, flTargetScale)
-        set_pev(entity, _pev_dieTime, dieTime)
-    } else {
-        avelocity[2] = random_float(-maxRotateVelocity, maxRotateVelocity)
-        set_pev(entity, _pev_targetScale, flTargetScale)
-        set_pev(entity, _pev_dieTime, dieTime)
-    }
+    // Random rotational velocity gives continuous 3D angular movement so particles never look like flat static discs
+    avelocity[0] = 0.0
+    avelocity[1] = 0.0
+    avelocity[2] = random_float(-maxRotateVelocity, maxRotateVelocity)
 
+    set_pev(entity, _pev_targetScale, flTargetScale)
+    set_pev(entity, _pev_dieTime, dieTime)
     set_pev(entity, _pev_spawnInside, insideCloud)
     set_pev(entity, pev_avelocity, avelocity)
     set_pev(entity, pev_nextthink, gametime + 0.05)
@@ -372,8 +375,8 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
         xs_vec_normalize(vForward, vForward)
 
         static Float: velocity[3]
-        for (new i; i < sizeof(velocity); i++) {
-            velocity[i] = (vForward[i] * 54.0) + (vUp[i] * 23.0)
+        for (new i = 0; i < 3; i++) {
+            velocity[i] = (vForward[i] * 46.0) + (vUp[i] * 18.0)
         }
 
         CreateGasSmoke(origin, velocity, color, .insideCloud = false)
@@ -381,51 +384,120 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
 }
 
 static CreateGasInside(const Float: origin[3], Float: color[4]) {
-    // 1. Center Core Puffs (3 vertical heights: 10.5, 29.5, 50.0) with slight upward balloon drift
-    new Float: centerPos[3]
-    static const Float: flVerticalHeights[3] = { 10.5, 29.5, 50.0 }
-    for(new h = 0; h < 3; h++) {
-        centerPos = origin
-        centerPos[2] += flVerticalHeights[h]
-        new Float: vCoreVel[3] = { 0.0, 0.0, 14.2 }
-        CreateGasSmoke(centerPos, vCoreVel, color, .insideCloud = true)
-    }
+    // ========================================================================
+    // TRUE 3D VOLUMETRIC SPHERICAL SMOKE CLOUD (6-Tier Spatial Geometry)
+    // Distributed in 3D (X, Y, Z) so the smoke has spherical depth from all angles
+    // ========================================================================
 
-    // 2. Inner Ring (Radius 12.8 units: 6 points at z + 21) with outward bloom velocity
-    static Float: vAngles[3], Float: vForward[3], Float: vRight[3], Float: vUp[3]
-    new Float: stepInner = 360.0 / 6.0
-    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepInner) {
-        vAngles[XS_YAW] = fAngle
-        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
-        xs_vec_normalize(vForward, vForward)
+    // 1. Vertical Spine (Central Core Column - 5 puffs spanning z: 6 to 86)
+    static const Float: flSpineHeights[5] = { 6.0, 22.0, 42.0, 64.0, 86.0 }
+    for (new h = 0; h < 5; h++) {
+        new Float: pos[3]
+        pos[0] = origin[0] + random_float(-4.0, 4.0)
+        pos[1] = origin[1] + random_float(-4.0, 4.0)
+        pos[2] = origin[2] + flSpineHeights[h]
 
-        new Float: pos[3], Float: vel[3]
-        pos[0] = origin[0] + (vForward[0] * 12.8)
-        pos[1] = origin[1] + (vForward[1] * 12.8)
-        pos[2] = origin[2] + 21.0
-
-        vel[0] = vForward[0] * 19.0
-        vel[1] = vForward[1] * 19.0
-        vel[2] = 8.5
+        new Float: vel[3]
+        vel[0] = random_float(-4.0, 4.0)
+        vel[1] = random_float(-4.0, 4.0)
+        vel[2] = 9.0 + random_float(0.0, 4.0)
 
         CreateGasSmoke(pos, vel, color, .insideCloud = true)
     }
 
-    // 3. Perimeter Ring (Radius 19.0 units: 8 points at z + 27) with outward bloom velocity
-    new Float: stepMid = 360.0 / 8.0
-    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepMid) {
-        vAngles[XS_YAW] = fAngle + (stepMid * 0.5)
+    static Float: vAngles[3], Float: vForward[3], Float: vRight[3], Float: vUp[3]
+
+    // 2. Base Tier (6 puffs, hugging ground at z + 12, radius ~20 units)
+    new Float: stepBase = 360.0 / 6.0
+    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepBase) {
+        vAngles[XS_YAW] = fAngle
         engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
         xs_vec_normalize(vForward, vForward)
 
         new Float: pos[3], Float: vel[3]
         pos[0] = origin[0] + (vForward[0] * 19.0)
         pos[1] = origin[1] + (vForward[1] * 19.0)
-        pos[2] = origin[2] + 27.0
+        pos[2] = origin[2] + 12.0
 
-        vel[0] = vForward[0] * 33.0
-        vel[1] = vForward[1] * 33.0
-        vel[2] = 10.5
+        vel[0] = vForward[0] * 15.0
+        vel[1] = vForward[1] * 15.0
+        vel[2] = 4.0
+
+        CreateGasSmoke(pos, vel, color, .insideCloud = true)
+    }
+
+    // 3. Lower Dome Tier (8 puffs at z + 26, radius ~28 units)
+    new Float: stepLower = 360.0 / 8.0
+    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepLower) {
+        vAngles[XS_YAW] = fAngle + (stepLower * 0.25)
+        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        new Float: pos[3], Float: vel[3]
+        pos[0] = origin[0] + (vForward[0] * 27.0)
+        pos[1] = origin[1] + (vForward[1] * 27.0)
+        pos[2] = origin[2] + 26.0
+
+        vel[0] = vForward[0] * 21.0
+        vel[1] = vForward[1] * 21.0
+        vel[2] = 7.5
+
+        CreateGasSmoke(pos, vel, color, .insideCloud = true)
+    }
+
+    // 4. Mid Equator Tier (10 puffs, widest spherical cross-section at z + 44, radius ~36 units)
+    new Float: stepEquator = 360.0 / 10.0
+    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepEquator) {
+        vAngles[XS_YAW] = fAngle + (stepEquator * 0.5)
+        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        new Float: pos[3], Float: vel[3]
+        pos[0] = origin[0] + (vForward[0] * 35.0)
+        pos[1] = origin[1] + (vForward[1] * 35.0)
+        pos[2] = origin[2] + 44.0
+
+        vel[0] = vForward[0] * 27.0
+        vel[1] = vForward[1] * 27.0
+        vel[2] = 9.5
+
+        CreateGasSmoke(pos, vel, color, .insideCloud = true)
+    }
+
+    // 5. Upper Dome Tier (8 puffs at z + 62, radius ~26 units)
+    new Float: stepUpper = 360.0 / 8.0
+    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepUpper) {
+        vAngles[XS_YAW] = fAngle + (stepUpper * 0.75)
+        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        new Float: pos[3], Float: vel[3]
+        pos[0] = origin[0] + (vForward[0] * 25.0)
+        pos[1] = origin[1] + (vForward[1] * 25.0)
+        pos[2] = origin[2] + 62.0
+
+        vel[0] = vForward[0] * 19.0
+        vel[1] = vForward[1] * 19.0
+        vel[2] = 13.0
+
+        CreateGasSmoke(pos, vel, color, .insideCloud = true)
+    }
+
+    // 6. Crown Tier (4 puffs at z + 78, radius ~14 units)
+    new Float: stepCrown = 360.0 / 4.0
+    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepCrown) {
+        vAngles[XS_YAW] = fAngle + 45.0
+        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        new Float: pos[3], Float: vel[3]
+        pos[0] = origin[0] + (vForward[0] * 13.0)
+        pos[1] = origin[1] + (vForward[1] * 13.0)
+        pos[2] = origin[2] + 78.0
+
+        vel[0] = vForward[0] * 11.0
+        vel[1] = vForward[1] * 11.0
+        vel[2] = 16.5
 
         CreateGasSmoke(pos, vel, color, .insideCloud = true)
     }
@@ -576,85 +648,8 @@ static stock entityCount(const add = 0) {
 
 
 // ============================================================================
-// 100% OPAQUE ANTI-SEE-THROUGH RAYCAST OCCLUSION & INSIDE-SMOKE SCREEN BLINDING
+// INSIDE-SMOKE ATMOSPHERIC MIST SCREENFADE (No artificial model hiding!)
 // ============================================================================
-
-stock bool:DoesSegmentIntersectSphere(const Float:p1[3], const Float:p2[3], const Float:center[3], const Float:radius) {
-    static Float:d[3], Float:m[3]
-    xs_vec_sub(p2, p1, d)
-    xs_vec_sub(p1, center, m)
-
-    new Float:dist = xs_vec_len(d)
-    new Float:c = xs_vec_dot(m, m) - (radius * radius)
-
-    if (c <= 0.0) {
-        // Host (p1) is inside the smoke cloud:
-        // Allow close-quarter combat if enemy is near (< 120 units)
-        if (dist < 120.0)
-            return false
-        return true // Far enemy is blocked by dense smoke fog
-    }
-
-    new Float:b = xs_vec_dot(m, d)
-    if (b > 0.0)
-        return false // Sphere is behind the ray
-
-    new Float:a = xs_vec_dot(d, d)
-    if (a == 0.0)
-        return false
-
-    new Float:discr = (b * b) - (a * c)
-    if (discr < 0.0)
-        return false // Ray misses sphere completely
-
-    new Float:sqrtDiscr = floatsqroot(discr)
-    new Float:t1 = (-b - sqrtDiscr) / a
-    if (t1 >= 0.0 && t1 <= 1.0)
-        return true
-
-    new Float:t2 = (-b + sqrtDiscr) / a
-    if (t2 >= 0.0 && t2 <= 1.0)
-        return true
-
-    return false
-}
-
-public Fwd_AddToFullPack_Post(es_handle, e, ent, host, hostflags, player, pSet) {
-    if (!player || !g_iActiveSmokeCount)
-        return FMRES_IGNORED
-
-    if (ent == host || !is_user_alive(ent) || !is_user_alive(host))
-        return FMRES_IGNORED
-
-    // In CS: 1 = Terrorist, 2 = CT. Never block teammates!
-    if (get_user_team(ent) == get_user_team(host))
-        return FMRES_IGNORED
-
-    static Float: vHostEye[3], Float: vHostOrigin[3], Float: vHostViewOfs[3]
-    pev(host, pev_origin, vHostOrigin)
-    pev(host, pev_view_ofs, vHostViewOfs)
-    xs_vec_add(vHostOrigin, vHostViewOfs, vHostEye)
-
-    static Float: vTargetOrigin[3]
-    pev(ent, pev_origin, vTargetOrigin)
-    vTargetOrigin[2] += 12.0 // Center of chest
-
-    new Float: gametime = get_gametime()
-    const Float: smokeRadius = 138.0 // Balanced -5% size adjustment
-
-    for (new i = 0; i < g_iActiveSmokeCount; i++) {
-        if (gametime > g_fSmokeExpireTime[i])
-            continue
-
-        if (DoesSegmentIntersectSphere(vHostEye, vTargetOrigin, g_vecActiveSmokes[i], smokeRadius)) {
-            // Block enemy model rendering completely - 100% impenetrable anti-see-through!
-            set_es(es_handle, ES_Effects, get_es(es_handle, ES_Effects) | EF_NODRAW)
-            return FMRES_HANDLED
-        }
-    }
-
-    return FMRES_IGNORED
-}
 
 public Task_SmokePlayerCheck() {
     if (!g_iActiveSmokeCount)
@@ -686,7 +681,7 @@ public Task_SmokePlayerCheck() {
     }
 
     static Float: pOrigin[3]
-    const Float: insideRadius = 103.0 // Balanced -5% size adjustment
+    const Float: insideRadius = 96.0 // Balanced -5% size adjustment
 
     for (new p = 1; p <= MaxClients; p++) {
         if (!is_user_connected(p) || !is_user_alive(p)) {
@@ -732,7 +727,7 @@ stock SendSmokeFade(id, bool:bInside) {
         write_byte(245)             // R (White)
         write_byte(245)             // G (White)
         write_byte(245)             // B (White)
-        write_byte(192)             // Alpha (75% opacity - balanced misty fog!)
+        write_byte(170)             // Alpha (~67% opacity - soft, natural white misty fog)
     } else {
         // Clear fade smoothly
         write_short(1 << 11)        // Duration (0.5s)
