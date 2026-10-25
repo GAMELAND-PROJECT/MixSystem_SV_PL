@@ -163,12 +163,7 @@ public plugin_init() {
     g_iMsgScreenFade = get_user_msgid("ScreenFade")
     set_task(0.1, "Task_SmokePlayerCheck", .flags = "b")
 
-    // CS2 Mechanics: HE Grenade smoke clearing & Bullet holes (Pure HamSandwich & FakeMeta)
-    RegisterHam(Ham_Think, "grenade", "Fwd_GrenadeThink_Post", .Post = true)
-    RegisterHam(Ham_TraceAttack, "worldspawn", "Fwd_TraceAttack_Post", .Post = true)
-    RegisterHam(Ham_TraceAttack, "player", "Fwd_TraceAttack_Post", .Post = true)
-
-    Create_ConVars(.createConfigFile = true)
+    Create_ConVars(.createConfigFile = false)
 
     if (amx_smokegren_fix_waterrender)
         ChangeRenderMode("func_water", kRenderNormal)
@@ -283,25 +278,6 @@ public CSGameRules_RestartRound() {
 // CS2 MECHANICS: HE GRENADE BLAST CLEARING & REFORMING
 // ============================================================================
 
-public Fwd_GrenadeThink_Post(const ent) {
-    if (!g_iActiveSmokeCount || !pev_valid(ent))
-        return HAM_IGNORED
-
-    static Float: flDmg
-    pev(ent, pev_dmg, flDmg)
-    // HE grenades have pev_dmg > 40.0; flashbang and smoke have pev_dmg == 0
-    if (flDmg > 40.0) {
-        static Float: flNextThink
-        pev(ent, pev_nextthink, flNextThink)
-        if (flNextThink <= 0.0 || (pev(ent, pev_flags) & FL_KILLME)) {
-            static Float: explosionOrigin[3]
-            pev(ent, pev_origin, explosionOrigin)
-            Trigger_Smoke_Clearing(explosionOrigin)
-        }
-    }
-    return HAM_IGNORED
-}
-
 static Trigger_Smoke_Clearing(const Float: explosionOrigin[3]) {
     new Float: gametime = get_gametime()
     const Float: BLAST_CLEAR_RADIUS = 250.0
@@ -373,21 +349,7 @@ static Trigger_Smoke_Clearing(const Float: explosionOrigin[3]) {
 // CS2 MECHANICS: BULLET HOLES & VISION TUNNELS THROUGH SMOKE
 // ============================================================================
 
-public Fwd_TraceAttack_Post(victim, attacker, Float:damage, Float:direction[3], tr, bitsDamageType) {
-    if (!g_iActiveSmokeCount || attacker < 1 || attacker > MaxClients || !is_user_connected(attacker))
-        return HAM_IGNORED
 
-    static Float: vecSrc[3], Float: vecEnd[3]
-    static Float: vViewOfs[3]
-    pev(attacker, pev_origin, vecSrc)
-    pev(attacker, pev_view_ofs, vViewOfs)
-    xs_vec_add(vecSrc, vViewOfs, vecSrc)
-
-    get_tr2(tr, TR_vecEndPos, vecEnd)
-
-    On_Bullet_Fired(vecSrc, vecEnd)
-    return HAM_IGNORED
-}
 
 static On_Bullet_Fired(const Float: vecSrc[3], const Float: vecEnd[3]) {
     new Float: gametime = get_gametime()
