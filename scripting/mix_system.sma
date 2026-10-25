@@ -261,8 +261,9 @@ public plugin_init()
     RegisterHookChain(RG_PlantBomb, "RG_PlantBomb_Post", .post = true)
     RegisterHookChain(RG_CGrenade_DefuseBombEnd, "RG_CGrenade_DefuseBombEnd_Post", .post = true)
     RegisterHookChain(RG_CBasePlayer_MakeBomber, "RG_CBasePlayer_MakeBomber_Pre", .post = false)
-    RegisterHookChain(RG_CBasePlayer_Observer_FindNextPlayer, "RG_Observer_FindNextPlayer_Pre", .post = false)
+    RegisterHookChain(RG_CBasePlayer_Observer_IsValidTarget, "RG_Observer_IsValidTarget_Pre", .post = false)
     RegisterHookChain(RG_CBasePlayer_Observer_SetMode, "RG_Observer_SetMode_Pre", .post = false)
+    RegisterHookChain(RG_CBasePlayer_SwitchTeam, "RG_CBasePlayer_SwitchTeam_Pre", .post = false)
     RegisterHookChain(RG_CSGameRules_CanPlayerHearPlayer, "RG_CSGameRules_CanPlayerHearPlayer_Pre", .post = false)
     RegisterHookChain(RG_CBasePlayer_HasRestrictItem, "RG_CBasePlayer_HasRestrictItem_Pre", .post = false)
 
@@ -1133,9 +1134,11 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
 
 ApplySpectatorCameraSettings()
 {
-    // AFK Guard is ALWAYS disabled by default for 5v5 competitive mix to prevent accidental kicks
+    // AFK Guard, AutoKick, and Auto Team Balance strictly disabled
     set_cvar_num("gameland_afk_guard", 0)
     set_cvar_num("mp_autokick", 0)
+    set_cvar_num("mp_autoteambalance", 0)
+    set_cvar_num("mp_limitteams", 0)
 
     if(g_iMatchState == STATE_WARMUP)
     {
@@ -1146,9 +1149,9 @@ ApplySpectatorCameraSettings()
     }
     else
     {
-        // Competitive Match / Knife Round: Teammates only (smooth left/right click teammate cycling)
-        set_cvar_num("mp_forcecamera", 1)
-        set_cvar_num("mp_forcechasecam", 1)
+        // Competitive Match / Knife Round: Teammates ONLY, STRICTLY FIRST PERSON ONLY (OBS_IN_EYE)
+        set_cvar_num("mp_forcecamera", 2)
+        set_cvar_num("mp_forcechasecam", 2)
         set_cvar_num("mp_fadetoblack", 0)
     }
 }
@@ -1169,18 +1172,49 @@ public RG_Observer_SetMode_Pre(const id, iMode)
         return HC_CONTINUE
     }
 
-    // Block free-roaming / out-of-bounds spectator modes in competitive match:
-    // 2 = OBS_CHASE_FREE, 3 = OBS_ROAMING, 5 = OBS_MAP_FREE, 6 = OBS_MAP_CHASE
-    // Allow classic OBS_CHASE_LOCKED (1) and OBS_IN_EYE (4) so player can switch naturally with Jump
-    if(iMode == 2 || iMode == 3 || iMode == 5 || iMode == 6)
+    // In competitive 5v5 mix / clanwar: STRICTLY FIRST PERSON ONLY (OBS_IN_EYE = 4)
+    // Third person chase (1), Free look (2), Roaming (3), Map (5, 6) are strictly blocked!
+    if(iMode != 4)
     {
-        new iCurMode = get_entvar(id, var_iuser1)
-        if(iCurMode != 1 && iCurMode != 4)
-            iCurMode = 1 // Default to classic third-person chase behind teammate
-
-        SetHookChainArg(1, ATYPE_INTEGER, iCurMode)
+        SetHookChainArg(1, ATYPE_INTEGER, 4) // Force OBS_IN_EYE (Arg 1)
     }
 
+    return HC_CONTINUE
+}
+
+public RG_Observer_IsValidTarget_Pre(const id, iTargetIndex, bool:bSameTeam)
+{
+    if(g_iMatchState == STATE_WARMUP)
+        return HC_CONTINUE
+
+    new TeamName:iMyTeam = get_member(id, m_iTeam)
+    if(iMyTeam != TEAM_TERRORIST && iMyTeam != TEAM_CT)
+        return HC_CONTINUE
+
+    // Target must be valid, connected, ALIVE, on same team, and not self
+    if(!iTargetIndex || !is_user_connected(iTargetIndex) || !is_user_alive(iTargetIndex) || iTargetIndex == id)
+    {
+        SetHookChainReturn(ATYPE_INTEGER, 0)
+        return HC_SUPERCEDE
+    }
+
+    if(get_member(iTargetIndex, m_iTeam) != iMyTeam)
+    {
+        SetHookChainReturn(ATYPE_INTEGER, 0)
+        return HC_SUPERCEDE
+    }
+
+    SetHookChainReturn(ATYPE_INTEGER, iTargetIndex)
+    return HC_SUPERCEDE
+}
+
+public RG_CBasePlayer_SwitchTeam_Pre(const id)
+{
+    // Auto-teambalance by engine is strictly prohibited in competitive matches
+    if(g_iMatchState != STATE_WARMUP)
+    {
+        return HC_SUPERCEDE
+    }
     return HC_CONTINUE
 }
 
@@ -1232,14 +1266,8 @@ stock bool:SwitchToTeammate(id, bool:bReverse)
     new iNewTarget = iTeammates[iNextIndex]
     if(iNewTarget && is_user_connected(iNewTarget) && is_user_alive(iNewTarget))
     {
-        new iMode = get_entvar(id, var_iuser1)
-        if(iMode != 1 && iMode != 4)
-        {
-            iMode = 1 // Default to classic CS third-person chase
-        }
-
-        rg_set_observer_mode(id, iMode)
-        set_entvar(id, var_iuser1, iMode)
+        rg_set_observer_mode(id, 4) // Strictly OBS_IN_EYE (First person in-eye)
+        set_entvar(id, var_iuser1, 4)
         set_entvar(id, var_iuser2, iNewTarget)
         set_member(id, m_hObserverTarget, iNewTarget)
         return true
@@ -1248,24 +1276,7 @@ stock bool:SwitchToTeammate(id, bool:bReverse)
     return false
 }
 
-public RG_Observer_FindNextPlayer_Pre(const id, bool:bReverse, const szName[])
-{
-    if(g_iMatchState == STATE_WARMUP || !is_user_connected(id) || is_user_alive(id))
-        return HC_CONTINUE
 
-    new TeamName:iMyTeam = get_member(id, m_iTeam)
-    if(iMyTeam != TEAM_TERRORIST && iMyTeam != TEAM_CT)
-        return HC_CONTINUE
-
-    // Seamlessly and deterministically cycle to the next/prev alive teammate
-    if(SwitchToTeammate(id, bReverse))
-    {
-        SetHookChainReturn(ATYPE_BOOL, true)
-        return HC_SUPERCEDE
-    }
-
-    return HC_CONTINUE
-}
 
 public Task_FixSpectatorClientCmd(id)
 {
@@ -1302,7 +1313,25 @@ public Task_EnforceTeammateObserver(id)
 
     if(bNeedsFix)
     {
-        SwitchToTeammate(id, false)
+        new iPlayers[MAX_PLAYERS], iNum
+        get_players(iPlayers, iNum, "ae", (iMyTeam == TEAM_CT) ? "CT" : "TERRORIST")
+        for(new i = 0; i < iNum; i++)
+        {
+            new p = iPlayers[i]
+            if(p != id && is_user_alive(p))
+            {
+                rg_set_observer_mode(id, 4) // Strictly OBS_IN_EYE
+                set_entvar(id, var_iuser1, 4)
+                set_entvar(id, var_iuser2, p)
+                set_member(id, m_hObserverTarget, p)
+                break
+            }
+        }
+    }
+    else
+    {
+        rg_set_observer_mode(id, 4)
+        set_entvar(id, var_iuser1, 4)
     }
 
     // Clean up stuck duck flag from dying while ducking

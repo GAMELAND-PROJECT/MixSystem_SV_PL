@@ -103,7 +103,7 @@ public stock const PluginURL[]         = "https://github.com/wopox1337/ServerSid
 public stock const PluginDescription[] = "Replacing client smoke with Server-Side SmokeNade."
 
 
-static const g_sprFile[]        = "sprites/gas_puff_02.spr"
+static const g_sprFile[]        = "sprites/gameland_smoke.spr"
 // https://github.com/s1lentq/ReGameDLL_CS/blob/1e49d947927e7f6f2fd70d8398e4a9519a34450a/regamedll/dlls/subs.h#L31
 static const g_baseClassname[]  = "info_null"
 static const g_className[]      = "particle_smokegren"
@@ -253,7 +253,7 @@ static CPartSmokeGrenade_Think(const entity) {
     pev(entity, pev_scale, scale)
     new Float: scaleSpd
     pev(entity, _pev_scaleSpeed, scaleSpd)
-    if (scale < 6.2 && scaleSpd > 0.0) {
+    if (scale < 8.8 && scaleSpd > 0.0) {
         scale += scaleSpd
         set_pev(entity, pev_scale, scale)
     } else {
@@ -290,7 +290,7 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
         .origin = origin,
         .velocity = velocity,
         .model = g_sprFile,
-        .scale = random_float(4.0, 5.0),
+        .scale = random_float(6.0, 7.5),
         .color = color
     )
 
@@ -382,50 +382,36 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
 
 static CreateGasInside(const Float: origin[3], Float: color[4]) {
     // -------------------------------------------------------------
-    // 1. DENSE VOLUMETRIC CORE (Packs the center - 100% impenetrable)
+    // 1. DENSE VOLUMETRIC CORE (Multi-height center pillar)
     // -------------------------------------------------------------
     new Float: centerPos[3]
-
-    // Vertical center pillar at 3 heights
-    centerPos = origin; centerPos[2] += 15.0
-    CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-
-    centerPos = origin; centerPos[2] += 45.0
-    CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-
-    centerPos = origin; centerPos[2] += 75.0
-    CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-
-    // Inner cross at radius 30 (height 25 and 55)
-    static const Float: flCrossOffsets[4][2] = {
-        { 30.0, 0.0 }, { -30.0, 0.0 }, { 0.0, 30.0 }, { 0.0, -30.0 }
+    static const Float: flVerticalHeights[5] = { 10.0, 30.0, 50.0, 70.0, 90.0 }
+    for(new h = 0; h < 5; h++) {
+        centerPos = origin
+        centerPos[2] += flVerticalHeights[h]
+        CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
     }
-    for(new i = 0; i < 4; i++) {
-        centerPos[0] = origin[0] + flCrossOffsets[i][0]
-        centerPos[1] = origin[1] + flCrossOffsets[i][1]
-        centerPos[2] = origin[2] + 25.0
+
+    // Inner core cross at radius 22 (height 20 and 55)
+    static const Float: flInnerOffsets[8][2] = {
+        { 22.0, 0.0 }, { -22.0, 0.0 }, { 0.0, 22.0 }, { 0.0, -22.0 },
+        { 16.0, 16.0 }, { -16.0, 16.0 }, { 16.0, -16.0 }, { -16.0, -16.0 }
+    }
+    for(new i = 0; i < 8; i++) {
+        centerPos[0] = origin[0] + flInnerOffsets[i][0]
+        centerPos[1] = origin[1] + flInnerOffsets[i][1]
+        centerPos[2] = origin[2] + 20.0
         CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
 
         centerPos[2] = origin[2] + 55.0
         CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
     }
 
-    // Inner diagonal cross at radius 45 (height 40)
-    static const Float: flDiagOffsets[4][2] = {
-        { 32.0, 32.0 }, { -32.0, 32.0 }, { 32.0, -32.0 }, { -32.0, -32.0 }
-    }
-    for(new i = 0; i < 4; i++) {
-        centerPos[0] = origin[0] + flDiagOffsets[i][0]
-        centerPos[1] = origin[1] + flDiagOffsets[i][1]
-        centerPos[2] = origin[2] + 40.0
-        CreateGasSmoke(centerPos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
-    }
-
     // -------------------------------------------------------------
-    // 2. MID VOLUMETRIC RING (Radius 65-72 units)
+    // 2. MID VOLUMETRIC SPHERE (Radius 55-60 units, 3 height levels)
     // -------------------------------------------------------------
-    new Float: stepMid = 360.0 / 8.0
     static Float: vAngles[3], Float: vForward[3], Float: vRight[3], Float: vUp[3]
+    new Float: stepMid = 360.0 / 10.0
 
     for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepMid) {
         vAngles[XS_YAW] = fAngle
@@ -433,46 +419,51 @@ static CreateGasInside(const Float: origin[3], Float: color[4]) {
         xs_vec_normalize(vForward, vForward)
 
         new Float: pos[3]
-        pos[0] = origin[0] + (vForward[0] * 68.0)
-        pos[1] = origin[1] + (vForward[1] * 68.0)
-        pos[2] = origin[2] + 35.0
+        pos[0] = origin[0] + (vForward[0] * 55.0)
+        pos[1] = origin[1] + (vForward[1] * 55.0)
+
+        pos[2] = origin[2] + 25.0
         CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
 
-        pos[2] = origin[2] + 60.0
+        pos[2] = origin[2] + 50.0
+        CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
+
+        pos[2] = origin[2] + 75.0
         CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
     }
 
     // -------------------------------------------------------------
-    // 3. OUTER VOLUMETRIC RING (Radius 95-105 units)
+    // 3. OUTER VOLUMETRIC RING (Radius 90-100 units)
     // -------------------------------------------------------------
-    new Float: stepOuter = 360.0 / amx_smokegren_pieces
+    new Float: stepOuter = 360.0 / 12.0
     for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += stepOuter) {
         vAngles[XS_YAW] = fAngle + (stepOuter * 0.5)
         engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
         xs_vec_normalize(vForward, vForward)
 
         new Float: pos[3]
-        pos[0] = origin[0] + (vForward[0] * 98.0)
-        pos[1] = origin[1] + (vForward[1] * 98.0)
+        pos[0] = origin[0] + (vForward[0] * 95.0)
+        pos[1] = origin[1] + (vForward[1] * 95.0)
+
         pos[2] = origin[2] + 25.0
         CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
 
-        pos[2] = origin[2] + 50.0
+        pos[2] = origin[2] + 55.0
         CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
     }
 
     // -------------------------------------------------------------
-    // 4. TOP DOME CROWN (Radius 40 units, height 85)
+    // 4. TOP DOME CROWN (Radius 35 units, height 90)
     // -------------------------------------------------------------
-    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += 90.0) {
+    for (new Float: fAngle = 0.0; fAngle < 360.0; fAngle += 72.0) {
         vAngles[XS_YAW] = fAngle
         engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
         xs_vec_normalize(vForward, vForward)
 
         new Float: pos[3]
-        pos[0] = origin[0] + (vForward[0] * 40.0)
-        pos[1] = origin[1] + (vForward[1] * 40.0)
-        pos[2] = origin[2] + 85.0
+        pos[0] = origin[0] + (vForward[0] * 35.0)
+        pos[1] = origin[1] + (vForward[1] * 35.0)
+        pos[2] = origin[2] + 90.0
         CreateGasSmoke(pos, Float:{0.0, 0.0, 0.0}, color, .insideCloud = true)
     }
 
@@ -553,14 +544,14 @@ static Create_ConVars(const bool: createConfigFile = true) {
 
     hook_cvar_change(
         create_cvar(
-            "amx_smokegren_color", "115 115 115 255",
+            "amx_smokegren_color", "110 110 110 255",
             .description = "The color of the smoke cloud is in the format [R G B A]. ^n\
                             `-1 -1 -1` - random color.^n\
                             `A` - is the opacity (transparency)"
         ),
         "CVarChange_amx_smokegren_color"
     )
-    CVarChange_amx_smokegren_color(0, "", "115 115 115 255")
+    CVarChange_amx_smokegren_color(0, "", "110 110 110 255")
 
     bind_pcvar_float(
         create_cvar(
