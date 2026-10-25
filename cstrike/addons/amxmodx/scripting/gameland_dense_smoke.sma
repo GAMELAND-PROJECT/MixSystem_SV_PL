@@ -175,13 +175,10 @@ static bool: EV_CreateSmoke(const Float: origin[3]) {
 
     CreateGasInside(origin, colors)
 
-    if (amx_smokegren_replacemode == 3)
+    if (amx_smokegren_replacemode >= 2)
         CreateSmokePop(origin, colors)
 
-    if (amx_smokegren_replacemode >= 2)
-        return true
-
-    return false
+    return true
 }
 
 public CNullEntity_Think(const entity) {
@@ -222,6 +219,8 @@ static CPartSmokeGrenade_Create(const Float: origin[3], const Float: velocity[3]
     set_pev(entity, pev_rendermode, kRenderTransAlpha)
     set_pev(entity, pev_rendercolor, color)
     set_pev(entity, pev_renderamt, color[3])
+    set_pev(entity, pev_fuser1, color[3])
+    set_pev(entity, _pev_timeCreated, get_gametime())
 
     #if (defined DEBUG)
         client_print(0, print_center, "Smoke puffs entity count: `%i`", entityCount(1))
@@ -241,71 +240,47 @@ static CPartSmokeGrenade_Think(const entity) {
         set_pev(entity, pev_velocity, velocity, sizeof(velocity))
     }
 
-    // Main smoke part time
     new Float: gametime = get_gametime()
-
     new Float: remainingTime = pev(entity, _pev_dieTime) - gametime
-    static Float: brightness
-    pev(entity, pev_renderamt, brightness)
 
-    if (brightness >= 255.0 && remainingTime < 3.0) {
-        set_pev(entity, _pev_scaleSpeed, 0.0)
-        set_pev(entity, _pev_timeCreated, gametime)
-        set_pev(entity, pev_avelocity, Float: {0.0, 0.0, 0.0})
-    }
+    new Float: initialAlpha
+    pev(entity, pev_fuser1, initialAlpha)
+    if (initialAlpha <= 0.0)
+        initialAlpha = 245.0
 
-    if (remainingTime < 5.0) {
-        if (brightness > 0.0) {
-            brightness -= (gametime - pev(entity, _pev_timeCreated)) * 0.1
-            set_pev(entity, pev_renderamt, brightness)
-        }
-
-        if (brightness < 0.0) {
-            brightness = 0.0
-            set_pev(entity, pev_renderamt, brightness)
-
-            set_pev(entity, _pev_dieTime, gametime)
-        }
-    }
-
+    // Smooth volumetric scaling up to 5.8 max to prevent texture stretching
     static Float: scale
     pev(entity, pev_scale, scale)
-    scale += pev(entity, _pev_scaleSpeed)
-    set_pev(entity, pev_scale, scale)
+    new Float: scaleSpd
+    pev(entity, _pev_scaleSpeed, scaleSpd)
+    if (scale < 5.8 && scaleSpd > 0.0) {
+        scale += scaleSpd
+        set_pev(entity, pev_scale, scale)
+    } else {
+        set_pev(entity, _pev_scaleSpeed, 0.0)
+    }
+
+    // Natural opacity curve:
+    // Remains 100% thick, dense and opaque for the full duration!
+    // Dissipates smoothly and naturally only in the final 4 seconds!
+    if (remainingTime > 4.0) {
+        set_pev(entity, pev_renderamt, initialAlpha)
+    } else if (remainingTime > 0.0) {
+        new Float: fadeRatio = remainingTime / 4.0
+        set_pev(entity, pev_renderamt, initialAlpha * fadeRatio)
+    } else {
+        // Lifetime expired: Cleanly remove particle
+        set_pev(entity, pev_renderamt, 0.0)
+        set_pev(entity, pev_effects, EF_NODRAW)
+        set_pev(entity, pev_flags, pev(entity, pev_flags) | FL_KILLME)
+        #if (defined DEBUG)
+            entityCount(-1)
+        #endif
+        return
+    }
 
     const Float: thinkFreq = 0.05
-    if (pev(entity, _pev_dieTime) > gametime) {
-        set_pev(entity, pev_nextthink, gametime + thinkFreq)
-
-        return
-    }
-
-    // Dissapear part
-    const Float: divider = 2.5
-
-    static Float: renderAmt
-    pev(entity, pev_renderamt, renderAmt)
-    renderAmt = floatmax(0.0, renderAmt - (renderAmt / divider))
-    set_pev(entity, pev_renderamt, renderAmt)
-
-    pev(entity, pev_scale, scale)
-    scale = floatmax(0.0, scale - (scale / divider))
-    set_pev(entity, pev_scale, scale)
-
-    if (renderAmt > 1.0) {
-        const Float: fadeSpeed = 0.05
-        set_pev(entity, pev_nextthink, gametime + fadeSpeed)
-
-        return
-    }
-
-    // Kill particle
-    set_pev(entity, pev_effects, EF_NODRAW)
-    set_pev(entity, pev_flags, pev(entity, pev_flags) | FL_KILLME)
-
-    #if (defined DEBUG)
-        entityCount(-1)
-    #endif
+    set_pev(entity, pev_nextthink, gametime + thinkFreq)
 }
 
 static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
@@ -315,7 +290,7 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
         .origin = origin,
         .velocity = velocity,
         .model = g_sprFile,
-        .scale = random_float(2.5, 4.0),
+        .scale = random_float(3.2, 4.2),
         .color = color
     )
 
@@ -323,9 +298,9 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
     new Float: gametime = get_gametime()
     new Float: dieTime = gametime + amx_smokegren_lifetime
 
-    const Float: scaleFactor = 1.42
-    const Float: maxRotateVelocity = 10.0
-    const Float: scaleSpeed = 0.1
+    const Float: scaleFactor = 1.25
+    const Float: maxRotateVelocity = 8.0
+    const Float: scaleSpeed = 0.04
 
     if (insideCloud) {
         avelocity[2] = random_float(-(maxRotateVelocity / scaleFactor), (maxRotateVelocity / scaleFactor))
@@ -334,7 +309,7 @@ static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
     } else {
         avelocity[2] = random_float(-maxRotateVelocity, maxRotateVelocity)
         set_pev(entity, _pev_scaleSpeed, scaleSpeed)
-        set_pev(entity, _pev_dieTime, dieTime - (amx_smokegren_lifetime / 3.0))
+        set_pev(entity, _pev_dieTime, dieTime)
     }
 
     set_pev(entity, _pev_spawnInside, insideCloud)
@@ -499,13 +474,13 @@ static CreateGasInside(const Float: origin[3], Float: color[4]) {
 static Create_ConVars(const bool: createConfigFile = true) {
     bind_pcvar_num(
         create_cvar(
-            "amx_smokegren_replacemode", "1",
+            "amx_smokegren_replacemode", "2",
             .has_min = true, .min_val = 0.0,
             .has_max = true, .max_val = 3.0,
             .description = "Replacement method. ^n\
                             0 - disabled (does not change client smoke); ^n\
                             1 - main cloud on over client smoke cloud; ^n\
-                            2 - main cloud only (optimization*); ^n\
+                            2 - main cloud + volumetric pop (dense & natural); ^n\
                             3 - fully recreated (2x load)."
         ),
         amx_smokegren_replacemode
@@ -523,9 +498,9 @@ static Create_ConVars(const bool: createConfigFile = true) {
 
     bind_pcvar_float(
         create_cvar(
-            "amx_smokegren_pieces", "8",
+            "amx_smokegren_pieces", "10",
             .has_min = true, .min_val = 2.0,
-            .has_max = true, .max_val = 10.0,
+            .has_max = true, .max_val = 16.0,
             .description = "Number of smoke particles for one smoke cloud."
         ),
         amx_smokegren_pieces
@@ -533,18 +508,18 @@ static Create_ConVars(const bool: createConfigFile = true) {
 
     hook_cvar_change(
         create_cvar(
-            "amx_smokegren_color", "175 175 175 190",
+            "amx_smokegren_color", "165 165 165 245",
             .description = "The color of the smoke cloud is in the format [R G B A]. ^n\
                             `-1 -1 -1` - random color.^n\
                             `A` - is the opacity (transparency)"
         ),
         "CVarChange_amx_smokegren_color"
     )
-    CVarChange_amx_smokegren_color(0, "", "175 175 175 190")
+    CVarChange_amx_smokegren_color(0, "", "165 165 165 245")
 
     bind_pcvar_float(
         create_cvar(
-            "amx_smokegren_lifetime", "29.5",
+            "amx_smokegren_lifetime", "25.0",
             .has_min = true, .min_val = 6.0,
             .has_max = true, .max_val = 60.0,
             .description = "Smoke cloud lifetime (in seconds)."
