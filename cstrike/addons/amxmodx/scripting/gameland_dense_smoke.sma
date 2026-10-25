@@ -103,7 +103,7 @@ public stock const PluginURL[]         = "https://github.com/wopox1337/ServerSid
 public stock const PluginDescription[] = "Replacing client smoke with Server-Side SmokeNade."
 
 
-static const g_sprFile[]        = "sprites/gameland_smoke.spr"
+static const g_sprFile[]        = "sprites/gas_puff_02.spr"
 // https://github.com/s1lentq/ReGameDLL_CS/blob/1e49d947927e7f6f2fd70d8398e4a9519a34450a/regamedll/dlls/subs.h#L31
 static const g_baseClassname[]  = "info_null"
 static const g_className[]      = "particle_smokegren"
