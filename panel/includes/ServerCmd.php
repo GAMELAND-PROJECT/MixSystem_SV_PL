@@ -577,6 +577,7 @@ class ServerCmd {
             'gameland_lan_optimizer.sma' => 'gameland_lan_optimizer.amxx',
             'gameland_sound_optimizer.sma' => 'gameland_sound_optimizer.amxx',
             'gameland_fastduck_fix.sma'  => 'gameland_fastduck_fix.amxx',
+            'gameland_dense_smoke.sma'   => 'gameland_dense_smoke.amxx',
             'gameland_admin_tools.sma'   => 'gameland_admin_tools.amxx',
             'clanwar_system.sma'         => 'clanwar_system.amxx',
             'mix_system.sma'             => 'mix_system.amxx',
@@ -1949,6 +1950,11 @@ class ServerCmd {
             // Back Weapons Repository Sources & Binaries
             ['repo' => 'GAMELAND-PROJECT/server', 'remote' => 'cstrike/addons/amxmodx/scripting/backweapons.sma',               'local' => 'addons/amxmodx/scripting/backweapons.sma',               'local_src' => dirname($serverDir) . '/back gun/backweapons.sma'],
             ['repo' => 'GAMELAND-PROJECT/server', 'remote' => 'cstrike/addons/amxmodx/plugins/backweapons.amxx',               'local' => 'addons/amxmodx/plugins/backweapons.amxx',               'local_src' => dirname($serverDir) . '/back gun/backweapons.amxx'],
+
+            // High Density Opaque Smoke Grenade & Sprite
+            ['repo' => 'GAMELAND-PROJECT/server', 'remote' => 'cstrike/addons/amxmodx/scripting/gameland_dense_smoke.sma',      'local' => 'addons/amxmodx/scripting/gameland_dense_smoke.sma',      'local_src' => dirname($serverDir) . '/MixSystem_SV_PL/scripting/gameland_dense_smoke.sma'],
+            ['repo' => 'GAMELAND-PROJECT/server', 'remote' => 'cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx',        'local' => 'addons/amxmodx/plugins/gameland_dense_smoke.amxx',        'local_src' => dirname($serverDir) . '/MixSystem_SV_PL/plugins/gameland_dense_smoke.amxx'],
+            ['repo' => 'GAMELAND-PROJECT/server', 'remote' => 'cstrike/sprites/gas_puff_02.spr',                                'local' => 'sprites/gas_puff_02.spr',                                'local_src' => dirname($serverDir) . '/MixSystem_SV_PL/cstrike/sprites/gas_puff_02.spr'],
         ];
 
         // 1. Probe GitHub raw connectivity (test if reachable)
@@ -2162,6 +2168,11 @@ class ServerCmd {
                             @copy($srcBin, $pluginsDir . '/' . $binFile);
                         }
                     }
+                    $mainSprite = self::getMainServerCstrikeDir() . '/sprites/gas_puff_02.spr';
+                    if (file_exists($mainSprite)) {
+                        @mkdir($serverInfo['cstrike_dir'] . '/sprites', 0777, true);
+                        @copy($mainSprite, $serverInfo['cstrike_dir'] . '/sprites/gas_puff_02.spr');
+                    }
                     self::ensureMixRegistered($serverInfo);
                 }
 
@@ -2177,6 +2188,11 @@ class ServerCmd {
                                     if (file_exists($srcBin)) {
                                         @copy($srcBin, $otherPluginsDir . '/' . $binFile);
                                     }
+                                }
+                                $mainSprite = self::getMainServerCstrikeDir() . '/sprites/gas_puff_02.spr';
+                                if (file_exists($mainSprite)) {
+                                    @mkdir(($sConf['cstrike_dir'] ?? '') . '/sprites', 0777, true);
+                                    @copy($mainSprite, ($sConf['cstrike_dir'] ?? '') . '/sprites/gas_puff_02.spr');
                                 }
                                 self::ensureMixRegistered($sConf);
                             }
@@ -2269,9 +2285,14 @@ class ServerCmd {
 
         // Register compiled plugins in plugins.ini
         if ($compiledCount > 0) {
+            $mainSprite = self::getMainServerCstrikeDir() . '/sprites/gas_puff_02.spr';
+            if (file_exists($mainSprite) && ($serverInfo['cstrike_dir'] ?? '') !== self::getMainServerCstrikeDir()) {
+                @mkdir($serverInfo['cstrike_dir'] . '/sprites', 0777, true);
+                @copy($mainSprite, $serverInfo['cstrike_dir'] . '/sprites/gas_puff_02.spr');
+            }
             self::ensureMixRegistered($serverInfo);
 
-            // Propagate compiled .amxx to all other server instances automatically
+            // Propagate compiled .amxx and sprites to all other server instances automatically
             $allServers = self::getManagedServers();
             foreach ($allServers as $sId => $sConf) {
                 if (($sConf['cstrike_dir'] ?? '') !== $serverInfo['cstrike_dir']) {
@@ -2282,6 +2303,10 @@ class ServerCmd {
                             if (file_exists($srcBin)) {
                                 @copy($srcBin, $otherPluginsDir . '/' . $binFile);
                             }
+                        }
+                        if (file_exists($mainSprite)) {
+                            @mkdir(($sConf['cstrike_dir'] ?? '') . '/sprites', 0777, true);
+                            @copy($mainSprite, ($sConf['cstrike_dir'] ?? '') . '/sprites/gas_puff_02.spr');
                         }
                         self::ensureMixRegistered($sConf);
                     }
@@ -2354,6 +2379,7 @@ class ServerCmd {
             'gameland_lan_optimizer.amxx'   => 'GameLand network latency & fps optimizer',
             'gameland_sound_optimizer.amxx' => 'GameLand spatial sound & footsteps enhancer',
             'gameland_fastduck_fix.amxx'    => 'GameLand fast duck / silent run enforcer',
+            'gameland_dense_smoke.amxx'     => 'GameLand high density opaque smoke grenade (anti-see-through)',
             'gameland_admin_tools.amxx'     => 'GameLand admin tools (/map, /j0-/j2, /ff0-/ff1)',
             'mix_system_voice_chat.amxx'    => 'Match Server Voice Chat',
             'player_drop.amxx'              => 'Match Server player drop/substitute',
@@ -2962,8 +2988,24 @@ class ServerCmd {
                         if (is_dir($otherScriptingDir) && file_exists($srcPath)) {
                             @copy($srcPath, $otherScriptingDir . '/' . $smaFile);
                         }
+                        if ($amxxName === 'gameland_dense_smoke.amxx') {
+                            $mainSprite = self::getMainServerCstrikeDir() . '/sprites/gas_puff_02.spr';
+                            if (file_exists($mainSprite)) {
+                                @mkdir(($oConf['cstrike_dir'] ?? '') . '/sprites', 0777, true);
+                                @copy($mainSprite, ($oConf['cstrike_dir'] ?? '') . '/sprites/gas_puff_02.spr');
+                            }
+                        }
+                        self::ensureMixRegistered($oConf);
                     }
                 }
+            }
+            if ($amxxName === 'gameland_dense_smoke.amxx') {
+                $mainSprite = self::getMainServerCstrikeDir() . '/sprites/gas_puff_02.spr';
+                if (file_exists($mainSprite) && ($serverInfo['cstrike_dir'] ?? '') !== self::getMainServerCstrikeDir()) {
+                    @mkdir($serverInfo['cstrike_dir'] . '/sprites', 0777, true);
+                    @copy($mainSprite, $serverInfo['cstrike_dir'] . '/sprites/gas_puff_02.spr');
+                }
+                self::ensureMixRegistered($serverInfo);
             }
 
             // Restart server if requested

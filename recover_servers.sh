@@ -197,6 +197,12 @@ EOF
 # Ensure git skip-worktree on servers.json
 git update-index --skip-worktree "$REGISTRY_FILE" 2>/dev/null || true
 
+# Auto-sync plugins, dense smoke, and assets to all recovered instances
+if [ -f "${SCRIPT_DIR}/install_mix.sh" ]; then
+    echo "[*] Synchronizing plugins, dense smoke, and assets to all recovered instances..."
+    bash "${SCRIPT_DIR}/install_mix.sh" --sync-all --no-restart 2>/dev/null || true
+fi
+
 echo ""
 echo "================================================="
 echo "✅ servers.json successfully rebuilt and synced!"

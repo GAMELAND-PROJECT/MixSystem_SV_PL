@@ -349,6 +349,18 @@ EOF
         fi
     fi
 
+    # Ensure custom dense smoke sprite & plugin binary are replicated to new instance
+    mkdir -p "$target/cstrike/sprites" 2>/dev/null || true
+    if [[ -f "${PROJECT_DIR}/cstrike/sprites/gas_puff_02.spr" ]]; then
+        cp -f "${PROJECT_DIR}/cstrike/sprites/gas_puff_02.spr" "$target/cstrike/sprites/gas_puff_02.spr" 2>/dev/null || true
+        chmod 666 "$target/cstrike/sprites/gas_puff_02.spr" 2>/dev/null || true
+    fi
+    mkdir -p "$target/cstrike/addons/amxmodx/plugins" 2>/dev/null || true
+    if [[ -f "${PROJECT_DIR}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" ]]; then
+        cp -f "${PROJECT_DIR}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" "$target/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" 2>/dev/null || true
+        chmod 666 "$target/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" 2>/dev/null || true
+    fi
+
     # Configure plugins.ini for the selected mode
     local plugins_ini="$target/cstrike/addons/amxmodx/configs/plugins.ini"
     if [[ -f "$plugins_ini" ]]; then
@@ -367,6 +379,13 @@ EOF
         elif [[ "$mode" == "public" ]]; then
             sed -i -E 's/^[[:space:]]*clanwar_system\.amxx/;\0/' "$plugins_ini" 2>/dev/null || true
             sed -i -E 's/^[[:space:]]*mix_system\.amxx/;\0/' "$plugins_ini" 2>/dev/null || true
+        fi
+
+        # Ensure high-density opaque smoke grenade plugin is registered and active
+        if grep -qE '^[[:space:]]*;+[[:space:]]*gameland_dense_smoke\.amxx([[:space:]]|$)' "$plugins_ini"; then
+            sed -i -E 's/^[[:space:]]*;+[[:space:]]*(gameland_dense_smoke\.amxx.*)$/\1/' "$plugins_ini" 2>/dev/null || true
+        elif ! grep -qE '^[[:space:]]*gameland_dense_smoke\.amxx([[:space:]]|$)' "$plugins_ini"; then
+            echo -e "gameland_dense_smoke.amxx\t; High density opaque smoke grenade (anti-see-through)" >> "$plugins_ini"
         fi
     fi
 

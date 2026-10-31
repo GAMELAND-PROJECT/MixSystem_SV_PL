@@ -207,7 +207,7 @@ public CSGameRules_RestartRound() {
 
 static CPartSmokeGrenade_Create(const Float: origin[3], const Float: velocity[3],
                         const model[], const Float: scale,
-                        const Float: color[4] = { 175.0, 175.0, 175.0, 190.0 }) {
+                        const Float: color[4] = { 175.0, 175.0, 175.0, 209.0 }) {
 
     new entity = engfunc(EngFunc_CreateNamedEntity, engfunc(EngFunc_AllocString, g_baseClassname))
     set_pev(entity, pev_classname, g_className)
@@ -533,14 +533,14 @@ static Create_ConVars(const bool: createConfigFile = true) {
 
     hook_cvar_change(
         create_cvar(
-            "amx_smokegren_color", "175 175 175 190",
+            "amx_smokegren_color", "175 175 175 209",
             .description = "The color of the smoke cloud is in the format [R G B A]. ^n\
                             `-1 -1 -1` - random color.^n\
                             `A` - is the opacity (transparency)"
         ),
         "CVarChange_amx_smokegren_color"
     )
-    CVarChange_amx_smokegren_color(0, "", "175 175 175 190")
+    CVarChange_amx_smokegren_color(0, "", "175 175 175 209")
 
     bind_pcvar_float(
         create_cvar(

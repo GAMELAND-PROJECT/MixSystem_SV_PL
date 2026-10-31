@@ -166,7 +166,8 @@ git update-index --no-assume-unchanged "$SERVERS_JSON" 2>/dev/null || true
 git update-index --no-assume-unchanged "$MAIN_PINI" 2>/dev/null || true
 git update-index --no-assume-unchanged "${SCRIPT_DIR}/start.sh" 2>/dev/null || true
 
-# Force reset index and working tree cleanly
+# Force reset index and working tree cleanly (remove local file so git reset never conflicts)
+rm -f "$MAIN_PINI" 2>/dev/null || true
 git checkout -f 2>/dev/null || true
 git reset --hard origin/main
 
@@ -213,6 +214,11 @@ else
     sed -i 's/MAX_PLAYERS=".*"/MAX_PLAYERS="10"/' "${SCRIPT_DIR}/start.sh" 2>/dev/null || true
     echo "[*] Restored main server mode: Clan War (10 slots)"
 fi
+if grep -qE '^[[:space:]]*;+[[:space:]]*gameland_dense_smoke\.amxx([[:space:]]|$)' "$MAIN_PINI"; then
+    sed -i -E 's/^[[:space:]]*;+[[:space:]]*(gameland_dense_smoke\.amxx.*)$/\1/' "$MAIN_PINI" 2>/dev/null || true
+elif ! grep -qE "^[[:space:]]*gameland_dense_smoke\.amxx([[:space:]]|$)" "$MAIN_PINI"; then
+    echo -e "gameland_dense_smoke.amxx\t; High density opaque smoke grenade (anti-see-through)" >> "$MAIN_PINI" 2>/dev/null || true
+fi
 chmod 666 "$MAIN_PINI" 2>/dev/null || true
 
 # Restore each instance plugins.ini from backup
@@ -226,6 +232,22 @@ for pini_bk in "${PERSIST_DIR}/instances_plugins"/*_plugins.ini; do
         if [ -d "${target_dir}/cstrike/addons/amxmodx/configs" ]; then
             cp -f "$pini_bk" "${target_dir}/cstrike/addons/amxmodx/configs/plugins.ini" 2>/dev/null || true
             chmod 666 "${target_dir}/cstrike/addons/amxmodx/configs/plugins.ini" 2>/dev/null || true
+            if grep -qE '^[[:space:]]*;+[[:space:]]*gameland_dense_smoke\.amxx([[:space:]]|$)' "${target_dir}/cstrike/addons/amxmodx/configs/plugins.ini"; then
+                sed -i -E 's/^[[:space:]]*;+[[:space:]]*(gameland_dense_smoke\.amxx.*)$/\1/' "${target_dir}/cstrike/addons/amxmodx/configs/plugins.ini" 2>/dev/null || true
+            elif ! grep -qE "^[[:space:]]*gameland_dense_smoke\.amxx([[:space:]]|$)" "${target_dir}/cstrike/addons/amxmodx/configs/plugins.ini"; then
+                echo -e "gameland_dense_smoke.amxx\t; High density opaque smoke grenade (anti-see-through)" >> "${target_dir}/cstrike/addons/amxmodx/configs/plugins.ini" 2>/dev/null || true
+            fi
+        fi
+        # Ensure custom dense smoke sprite & plugin binary are present in instance
+        if [ -f "${SCRIPT_DIR}/cstrike/sprites/gas_puff_02.spr" ]; then
+            mkdir -p "${target_dir}/cstrike/sprites" 2>/dev/null || true
+            cp -f "${SCRIPT_DIR}/cstrike/sprites/gas_puff_02.spr" "${target_dir}/cstrike/sprites/gas_puff_02.spr" 2>/dev/null || true
+            chmod 666 "${target_dir}/cstrike/sprites/gas_puff_02.spr" 2>/dev/null || true
+        fi
+        if [ -f "${SCRIPT_DIR}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" ]; then
+            mkdir -p "${target_dir}/cstrike/addons/amxmodx/plugins" 2>/dev/null || true
+            cp -f "${SCRIPT_DIR}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" "${target_dir}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" 2>/dev/null || true
+            chmod 666 "${target_dir}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" 2>/dev/null || true
         fi
     fi
 done

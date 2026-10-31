@@ -131,8 +131,8 @@ if [ -f "gameland_admin_tools.sma" ]; then
     echo "  -> gameland_admin_tools.amxx compiled successfully!"
 fi
 
-# Compile GameLand Performance, Fixer, Weapons and Drop Plugins
-for p in gameland_lan_optimizer gameland_sound_optimizer gameland_fastduck_fix gameland_only_enforcer player_drop backweapons; do
+# Compile GameLand Performance, Fixer, Weapons, Smoke and Drop Plugins
+for p in gameland_lan_optimizer gameland_sound_optimizer gameland_fastduck_fix gameland_dense_smoke gameland_only_enforcer player_drop backweapons; do
     if [ -f "${p}.sma" ]; then
         echo "[3c/5] Compiling ${p}.sma..."
         ./amxxpc "${p}.sma" -i"include" -o"${PLUGINS_DIR}/${p}.amxx" || true
@@ -206,8 +206,9 @@ mkdir -p /opt/gameland/persistent "${PROJECT_DIR}/instances" 2>/dev/null || true
 echo "$MAIN_MODE" > "/opt/gameland/persistent/main_mode.txt" 2>/dev/null || true
 echo "$MAIN_MODE" > "${PROJECT_DIR}/instances/main_mode.txt" 2>/dev/null || true
 
-# Ensure all 8 GameLand helper plugins are registered and active in plugins.ini
+# Ensure all GameLand helper plugins are registered and active in plugins.ini
 for plugin_entry in \
+    "gameland_dense_smoke.amxx:High density opaque smoke grenade (anti-see-through)" \
     "mix_system_voice_chat.amxx:automatic sv_alltalk state for mix rounds" \
     "gameland_admin_tools.amxx:/map menu and sv_alltalk shortcuts" \
     "player_drop.amxx:Match Server player drop / substitute" \
@@ -256,7 +257,7 @@ fi
 
 # ─── 5. Adjust start.sh for 5v5 Match (12 Slots) ───────
 COMPILED_COUNT=0
-for p in clanwar_system mix_system mix_system_voice_chat gameland_admin_tools gameland_only_enforcer gameland_lan_optimizer gameland_sound_optimizer gameland_fastduck_fix player_drop backweapons; do
+for p in clanwar_system mix_system mix_system_voice_chat gameland_admin_tools gameland_only_enforcer gameland_lan_optimizer gameland_sound_optimizer gameland_fastduck_fix gameland_dense_smoke player_drop backweapons; do
     if [ -f "${PLUGINS_DIR}/${p}.amxx" ]; then
         COMPILED_COUNT=$((COMPILED_COUNT + 1))
     fi
@@ -287,6 +288,7 @@ cat > "${CONFIGS_DIR}/.mix_last_build.json" <<EOF
     "gameland_lan_optimizer.sma": "gameland_lan_optimizer.amxx",
     "gameland_sound_optimizer.sma": "gameland_sound_optimizer.amxx",
     "gameland_fastduck_fix.sma": "gameland_fastduck_fix.amxx",
+    "gameland_dense_smoke.sma": "gameland_dense_smoke.amxx",
     "player_drop.sma": "player_drop.amxx",
     "backweapons.sma": "backweapons.amxx"
   }
@@ -338,6 +340,13 @@ sync_instance_files() {
     # Sync all compiled plugins
     cp -f "${PLUGINS_DIR}"/*.amxx "${target_dir}/cstrike/addons/amxmodx/plugins/" 2>/dev/null || true
     chmod 666 "${target_dir}/cstrike/addons/amxmodx/plugins/"*.amxx 2>/dev/null || true
+
+    # Sync custom sprites (dense smoke sprite gas_puff_02.spr, etc.)
+    mkdir -p "${target_dir}/cstrike/sprites" 2>/dev/null || true
+    if [ -f "${PROJECT_DIR}/cstrike/sprites/gas_puff_02.spr" ]; then
+        cp -f "${PROJECT_DIR}/cstrike/sprites/gas_puff_02.spr" "${target_dir}/cstrike/sprites/gas_puff_02.spr" 2>/dev/null || true
+        chmod 666 "${target_dir}/cstrike/sprites/gas_puff_02.spr" 2>/dev/null || true
+    fi
 
     # Sync language dictionary files
     mkdir -p "${target_dir}/cstrike/addons/amxmodx/data/lang" 2>/dev/null || true
@@ -477,6 +486,29 @@ sys.exit(1)
     fi
 
     if [ -f "$inst_pini" ]; then
+        # Ensure helper plugins and dense smoke are active in instance plugins.ini
+        for h_entry in \
+            "gameland_dense_smoke.amxx:High density opaque smoke grenade (anti-see-through)" \
+            "mix_system_voice_chat.amxx:automatic sv_alltalk state for mix rounds" \
+            "gameland_admin_tools.amxx:/map menu and sv_alltalk shortcuts" \
+            "player_drop.amxx:Match Server player drop / substitute" \
+            "backweapons.amxx:weapons displayed on players backs" \
+            "gameland_lan_optimizer.amxx:network latency and fps optimizer" \
+            "gameland_sound_optimizer.amxx:spatial sound enhancer" \
+            "gameland_fastduck_fix.amxx:fast duck and silent run enforcer" \
+            "gameland_only_enforcer.amxx:AllClient security enforcer"; do
+            
+            h_pl="${h_entry%%:*}"
+            h_desc="${h_entry#*:}"
+            if [ -f "${target_dir}/cstrike/addons/amxmodx/plugins/${h_pl}" ]; then
+                if grep -qE "^[[:space:]]*;+[[:space:]]*${h_pl}([[:space:]]|$)" "$inst_pini"; then
+                    sed -i -E "s/^[[:space:]]*;+[[:space:]]*(${h_pl}.*)$/\1/" "$inst_pini"
+                elif ! grep -qE "^[[:space:]]*${h_pl}([[:space:]]|$)" "$inst_pini"; then
+                    printf '%s\t; %s\n' "${h_pl}" "${h_desc}" >> "$inst_pini"
+                fi
+            fi
+        done
+
         if [ "$inst_mode" = "mix5v5" ]; then
             sed -i -E 's/^[[:space:]]*;?[[:space:]]*mix_system\.amxx([[:space:]].*)?$/mix_system.amxx/' "$inst_pini" 2>/dev/null || true
             sed -i -E 's/^[[:space:]]*clanwar_system\.amxx/;\0/' "$inst_pini" 2>/dev/null || true
@@ -579,11 +611,20 @@ if [ "$DO_SYNC_ALL" = true ]; then
         fi
     done
 
-    # Also discover from filesystem
-    for inst_dir in /opt/gameland/instances/*; do
+    # Also discover from filesystem and env files
+    for inst_dir in /opt/gameland/instances/* "${PROJECT_DIR}/instances"/*; do
         if [ -d "$inst_dir" ]; then
             s_id="$(basename "$inst_dir")"
-            if [ -n "$s_id" ] && [ "$s_id" != "*" ] && [ "$s_id" != "main" ] && [ -z "${SEEN_INSTANCES[$s_id]:-}" ]; then
+            if [ -n "$s_id" ] && [ "$s_id" != "*" ] && [ "$s_id" != "main" ] && [ "$s_id" != "instances_env" ] && [ "$s_id" != "instances_plugins" ] && [ -z "${SEEN_INSTANCES[$s_id]:-}" ]; then
+                SEEN_INSTANCES["$s_id"]=1
+                INST_LIST+=("$s_id")
+            fi
+        fi
+    done
+    for env_f in "${PROJECT_DIR}/instances"/*.env; do
+        if [ -f "$env_f" ]; then
+            s_id="$(basename "$env_f" .env)"
+            if [ -n "$s_id" ] && [ "$s_id" != "*" ] && [ "$s_id" != "main" ] && [ "$s_id" != "servers" ] && [ -z "${SEEN_INSTANCES[$s_id]:-}" ]; then
                 SEEN_INSTANCES["$s_id"]=1
                 INST_LIST+=("$s_id")
             fi
