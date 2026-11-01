@@ -244,6 +244,11 @@ for pini_bk in "${PERSIST_DIR}/instances_plugins"/*_plugins.ini; do
             cp -f "${SCRIPT_DIR}/cstrike/sprites/gas_puff_02.spr" "${target_dir}/cstrike/sprites/gas_puff_02.spr" 2>/dev/null || true
             chmod 666 "${target_dir}/cstrike/sprites/gas_puff_02.spr" 2>/dev/null || true
         fi
+        if [ -f "${SCRIPT_DIR}/cstrike/sprites/gameland_smoke.spr" ]; then
+            mkdir -p "${target_dir}/cstrike/sprites" 2>/dev/null || true
+            cp -f "${SCRIPT_DIR}/cstrike/sprites/gameland_smoke.spr" "${target_dir}/cstrike/sprites/gameland_smoke.spr" 2>/dev/null || true
+            chmod 666 "${target_dir}/cstrike/sprites/gameland_smoke.spr" 2>/dev/null || true
+        fi
         if [ -f "${SCRIPT_DIR}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" ]; then
             mkdir -p "${target_dir}/cstrike/addons/amxmodx/plugins" 2>/dev/null || true
             cp -f "${SCRIPT_DIR}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" "${target_dir}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" 2>/dev/null || true

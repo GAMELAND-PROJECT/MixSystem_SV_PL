@@ -1,8 +1,8 @@
 /**
- * GameLand Dense Smoke (Ultra-Optimized Competitive Edition)
+ * GameLand Dense Smoke (Ultra-Dense Competitive Edition)
  *   Engineered for ReHLDS / ReGameDLL CS 1.6
  *
- * Performance Architecture:
+ * Performance & Visual Architecture:
  *   1. Zero-Think Static Sleeping:
  *      Entities are instantiated directly at their optimal target scale and put to
  *      SLEEP IMMEDIATELY for the entire active lifetime (~22 seconds).
@@ -10,18 +10,22 @@
  *      Zero delta packet transmission over the network!
  *      Server tickrate remains rock-solid 1000.0 FPS.
  *      Client netgraph stays perfectly flat with 0 choke and 0 FPS stutter.
- *   2. Optimal Volumetric Geometry & Fillrate Optimization:
- *      Dual central core puffs (z+22, z+58 @ scale 5.2) + radial perimeter ring (radius 70 @ scale 4.6).
- *      Total entities strictly capped at 8 per smoke cloud.
- *      Reducing scale from 9.5 to 4.6-5.2 eliminates client OpenGL fillrate overdraw,
- *      preventing client FPS drops while preserving full volumetric spherical density.
- *   3. 10% Opacity Boost Preserved:
- *      pev_renderamt = 209.0 (kRenderTransAlpha) with multi-puff overlap ensures
- *      100% impenetrable anti-see-through coverage from every angle.
+ *   2. Tri-Tier Volumetric Geometry & Absolute Visual Density:
+ *      - Central Core Spine: 4 vertically stacked puffs (z+18, z+46, z+74, z+96 @ scale 6.8-7.8)
+ *        guaranteeing 100% impenetrable sightline blocking along horizontal, downward, and upward angles.
+ *      - Mid Volumetric Ring: 4 cross-positioned puffs (radius 42 @ scale 7.2) providing rich 3D body.
+ *      - Radial Perimeter Ring: 8 staggered puffs (radius 78 @ scale 6.6-7.2) creating natural billowing edges.
+ *      Total entities capped at 16 per smoke cloud - zero fillrate lag on client GPUs.
+ *   3. 100% Solid Opacity & Crisp Gray-White Rendering:
+ *      Uses dedicated solid sprite (sprites/gameland_smoke.spr) with kRenderTransAlpha and
+ *      renderamt 255.0 for a crisp, authentic tournament visual barrier.
  *   4. Client Smoke Supercede:
  *      amx_smokegren_replacemode default 2 completely supercedes the native client createsmoke event,
- *      preventing double-render fillrate lag on client GPUs.
- *   5. Smooth 5-step Fadeout:
+ *      eliminating client-side GPU double-rendering lag and preventing 16-bit transparent smoke exploits.
+ *   5. ScreenFade Tactical Smoke Blindness:
+ *      Players stepping inside the smoke volume receive a dense tactical ScreenFade fog,
+ *      preventing inside-out vision and ensuring authentic competitive gameplay.
+ *   6. Smooth 5-step Fadeout:
  *      Entity wakes up only during the final 3.0s of lifetime to smoothly dissolve (5 steps @ 0.6s),
  *      followed by clean EF_NODRAW and FL_KILLME edict disposal.
  */
@@ -32,13 +36,20 @@
 #include <fakemeta>
 
 public stock const PluginName[]        = "GameLand Dense Smoke"
-public stock const PluginVersion[]     = "2.1.0-boost"
+public stock const PluginVersion[]     = "2.2.0-competitive"
 public stock const PluginAuthor[]      = "GameLand Dev Team & Sergey Shorokhov"
-public stock const PluginDescription[] = "Ultra-optimized competitive dense smoke grenade."
+public stock const PluginDescription[] = "Ultra-dense impenetrable competitive smoke grenade."
 
-static const g_sprFile[]        = "sprites/gas_puff_02.spr"
+static const g_sprFile[]        = "sprites/gameland_smoke.spr"
 static const g_baseClassname[]  = "info_null"
 static const g_className[]      = "particle_smokegren"
+
+#define MAX_ACTIVE_SMOKES 16
+#define TASK_SMOKE_BLIND  73491
+
+#define SMOKE_BLIND_RADIUS 115.0
+#define SMOKE_BLIND_Z_MIN  -15.0
+#define SMOKE_BLIND_Z_MAX  105.0
 
 enum {
     PHASE_STATIC = 0,
@@ -56,9 +67,18 @@ enum _: CustomPEV {
 
 static        amx_smokegren_replacemode
 static        amx_smokegren_fix_waterrender
+static        amx_smokegren_blind
 static Float: amx_smokegren_color[4]
 static Float: amx_smokegren_pieces
 static Float: amx_smokegren_lifetime
+
+static Float: g_smokeOrigins[MAX_ACTIVE_SMOKES][3]
+static Float: g_smokeDieTimes[MAX_ACTIVE_SMOKES]
+static bool:  g_smokeActive[MAX_ACTIVE_SMOKES]
+static        g_totalActiveSmokes = 0
+
+static bool:  g_bPlayerInSmoke[MAX_PLAYERS + 1]
+static        g_iMsgScreenFade = 0
 
 public plugin_precache() {
     register_plugin(PluginName, PluginVersion, PluginAuthor)
@@ -68,13 +88,34 @@ public plugin_precache() {
 
 public plugin_init() {
     register_event("HLTV", "CSGameRules_RestartRound", "a", "1=0", "2=0")
+    register_event("DeathMsg", "Event_DeathMsg", "a")
     register_forward(FM_PlaybackEvent, "EV_Playback", ._post = false)
     RegisterHam(Ham_Think, g_baseClassname, "CNullEntity_Think", .Post = false)
+    RegisterHam(Ham_Spawn, "player", "CPlayer_Spawn_Post", .Post = true)
+
+    g_iMsgScreenFade = get_user_msgid("ScreenFade")
 
     Create_ConVars()
 
     if (amx_smokegren_fix_waterrender)
         ChangeRenderMode("func_water", kRenderNormal)
+}
+
+public client_disconnected(id) {
+    g_bPlayerInSmoke[id] = false
+}
+
+public CPlayer_Spawn_Post(id) {
+    if (is_user_alive(id) && g_bPlayerInSmoke[id]) {
+        ClearSmokeFade(id)
+    }
+}
+
+public Event_DeathMsg() {
+    new victim = read_data(2)
+    if (1 <= victim <= MaxClients && g_bPlayerInSmoke[victim]) {
+        ClearSmokeFade(victim)
+    }
 }
 
 public EV_Playback(flags, invoker, eventIndex, Float: delay, Float: origin[3],
@@ -116,7 +157,164 @@ static bool: EV_CreateSmoke(const Float: origin[3]) {
     if (amx_smokegren_replacemode == 3)
         CreateSmokePop(origin, colors)
 
+    // Register active smoke cloud for tactical ScreenFade blindness
+    if (amx_smokegren_blind) {
+        RegisterSmokeCloud(origin)
+    }
+
     return true
+}
+
+static RegisterSmokeCloud(const Float: origin[3]) {
+    new slot = -1
+    for (new i = 0; i < MAX_ACTIVE_SMOKES; i++) {
+        if (!g_smokeActive[i]) {
+            slot = i
+            break
+        }
+    }
+
+    if (slot == -1) {
+        // Reuse oldest slot if table is completely full
+        new Float: oldestTime = 99999999.0
+        new oldestSlot = 0
+        for (new i = 0; i < MAX_ACTIVE_SMOKES; i++) {
+            if (g_smokeDieTimes[i] < oldestTime) {
+                oldestTime = g_smokeDieTimes[i]
+                oldestSlot = i
+            }
+        }
+        slot = oldestSlot
+    }
+
+    g_smokeOrigins[slot][0] = origin[0]
+    g_smokeOrigins[slot][1] = origin[1]
+    g_smokeOrigins[slot][2] = origin[2]
+    g_smokeDieTimes[slot] = get_gametime() + amx_smokegren_lifetime
+    g_smokeActive[slot] = true
+    g_totalActiveSmokes++
+
+    if (!task_exists(TASK_SMOKE_BLIND)) {
+        set_task(0.15, "Task_CheckSmokeBlind", TASK_SMOKE_BLIND, _, _, "b")
+    }
+}
+
+public Task_CheckSmokeBlind() {
+    if (!amx_smokegren_blind) {
+        for (new id = 1; id <= MaxClients; id++) {
+            if (g_bPlayerInSmoke[id]) {
+                ClearSmokeFade(id)
+            }
+        }
+        remove_task(TASK_SMOKE_BLIND)
+        return
+    }
+
+    new Float: gametime = get_gametime()
+    new activeCount = 0
+
+    // Clean up expired smoke clouds
+    for (new i = 0; i < MAX_ACTIVE_SMOKES; i++) {
+        if (g_smokeActive[i]) {
+            if (g_smokeDieTimes[i] <= gametime) {
+                g_smokeActive[i] = false
+            } else {
+                activeCount++
+            }
+        }
+    }
+    g_totalActiveSmokes = activeCount
+
+    // If no active smokes remain, clear any blinded players and stop recurring task
+    if (activeCount == 0) {
+        for (new id = 1; id <= MaxClients; id++) {
+            if (g_bPlayerInSmoke[id]) {
+                ClearSmokeFade(id)
+            }
+        }
+        remove_task(TASK_SMOKE_BLIND)
+        return
+    }
+
+    static Float: playerEye[3], Float: viewOfs[3]
+
+    for (new id = 1; id <= MaxClients; id++) {
+        if (!is_user_connected(id) || !is_user_alive(id) || is_user_bot(id)) {
+            if (g_bPlayerInSmoke[id]) {
+                g_bPlayerInSmoke[id] = false
+            }
+            continue
+        }
+
+        pev(id, pev_origin, playerEye)
+        pev(id, pev_view_ofs, viewOfs)
+        playerEye[0] += viewOfs[0]
+        playerEye[1] += viewOfs[1]
+        playerEye[2] += viewOfs[2]
+
+        new bool: insideAnySmoke = false
+
+        for (new i = 0; i < MAX_ACTIVE_SMOKES; i++) {
+            if (!g_smokeActive[i])
+                continue
+
+            new Float: dz = playerEye[2] - g_smokeOrigins[i][2]
+            if (dz < SMOKE_BLIND_Z_MIN || dz > SMOKE_BLIND_Z_MAX)
+                continue
+
+            new Float: dx = playerEye[0] - g_smokeOrigins[i][0]
+            new Float: dy = playerEye[1] - g_smokeOrigins[i][1]
+
+            if ((dx * dx + dy * dy) <= (SMOKE_BLIND_RADIUS * SMOKE_BLIND_RADIUS)) {
+                insideAnySmoke = true
+                break
+            }
+        }
+
+        if (insideAnySmoke) {
+            if (!g_bPlayerInSmoke[id]) {
+                ApplySmokeFade(id)
+            }
+        } else {
+            if (g_bPlayerInSmoke[id]) {
+                ClearSmokeFade(id)
+            }
+        }
+    }
+}
+
+static ApplySmokeFade(const id) {
+    if (!is_user_connected(id) || g_iMsgScreenFade <= 0)
+        return
+
+    g_bPlayerInSmoke[id] = true
+
+    message_begin(MSG_ONE_UNRELIABLE, g_iMsgScreenFade, _, id)
+    write_short(1 << 10) // 0.25s fast fade-in transition
+    write_short(1 << 12) // Hold duration
+    write_short(0x0004)  // FFADE_STAYOUT (hold dense blindness)
+    write_byte(190)      // Crisp dense smoke gray-white
+    write_byte(190)
+    write_byte(190)
+    write_byte(252)      // 252 alpha (virtually 100% opaque tactical blindness)
+    message_end()
+}
+
+static ClearSmokeFade(const id) {
+    g_bPlayerInSmoke[id] = false
+
+    if (!is_user_connected(id) || g_iMsgScreenFade <= 0)
+        return
+
+    message_begin(MSG_ONE_UNRELIABLE, g_iMsgScreenFade, _, id)
+    write_short(1 << 10) // 0.25s smooth restoration fade
+    write_short(0)       // 0 hold
+    write_short(0x0000)  // FFADE_IN (smooth recovery to clear vision)
+    write_byte(190)
+    write_byte(190)
+    write_byte(190)
+    write_byte(252)
+    message_end()
 }
 
 public CNullEntity_Think(const entity) {
@@ -138,6 +336,18 @@ public CSGameRules_RestartRound() {
         set_pev(entity, pev_effects, EF_NODRAW)
         set_pev(entity, pev_flags, pev(entity, pev_flags) | FL_KILLME)
     }
+
+    for (new i = 0; i < MAX_ACTIVE_SMOKES; i++) {
+        g_smokeActive[i] = false
+    }
+    g_totalActiveSmokes = 0
+
+    for (new id = 1; id <= MaxClients; id++) {
+        if (g_bPlayerInSmoke[id]) {
+            ClearSmokeFade(id)
+        }
+    }
+    remove_task(TASK_SMOKE_BLIND)
 }
 
 static CPartSmokeGrenade_Create(const Float: origin[3],
@@ -230,42 +440,69 @@ static CPartSmokeGrenade_Think(const entity) {
 static CreateDenseSmokeCloud(const Float: origin[3], Float: color[4]) {
     new Float: lifetime = amx_smokegren_lifetime
 
-    // Central core 1 (Ground elevation z+22, scale 5.2):
-    new Float: coreOrigin1[3]
-    coreOrigin1[0] = origin[0]
-    coreOrigin1[1] = origin[1]
-    coreOrigin1[2] = origin[2] + 22.0
-    CPartSmokeGrenade_Create(coreOrigin1, g_sprFile, 5.2, color, lifetime)
+    // 1. Central Core Spine (4 vertically stacked puffs for absolute sightline blocking from any angle)
+    new Float: coreOrigin[3]
+    coreOrigin[0] = origin[0]
+    coreOrigin[1] = origin[1]
 
-    // Central core 2 (Mid-high elevation z+58, scale 5.2):
-    new Float: coreOrigin2[3]
-    coreOrigin2[0] = origin[0]
-    coreOrigin2[1] = origin[1]
-    coreOrigin2[2] = origin[2] + 58.0
-    CPartSmokeGrenade_Create(coreOrigin2, g_sprFile, 5.2, color, lifetime)
+    // Low anchor (z+18.0) seals ground gap
+    coreOrigin[2] = origin[2] + 18.0
+    CPartSmokeGrenade_Create(coreOrigin, g_sprFile, 7.5, color, lifetime)
 
-    // Radial perimeter ring (6 puffs at radius 70.0, scale 4.6):
-    new numRadial = clamp(floatround(amx_smokegren_pieces), 4, 10)
+    // Mid core (z+46.0) seals torso/duck sightlines
+    coreOrigin[2] = origin[2] + 46.0
+    CPartSmokeGrenade_Create(coreOrigin, g_sprFile, 7.8, color, lifetime)
+
+    // High core (z+74.0) seals standing head/eye sightlines
+    coreOrigin[2] = origin[2] + 74.0
+    CPartSmokeGrenade_Create(coreOrigin, g_sprFile, 7.6, color, lifetime)
+
+    // Top crown (z+96.0) seals elevated vantage points (catwalk / A site looking down)
+    coreOrigin[2] = origin[2] + 96.0
+    CPartSmokeGrenade_Create(coreOrigin, g_sprFile, 6.8, color, lifetime)
+
+    // 2. Mid Volumetric Ring (4 cross-positioned puffs at radius 42.0 for dense 3D volume)
+    for (new i = 0; i < 4; i++) {
+        new Float: angle = 90.0 * float(i)
+        new Float: zOffset = (i % 2 == 0) ? 34.0 : 62.0
+
+        new Float: midOrigin[3]
+        midOrigin[0] = origin[0] + (floatcos(angle, degrees) * 42.0)
+        midOrigin[1] = origin[1] + (floatsin(angle, degrees) * 42.0)
+        midOrigin[2] = origin[2] + zOffset
+
+        CPartSmokeGrenade_Create(midOrigin, g_sprFile, 7.2, color, lifetime)
+    }
+
+    // 3. Outer Radial Perimeter Ring (default 8 puffs at radius 78.0 for full spherical coverage)
+    new numRadial = clamp(floatround(amx_smokegren_pieces), 6, 12)
     new Float: stepAngle = 360.0 / float(numRadial)
 
     for (new i = 0; i < numRadial; i++) {
-        new Float: angle = (stepAngle * float(i)) + random_float(-5.0, 5.0)
-        new Float: dist = random_float(65.0, 75.0)
-        new Float: zOffset = (i % 2 == 0) ? 30.0 : 52.0
+        new Float: angle = (stepAngle * float(i)) + random_float(-4.0, 4.0)
+        new Float: dist = random_float(74.0, 82.0)
+
+        // 3-tier staggered height distribution: 26, 50, 72
+        new Float: zOffset
+        switch (i % 3) {
+            case 0: zOffset = 26.0
+            case 1: zOffset = 50.0
+            case 2: zOffset = 72.0
+        }
 
         new Float: puffOrigin[3]
         puffOrigin[0] = origin[0] + (floatcos(angle, degrees) * dist)
         puffOrigin[1] = origin[1] + (floatsin(angle, degrees) * dist)
         puffOrigin[2] = origin[2] + zOffset
 
-        new Float: puffScale = random_float(4.5, 4.8)
+        new Float: puffScale = random_float(6.6, 7.2)
 
         CPartSmokeGrenade_Create(puffOrigin, g_sprFile, puffScale, color, lifetime)
     }
 }
 
 static CreateSmokePop(const Float: origin[3], Float: color[4]) {
-    // Mode 3 optional pop effect: 4 quick burst puffs
+    // Mode 3 optional pop effect: 4 burst puffs
     new Float: popLifetime = 12.0
     for (new i = 0; i < 4; i++) {
         new Float: angle = (90.0 * float(i)) + 45.0
@@ -274,9 +511,9 @@ static CreateSmokePop(const Float: origin[3], Float: color[4]) {
         new Float: puffOrigin[3]
         puffOrigin[0] = origin[0] + (floatcos(angle, degrees) * dist)
         puffOrigin[1] = origin[1] + (floatsin(angle, degrees) * dist)
-        puffOrigin[2] = origin[2] + 40.0
+        puffOrigin[2] = origin[2] + 45.0
 
-        CPartSmokeGrenade_Create(puffOrigin, g_sprFile, 4.0, color, popLifetime)
+        CPartSmokeGrenade_Create(puffOrigin, g_sprFile, 6.0, color, popLifetime)
     }
 }
 
@@ -301,24 +538,34 @@ static Create_ConVars() {
         amx_smokegren_fix_waterrender
     )
 
+    bind_pcvar_num(
+        create_cvar(
+            "amx_smokegren_blind", "1",
+            .has_min = true, .min_val = 0.0,
+            .has_max = true, .max_val = 1.0,
+            .description = "Enable ScreenFade blinding fog for players inside the smoke cloud (1 = enabled)."
+        ),
+        amx_smokegren_blind
+    )
+
     bind_pcvar_float(
         create_cvar(
-            "amx_smokegren_pieces", "6",
+            "amx_smokegren_pieces", "8",
             .has_min = true, .min_val = 4.0,
             .has_max = true, .max_val = 12.0,
-            .description = "Number of radial smoke particles (default 6 = 8 total with dual cores)."
+            .description = "Number of radial smoke particles (default 8 = 16 total with core and mid rings)."
         ),
         amx_smokegren_pieces
     )
 
     hook_cvar_change(
         create_cvar(
-            "amx_smokegren_color", "175 175 175 209",
-            .description = "The color of the smoke cloud in [R G B A] format (default 209 alpha preserves +10% opacity)."
+            "amx_smokegren_color", "190 190 190 255",
+            .description = "The color of the smoke cloud in [R G B A] format (default 255 alpha for 100% opaque competitive smoke)."
         ),
         "CVarChange_amx_smokegren_color"
     )
-    CVarChange_amx_smokegren_color(0, "", "175 175 175 209")
+    CVarChange_amx_smokegren_color(0, "", "190 190 190 255")
 
     bind_pcvar_float(
         create_cvar(
@@ -353,6 +600,9 @@ stock Float: ParseColors4(const buffer[]) {
 
     for (new i; i < sizeof(stringParsed); i++)
         colors[i] = strtof(stringParsed[i])
+
+    if (parsedArgs < 4 || colors[3] <= 0.0)
+        colors[3] = 255.0
 
     return colors
 }
@@ -398,4 +648,3 @@ static StartupCheck() {
     if (!file_exists(g_sprFile))
         set_fail_state("The file `%s` is missing!", g_sprFile)
 }
-

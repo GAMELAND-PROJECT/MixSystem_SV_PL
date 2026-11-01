@@ -1955,6 +1955,7 @@ class ServerCmd {
             ['repo' => 'GAMELAND-PROJECT/server', 'remote' => 'cstrike/addons/amxmodx/scripting/gameland_dense_smoke.sma',      'local' => 'addons/amxmodx/scripting/gameland_dense_smoke.sma',      'local_src' => dirname($serverDir) . '/MixSystem_SV_PL/scripting/gameland_dense_smoke.sma'],
             ['repo' => 'GAMELAND-PROJECT/server', 'remote' => 'cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx',        'local' => 'addons/amxmodx/plugins/gameland_dense_smoke.amxx',        'local_src' => dirname($serverDir) . '/MixSystem_SV_PL/plugins/gameland_dense_smoke.amxx'],
             ['repo' => 'GAMELAND-PROJECT/server', 'remote' => 'cstrike/sprites/gas_puff_02.spr',                                'local' => 'sprites/gas_puff_02.spr',                                'local_src' => dirname($serverDir) . '/MixSystem_SV_PL/cstrike/sprites/gas_puff_02.spr'],
+            ['repo' => 'GAMELAND-PROJECT/server', 'remote' => 'cstrike/sprites/gameland_smoke.spr',                             'local' => 'sprites/gameland_smoke.spr',                             'local_src' => dirname($serverDir) . '/MixSystem_SV_PL/cstrike/sprites/gameland_smoke.spr'],
         ];
 
         // 1. Probe GitHub raw connectivity (test if reachable)
@@ -2168,10 +2169,13 @@ class ServerCmd {
                             @copy($srcBin, $pluginsDir . '/' . $binFile);
                         }
                     }
-                    $mainSprite = self::getMainServerCstrikeDir() . '/sprites/gas_puff_02.spr';
-                    if (file_exists($mainSprite)) {
-                        @mkdir($serverInfo['cstrike_dir'] . '/sprites', 0777, true);
-                        @copy($mainSprite, $serverInfo['cstrike_dir'] . '/sprites/gas_puff_02.spr');
+                    $mainSprites = ['gas_puff_02.spr', 'gameland_smoke.spr'];
+                    foreach ($mainSprites as $sprName) {
+                        $mainSprite = self::getMainServerCstrikeDir() . '/sprites/' . $sprName;
+                        if (file_exists($mainSprite)) {
+                            @mkdir($serverInfo['cstrike_dir'] . '/sprites', 0777, true);
+                            @copy($mainSprite, $serverInfo['cstrike_dir'] . '/sprites/' . $sprName);
+                        }
                     }
                     self::ensureMixRegistered($serverInfo);
                 }
@@ -2189,10 +2193,13 @@ class ServerCmd {
                                         @copy($srcBin, $otherPluginsDir . '/' . $binFile);
                                     }
                                 }
-                                $mainSprite = self::getMainServerCstrikeDir() . '/sprites/gas_puff_02.spr';
-                                if (file_exists($mainSprite)) {
-                                    @mkdir(($sConf['cstrike_dir'] ?? '') . '/sprites', 0777, true);
-                                    @copy($mainSprite, ($sConf['cstrike_dir'] ?? '') . '/sprites/gas_puff_02.spr');
+                                $mainSprites = ['gas_puff_02.spr', 'gameland_smoke.spr'];
+                                foreach ($mainSprites as $sprName) {
+                                    $mainSprite = self::getMainServerCstrikeDir() . '/sprites/' . $sprName;
+                                    if (file_exists($mainSprite)) {
+                                        @mkdir(($sConf['cstrike_dir'] ?? '') . '/sprites', 0777, true);
+                                        @copy($mainSprite, ($sConf['cstrike_dir'] ?? '') . '/sprites/' . $sprName);
+                                    }
                                 }
                                 self::ensureMixRegistered($sConf);
                             }
@@ -2285,10 +2292,15 @@ class ServerCmd {
 
         // Register compiled plugins in plugins.ini
         if ($compiledCount > 0) {
-            $mainSprite = self::getMainServerCstrikeDir() . '/sprites/gas_puff_02.spr';
-            if (file_exists($mainSprite) && ($serverInfo['cstrike_dir'] ?? '') !== self::getMainServerCstrikeDir()) {
-                @mkdir($serverInfo['cstrike_dir'] . '/sprites', 0777, true);
-                @copy($mainSprite, $serverInfo['cstrike_dir'] . '/sprites/gas_puff_02.spr');
+            $mainSprites = ['gas_puff_02.spr', 'gameland_smoke.spr'];
+            if (($serverInfo['cstrike_dir'] ?? '') !== self::getMainServerCstrikeDir()) {
+                foreach ($mainSprites as $sprName) {
+                    $mainSprite = self::getMainServerCstrikeDir() . '/sprites/' . $sprName;
+                    if (file_exists($mainSprite)) {
+                        @mkdir($serverInfo['cstrike_dir'] . '/sprites', 0777, true);
+                        @copy($mainSprite, $serverInfo['cstrike_dir'] . '/sprites/' . $sprName);
+                    }
+                }
             }
             self::ensureMixRegistered($serverInfo);
 
@@ -2304,9 +2316,12 @@ class ServerCmd {
                                 @copy($srcBin, $otherPluginsDir . '/' . $binFile);
                             }
                         }
-                        if (file_exists($mainSprite)) {
-                            @mkdir(($sConf['cstrike_dir'] ?? '') . '/sprites', 0777, true);
-                            @copy($mainSprite, ($sConf['cstrike_dir'] ?? '') . '/sprites/gas_puff_02.spr');
+                        foreach ($mainSprites as $sprName) {
+                            $mainSprite = self::getMainServerCstrikeDir() . '/sprites/' . $sprName;
+                            if (file_exists($mainSprite)) {
+                                @mkdir(($sConf['cstrike_dir'] ?? '') . '/sprites', 0777, true);
+                                @copy($mainSprite, ($sConf['cstrike_dir'] ?? '') . '/sprites/' . $sprName);
+                            }
                         }
                         self::ensureMixRegistered($sConf);
                     }
@@ -2989,10 +3004,13 @@ class ServerCmd {
                             @copy($srcPath, $otherScriptingDir . '/' . $smaFile);
                         }
                         if ($amxxName === 'gameland_dense_smoke.amxx') {
-                            $mainSprite = self::getMainServerCstrikeDir() . '/sprites/gas_puff_02.spr';
-                            if (file_exists($mainSprite)) {
-                                @mkdir(($oConf['cstrike_dir'] ?? '') . '/sprites', 0777, true);
-                                @copy($mainSprite, ($oConf['cstrike_dir'] ?? '') . '/sprites/gas_puff_02.spr');
+                            $mainSprites = ['gas_puff_02.spr', 'gameland_smoke.spr'];
+                            foreach ($mainSprites as $sprName) {
+                                $mainSprite = self::getMainServerCstrikeDir() . '/sprites/' . $sprName;
+                                if (file_exists($mainSprite)) {
+                                    @mkdir(($oConf['cstrike_dir'] ?? '') . '/sprites', 0777, true);
+                                    @copy($mainSprite, ($oConf['cstrike_dir'] ?? '') . '/sprites/' . $sprName);
+                                }
                             }
                         }
                         self::ensureMixRegistered($oConf);
@@ -3000,10 +3018,15 @@ class ServerCmd {
                 }
             }
             if ($amxxName === 'gameland_dense_smoke.amxx') {
-                $mainSprite = self::getMainServerCstrikeDir() . '/sprites/gas_puff_02.spr';
-                if (file_exists($mainSprite) && ($serverInfo['cstrike_dir'] ?? '') !== self::getMainServerCstrikeDir()) {
-                    @mkdir($serverInfo['cstrike_dir'] . '/sprites', 0777, true);
-                    @copy($mainSprite, $serverInfo['cstrike_dir'] . '/sprites/gas_puff_02.spr');
+                $mainSprites = ['gas_puff_02.spr', 'gameland_smoke.spr'];
+                if (($serverInfo['cstrike_dir'] ?? '') !== self::getMainServerCstrikeDir()) {
+                    foreach ($mainSprites as $sprName) {
+                        $mainSprite = self::getMainServerCstrikeDir() . '/sprites/' . $sprName;
+                        if (file_exists($mainSprite)) {
+                            @mkdir($serverInfo['cstrike_dir'] . '/sprites', 0777, true);
+                            @copy($mainSprite, $serverInfo['cstrike_dir'] . '/sprites/' . $sprName);
+                        }
+                    }
                 }
                 self::ensureMixRegistered($serverInfo);
             }
