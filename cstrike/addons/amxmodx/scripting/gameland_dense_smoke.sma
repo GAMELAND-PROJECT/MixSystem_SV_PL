@@ -1,5 +1,5 @@
 /**
- * GameLand Dense Smoke (Ultra-Dense Competitive Edition)
+ * GameLand Dense Smoke (Natural 3D Volumetric Edition)
  *   Engineered for ReHLDS / ReGameDLL CS 1.6
  *
  * Performance & Visual Architecture:
@@ -7,23 +7,24 @@
  *      Entities are instantiated directly at their optimal target scale and put to
  *      SLEEP IMMEDIATELY for the entire active lifetime (~22 seconds).
  *      Zero Ham_Think calls during active combat!
- *      Zero delta packet transmission over the network!
  *      Server tickrate remains rock-solid 1000.0 FPS.
  *      Client netgraph stays perfectly flat with 0 choke and 0 FPS stutter.
- *   2. Tri-Tier Volumetric Geometry & Absolute Visual Density:
- *      - Central Core Spine: 4 vertically stacked puffs (z+18, z+46, z+74, z+96 @ scale 6.8-7.8)
- *        guaranteeing 100% impenetrable sightline blocking along horizontal, downward, and upward angles.
- *      - Mid Volumetric Ring: 4 cross-positioned puffs (radius 42 @ scale 7.2) providing rich 3D body.
- *      - Radial Perimeter Ring: 8 staggered puffs (radius 78 @ scale 6.6-7.2) creating natural billowing edges.
- *      Total entities capped at 16 per smoke cloud - zero fillrate lag on client GPUs.
- *   3. 100% Solid Opacity & Crisp Gray-White Rendering:
- *      Uses dedicated solid sprite (sprites/gameland_smoke.spr) with kRenderTransAlpha and
- *      renderamt 255.0 for a crisp, authentic tournament visual barrier.
- *   4. Client Smoke Supercede:
- *      amx_smokegren_replacemode default 2 completely supercedes the native client createsmoke event,
- *      eliminating client-side GPU double-rendering lag and preventing 16-bit transparent smoke exploits.
+ *   2. Natural 3D Volumetric Spherical Depth & Parallax:
+ *      - Reduced particle scale to authentic CS size (scale 3.2 - 3.8).
+ *      - Central Core Cluster (6 puffs with natural spatial offsets): eliminates the flat 2D
+ *        single-axis billboard appearance and provides multi-angle sightline blocking.
+ *      - Mid Volumetric Ring (4 cross-positioned puffs): rich 3D body and parallax.
+ *      - Radial Perimeter Ring (8 staggered puffs): feathered cloud billowing edges.
+ *      Total entities capped at 18 per smoke cloud - zero fillrate lag on client GPUs.
+ *   3. Organic 3D Billowing & Subtle Angular Velocity:
+ *      Sprites are initialized with random roll angles (angles[2] = random_float(0, 360))
+ *      and gentle angular velocity (avelocity[2] = +/- random_float(2.0, 5.5)), eliminating
+ *      the static flat disc effect when players turn their view.
+ *   4. Client Smoke Supercede & Forced High-Quality Rendering:
+ *      Enforces client_cmd(id, "fastsprites 0") on client connect and spawn, ensuring the
+ *      GoldSrc engine renders authentic 3D translucent volumetric smoke rather than 2D billboards.
  *   5. ScreenFade Tactical Smoke Blindness:
- *      Players stepping inside the smoke volume receive a dense tactical ScreenFade fog,
+ *      Players stepping inside the smoke volume receive dense tactical ScreenFade fog,
  *      preventing inside-out vision and ensuring authentic competitive gameplay.
  *   6. Smooth 5-step Fadeout:
  *      Entity wakes up only during the final 3.0s of lifetime to smoothly dissolve (5 steps @ 0.6s),
@@ -36,9 +37,9 @@
 #include <fakemeta>
 
 public stock const PluginName[]        = "GameLand Dense Smoke"
-public stock const PluginVersion[]     = "2.2.0-competitive"
+public stock const PluginVersion[]     = "2.3.0-volumetric"
 public stock const PluginAuthor[]      = "GameLand Dev Team & Sergey Shorokhov"
-public stock const PluginDescription[] = "Ultra-dense impenetrable competitive smoke grenade."
+public stock const PluginDescription[] = "Natural 3D volumetric dense competitive smoke grenade."
 
 static const g_sprFile[]        = "sprites/gameland_smoke.spr"
 static const g_baseClassname[]  = "info_null"
@@ -47,9 +48,9 @@ static const g_className[]      = "particle_smokegren"
 #define MAX_ACTIVE_SMOKES 16
 #define TASK_SMOKE_BLIND  73491
 
-#define SMOKE_BLIND_RADIUS 115.0
-#define SMOKE_BLIND_Z_MIN  -15.0
-#define SMOKE_BLIND_Z_MAX  105.0
+#define SMOKE_BLIND_RADIUS 85.0
+#define SMOKE_BLIND_Z_MIN  -10.0
+#define SMOKE_BLIND_Z_MAX  85.0
 
 enum {
     PHASE_STATIC = 0,
@@ -97,17 +98,41 @@ public plugin_init() {
 
     Create_ConVars()
 
+    // Enforce true volumetric 3D smoke rendering on server host
+    server_cmd("fastsprites 0")
+
     if (amx_smokegren_fix_waterrender)
         ChangeRenderMode("func_water", kRenderNormal)
 }
 
+public client_putinserver(id) {
+    g_bPlayerInSmoke[id] = false
+    if (!is_user_bot(id)) {
+        // Enforce true 3D volumetric smoke rendering instead of flat 2D billboards
+        client_cmd(id, "fastsprites 0")
+        set_task(1.2, "Task_EnforceFastSprites", id)
+    }
+}
+
+public Task_EnforceFastSprites(id) {
+    if (is_user_connected(id) && !is_user_bot(id)) {
+        client_cmd(id, "fastsprites 0")
+    }
+}
+
 public client_disconnected(id) {
     g_bPlayerInSmoke[id] = false
+    remove_task(id)
 }
 
 public CPlayer_Spawn_Post(id) {
-    if (is_user_alive(id) && g_bPlayerInSmoke[id]) {
-        ClearSmokeFade(id)
+    if (is_user_alive(id)) {
+        if (g_bPlayerInSmoke[id]) {
+            ClearSmokeFade(id)
+        }
+        if (!is_user_bot(id)) {
+            client_cmd(id, "fastsprites 0")
+        }
     }
 }
 
@@ -363,15 +388,29 @@ static CPartSmokeGrenade_Create(const Float: origin[3],
 
     engfunc(EngFunc_SetModel, entity, model)
     engfunc(EngFunc_SetOrigin, entity, origin)
-    set_pev(entity, pev_movetype, MOVETYPE_NONE)
+    set_pev(entity, pev_movetype, MOVETYPE_NOCLIP)
     set_pev(entity, pev_solid, SOLID_NOT)
     set_pev(entity, pev_gravity, 0.0)
     set_pev(entity, pev_scale, scale)
+    set_pev(entity, pev_frame, float(random_num(0, 1)))
 
     set_pev(entity, pev_framerate, 0.0)
     set_pev(entity, pev_animtime, 0.0)
     set_pev(entity, pev_velocity, Float:{0.0, 0.0, 0.0})
-    set_pev(entity, pev_avelocity, Float:{0.0, 0.0, 0.0})
+
+    // Natural random roll orientation for organic 3D appearance
+    new Float: angles[3]
+    angles[0] = 0.0
+    angles[1] = 0.0
+    angles[2] = random_float(0.0, 360.0)
+    set_pev(entity, pev_angles, angles)
+
+    // Subtle natural angular velocity (gentle swirling roll motion)
+    new Float: avelocity[3]
+    avelocity[0] = 0.0
+    avelocity[1] = 0.0
+    avelocity[2] = (random_num(0, 1) ? 1.0 : -1.0) * random_float(2.0, 5.0)
+    set_pev(entity, pev_avelocity, avelocity)
 
     set_pev(entity, pev_rendermode, kRenderTransAlpha)
     set_pev(entity, pev_rendercolor, color)
@@ -440,80 +479,99 @@ static CPartSmokeGrenade_Think(const entity) {
 static CreateDenseSmokeCloud(const Float: origin[3], Float: color[4]) {
     new Float: lifetime = amx_smokegren_lifetime
 
-    // 1. Central Core Spine (4 vertically stacked puffs for absolute sightline blocking from any angle)
-    new Float: coreOrigin[3]
-    coreOrigin[0] = origin[0]
-    coreOrigin[1] = origin[1]
+    // 1. Central Core Cluster (6 puffs with natural spatial offsets to prevent flat single-axis billboard perception)
+    new Float: corePos[3]
 
-    // Low anchor (z+18.0) seals ground gap
-    coreOrigin[2] = origin[2] + 18.0
-    CPartSmokeGrenade_Create(coreOrigin, g_sprFile, 7.5, color, lifetime)
+    // Low Base (Ground Seal): eliminates feet/crouch gaps
+    corePos[0] = origin[0] + random_float(-8.0, 8.0)
+    corePos[1] = origin[1] + random_float(-8.0, 8.0)
+    corePos[2] = origin[2] + 16.0
+    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.4, 3.7), color, lifetime)
 
-    // Mid core (z+46.0) seals torso/duck sightlines
-    coreOrigin[2] = origin[2] + 46.0
-    CPartSmokeGrenade_Create(coreOrigin, g_sprFile, 7.8, color, lifetime)
+    // Low-Mid Core A (West/South offset for immediate 3D parallax)
+    corePos[0] = origin[0] - random_float(12.0, 18.0)
+    corePos[1] = origin[1] + random_float(-8.0, 10.0)
+    corePos[2] = origin[2] + 34.0
+    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.5, 3.8), color, lifetime)
 
-    // High core (z+74.0) seals standing head/eye sightlines
-    coreOrigin[2] = origin[2] + 74.0
-    CPartSmokeGrenade_Create(coreOrigin, g_sprFile, 7.6, color, lifetime)
+    // Low-Mid Core B (East/North offset counterbalancing A)
+    corePos[0] = origin[0] + random_float(12.0, 18.0)
+    corePos[1] = origin[1] + random_float(-10.0, 8.0)
+    corePos[2] = origin[2] + 40.0
+    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.5, 3.8), color, lifetime)
 
-    // Top crown (z+96.0) seals elevated vantage points (catwalk / A site looking down)
-    coreOrigin[2] = origin[2] + 96.0
-    CPartSmokeGrenade_Create(coreOrigin, g_sprFile, 6.8, color, lifetime)
+    // Center Anchor (Standing eye/torso line)
+    corePos[0] = origin[0] + random_float(-5.0, 5.0)
+    corePos[1] = origin[1] + random_float(-5.0, 5.0)
+    corePos[2] = origin[2] + 54.0
+    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.6, 3.8), color, lifetime)
 
-    // 2. Mid Volumetric Ring (4 cross-positioned puffs at radius 42.0 for dense 3D volume)
+    // Upper Core (North offset, covering head and elevated sightlines)
+    corePos[0] = origin[0] + random_float(-10.0, 10.0)
+    corePos[1] = origin[1] + random_float(12.0, 20.0)
+    corePos[2] = origin[2] + 68.0
+    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.4, 3.7), color, lifetime)
+
+    // Upper Crown (South offset, seals elevated catwalk/balcony downward sightlines)
+    corePos[0] = origin[0] + random_float(-8.0, 8.0)
+    corePos[1] = origin[1] - random_float(10.0, 18.0)
+    corePos[2] = origin[2] + 82.0
+    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.2, 3.5), color, lifetime)
+
+    // 2. Mid Volumetric Shell (4 diagonal puffs at radius 38-46 for rich 3D body and parallax)
     for (new i = 0; i < 4; i++) {
-        new Float: angle = 90.0 * float(i)
-        new Float: zOffset = (i % 2 == 0) ? 34.0 : 62.0
+        new Float: angle = 45.0 + (90.0 * float(i)) + random_float(-8.0, 8.0)
+        new Float: dist = random_float(38.0, 46.0)
+        new Float: zOffset = (i % 2 == 0) ? random_float(28.0, 36.0) : random_float(54.0, 62.0)
 
-        new Float: midOrigin[3]
-        midOrigin[0] = origin[0] + (floatcos(angle, degrees) * 42.0)
-        midOrigin[1] = origin[1] + (floatsin(angle, degrees) * 42.0)
-        midOrigin[2] = origin[2] + zOffset
+        new Float: midPos[3]
+        midPos[0] = origin[0] + (floatcos(angle, degrees) * dist)
+        midPos[1] = origin[1] + (floatsin(angle, degrees) * dist)
+        midPos[2] = origin[2] + zOffset
 
-        CPartSmokeGrenade_Create(midOrigin, g_sprFile, 7.2, color, lifetime)
+        CPartSmokeGrenade_Create(midPos, g_sprFile, random_float(3.4, 3.7), color, lifetime)
     }
 
-    // 3. Outer Radial Perimeter Ring (default 8 puffs at radius 78.0 for full spherical coverage)
-    new numRadial = clamp(floatround(amx_smokegren_pieces), 6, 12)
+    // 3. Radial Perimeter Ring (default 8 puffs at radius 66-78 for natural feathered billowing edges)
+    new numRadial = clamp(floatround(amx_smokegren_pieces), 6, 10)
     new Float: stepAngle = 360.0 / float(numRadial)
 
     for (new i = 0; i < numRadial; i++) {
-        new Float: angle = (stepAngle * float(i)) + random_float(-4.0, 4.0)
-        new Float: dist = random_float(74.0, 82.0)
+        new Float: angle = (stepAngle * float(i)) + random_float(-5.0, 5.0)
+        new Float: dist = random_float(66.0, 78.0)
 
-        // 3-tier staggered height distribution: 26, 50, 72
+        // 3-tier staggered height distribution
         new Float: zOffset
         switch (i % 3) {
-            case 0: zOffset = 26.0
-            case 1: zOffset = 50.0
-            case 2: zOffset = 72.0
+            case 0: zOffset = random_float(22.0, 28.0)
+            case 1: zOffset = random_float(44.0, 52.0)
+            case 2: zOffset = random_float(66.0, 74.0)
         }
 
-        new Float: puffOrigin[3]
-        puffOrigin[0] = origin[0] + (floatcos(angle, degrees) * dist)
-        puffOrigin[1] = origin[1] + (floatsin(angle, degrees) * dist)
-        puffOrigin[2] = origin[2] + zOffset
+        new Float: puffPos[3]
+        puffPos[0] = origin[0] + (floatcos(angle, degrees) * dist)
+        puffPos[1] = origin[1] + (floatsin(angle, degrees) * dist)
+        puffPos[2] = origin[2] + zOffset
 
-        new Float: puffScale = random_float(6.6, 7.2)
+        new Float: puffScale = random_float(3.2, 3.5)
 
-        CPartSmokeGrenade_Create(puffOrigin, g_sprFile, puffScale, color, lifetime)
+        CPartSmokeGrenade_Create(puffPos, g_sprFile, puffScale, color, lifetime)
     }
 }
 
 static CreateSmokePop(const Float: origin[3], Float: color[4]) {
     // Mode 3 optional pop effect: 4 burst puffs
-    new Float: popLifetime = 12.0
+    new Float: popLifetime = 10.0
     for (new i = 0; i < 4; i++) {
-        new Float: angle = (90.0 * float(i)) + 45.0
-        new Float: dist = random_float(85.0, 105.0)
+        new Float: angle = (90.0 * float(i)) + 45.0 + random_float(-6.0, 6.0)
+        new Float: dist = random_float(45.0, 60.0)
 
         new Float: puffOrigin[3]
         puffOrigin[0] = origin[0] + (floatcos(angle, degrees) * dist)
         puffOrigin[1] = origin[1] + (floatsin(angle, degrees) * dist)
-        puffOrigin[2] = origin[2] + 45.0
+        puffOrigin[2] = origin[2] + random_float(35.0, 50.0)
 
-        CPartSmokeGrenade_Create(puffOrigin, g_sprFile, 6.0, color, popLifetime)
+        CPartSmokeGrenade_Create(puffOrigin, g_sprFile, random_float(3.2, 3.5), color, popLifetime)
     }
 }
 
@@ -553,19 +611,19 @@ static Create_ConVars() {
             "amx_smokegren_pieces", "8",
             .has_min = true, .min_val = 4.0,
             .has_max = true, .max_val = 12.0,
-            .description = "Number of radial smoke particles (default 8 = 16 total with core and mid rings)."
+            .description = "Number of radial smoke particles (default 8 = 18 total with core and mid rings)."
         ),
         amx_smokegren_pieces
     )
 
     hook_cvar_change(
         create_cvar(
-            "amx_smokegren_color", "190 190 190 255",
-            .description = "The color of the smoke cloud in [R G B A] format (default 255 alpha for 100% opaque competitive smoke)."
+            "amx_smokegren_color", "185 185 185 215",
+            .description = "The color of the smoke cloud in [R G B A] format (default 215 alpha for rich 3D feathered opacity)."
         ),
         "CVarChange_amx_smokegren_color"
     )
-    CVarChange_amx_smokegren_color(0, "", "190 190 190 255")
+    CVarChange_amx_smokegren_color(0, "", "185 185 185 215")
 
     bind_pcvar_float(
         create_cvar(
@@ -602,7 +660,7 @@ stock Float: ParseColors4(const buffer[]) {
         colors[i] = strtof(stringParsed[i])
 
     if (parsedArgs < 4 || colors[3] <= 0.0)
-        colors[3] = 255.0
+        colors[3] = 215.0
 
     return colors
 }
