@@ -166,6 +166,19 @@ is_running() {
     return 0
 }
 
+tune_kernel_net() {
+    ulimit -n 65535 2>/dev/null || true
+    if command -v sysctl >/dev/null 2>&1; then
+        sysctl -w net.core.rmem_max=16777216 >/dev/null 2>&1 || true
+        sysctl -w net.core.wmem_max=16777216 >/dev/null 2>&1 || true
+        sysctl -w net.core.rmem_default=1048576 >/dev/null 2>&1 || true
+        sysctl -w net.core.wmem_default=1048576 >/dev/null 2>&1 || true
+        sysctl -w net.core.netdev_max_backlog=10000 >/dev/null 2>&1 || true
+        sysctl -w net.ipv4.udp_rmem_min=16384 >/dev/null 2>&1 || true
+        sysctl -w net.ipv4.udp_wmem_min=16384 >/dev/null 2>&1 || true
+    fi
+}
+
 control_server() {
     local action="$1"
     local id="${2:-main}"
@@ -173,6 +186,9 @@ control_server() {
     svc="$(service_name_for "$id")"
     if [[ "$id" != "main" && ! -f "$TEMPLATE_SERVICE_DEST" ]]; then
         install_template
+    fi
+    if [[ "$action" == "start" || "$action" == "restart" ]]; then
+        tune_kernel_net
     fi
     systemctl "$action" "$svc"
 }
