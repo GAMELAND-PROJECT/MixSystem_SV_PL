@@ -1,152 +1,155 @@
 /**
- * GameLand Dense Smoke (Natural 3D Volumetric Edition)
- *   Engineered for ReHLDS / ReGameDLL CS 1.6
+ * Server-Side SmokeNade by Sergey Shorokhov
+ *   06.10.2023
+ *   https://github.com/wopox1337/
  *
- * Performance & Visual Architecture:
- *   1. Zero-Think Static Sleeping:
- *      Entities are instantiated directly at their optimal target scale and put to
- *      SLEEP IMMEDIATELY for the entire active lifetime (~22 seconds).
- *      Zero Ham_Think calls during active combat!
- *      Server tickrate remains rock-solid 1000.0 FPS.
- *      Client netgraph stays perfectly flat with 0 choke and 0 FPS stutter.
- *   2. Natural 3D Volumetric Spherical Depth & Parallax:
- *      - Reduced particle scale to authentic CS size (scale 3.2 - 3.8).
- *      - Central Core Cluster (6 puffs with natural spatial offsets): eliminates the flat 2D
- *        single-axis billboard appearance and provides multi-angle sightline blocking.
- *      - Mid Volumetric Ring (4 cross-positioned puffs): rich 3D body and parallax.
- *      - Radial Perimeter Ring (8 staggered puffs): feathered cloud billowing edges.
- *      Total entities capped at 18 per smoke cloud - zero fillrate lag on client GPUs.
- *   3. Organic 3D Billowing & Subtle Angular Velocity:
- *      Sprites are initialized with random roll angles (angles[2] = random_float(0, 360))
- *      and gentle angular velocity (avelocity[2] = +/- random_float(2.0, 5.5)), eliminating
- *      the static flat disc effect when players turn their view.
- *   4. Client Smoke Supercede & Forced High-Quality Rendering:
- *      Enforces client_cmd(id, "fastsprites 0") on client connect and spawn, ensuring the
- *      GoldSrc engine renders authentic 3D translucent volumetric smoke rather than 2D billboards.
- *   5. ScreenFade Tactical Smoke Blindness:
- *      Players stepping inside the smoke volume receive dense tactical ScreenFade fog,
- *      preventing inside-out vision and ensuring authentic competitive gameplay.
- *   6. Smooth 5-step Fadeout:
- *      Entity wakes up only during the final 3.0s of lifetime to smoothly dissolve (5 steps @ 0.6s),
- *      followed by clean EF_NODRAW and FL_KILLME edict disposal.
+ *
+ * Description:
+ *   Is an AMXModX plugin that enhances the smoke grenade effects in Counter-Strike 1.6 (and Counter-Strike Condition Zero).
+ *
+ *   This plugin recreates smoke grenade effects (puffs of smoke) on the server side,
+ *   provides a more realistic look to smoke grenades in the game
+ *   (as it was changed in later iterations of the game such as CS:S, CS:GO, CS2).
+ *
+ * Why is it needed:
+ *   The default smoke sprite (`sprites/gas_puff_01.spr`) is too transparent
+ *   and doesn't allow you to take advantage of the smoke grenade in gameplay.
+ *
+ * How it works:
+ *   The plugin blocks the sending of the event to the game client
+ *   and recreates smoke clubs using server-side entities,
+ *   exactly repeating the shape and animation of the standard smoke.
+ *
+ * Important note:
+ *   If the smoke effect is fully recreated (`amx_smokegren_replacemode` == 3), the load is increased 2x.
+ *
+ *   Using full smoke grenade recreation (3) is not recommended for servers
+ *   that have more than 10 players online (e.g. servers with 32\32 players online).
+ *
+ *   Also be careful with setting the parameter `amx_smokegren_pieces`,
+ *   it directly affects the shape and quality of the smoke grenade,
+ *   affecting the server load when using smoke grenades.
+ *
+ *   In special cases it may be necessary to set a larger number of allocated edicts
+ *   using the startup parameter `-num_edicts` (at least 2000).
+ *
+ * Calculations.
+ *   With standard parameters:
+ *     - amx_smokegren_replacemode 1
+ *     - amx_smokegren_pieces 8
+ *   One smoke cloud will create 17 entities.
+ *
+ *   At maximum parameters:
+ *     - amx_smokegren_replacemode 3
+ *     - amx_smokegren_pieces 10
+ *   One smoke cloud will create 41 entities.
+ *
+ * Advantages over standard game smoke:
+ *   - Improved transparency of the smoke cloud;
+ *   - Fixed poor smoke density in 16-bit video game mode;
+ *   - Smoke doesn't disappear on HLTV;
+ *   - Smoke can't be abused by reconnecting to the server;
+ *   - Smoke is always created (even if the client has a congested network channel);
+ *   - Ability to change the visual look of the smoke cloud.
+ *
+ * Advantages to other similar plugins:
+ *   - Ability to set any custom sprite to display smoke;
+ *   - Client FPS doesn't drop much;
+ *   - Server FPS doesn't drop much;
+ *   - The server doesn't flood the client's network channel to display the smoke cloud;
+ *   - Doesn't break compatibility with the game:
+ *       - Bots understand where smoke is located;
+ *       - Cannot see nickname through smoke (mp_playerid);
+ *       - Hostages can react to smoke grenade;
+ *       - Overview map can show smokes.
+ *   - Easy to adjust the color, duration and performance of the smoke cloud;
+ *   - No render bugs when positioning the smoke cloud on water;
+ *   - Smoke cloud has a very close to the original visual appearance (authenticity);
+ *   - Smoke cloud doesn't stay in a new round;
+ *   - Cannot be abused with the client command `fastsprites`;
+ *   - Smoke doesn't disappear before its lifetime expires;
+ *   - Smoke doesn't disappear if the player's internet connection is poor;
+ *   - Smoke doesn't disappear if you move away from it.
+ *   - Smoke doesn't flicker.
+ *
+ * Acknowledgements:
+ *   - ReGameDLL authors;
+ *   - To everyone who has previously tried custom smoke and their code examples;
+ *   - To the Counter-Strike developers (for their bugs, including);
+ *   - Community https://Dev-CS.ru/ (the most friendly and experienced team of developers).
+ *
+ * TODO:
+ *   - Correct the remaining visual inaccuracies.
+ *   - Implement API;
+ *   - Improve integration with GameDLL;
+ *   - Optimize sprite;
+ *
+ * Known bugs:
+ *   - If the smoke duration changes, the grenade entity may not match the smoke duration.
+ *
  */
 
 #include <amxmodx>
 #include <amxmisc>
 #include <hamsandwich>
 #include <fakemeta>
+#include <xs>
 
-public stock const PluginName[]        = "GameLand Dense Smoke"
-public stock const PluginVersion[]     = "2.3.0-volumetric"
-public stock const PluginAuthor[]      = "GameLand Dev Team & Sergey Shorokhov"
-public stock const PluginDescription[] = "Natural 3D volumetric dense competitive smoke grenade."
 
-static const g_sprFile[]        = "sprites/gameland_smoke.spr"
+public stock const PluginName[]        = "Server-Side SmokeNade"
+public stock const PluginVersion[]     = "1.0.0-beta.2"
+public stock const PluginAuthor[]      = "Sergey Shorokhov"
+public stock const PluginURL[]         = "https://github.com/wopox1337/ServerSide_SmokeNade"
+public stock const PluginDescription[] = "Replacing client smoke with Server-Side SmokeNade."
+
+
+static const g_sprFile[]        = "sprites/gas_puff_02.spr"
+// https://github.com/s1lentq/ReGameDLL_CS/blob/1e49d947927e7f6f2fd70d8398e4a9519a34450a/regamedll/dlls/subs.h#L31
 static const g_baseClassname[]  = "info_null"
 static const g_className[]      = "particle_smokegren"
 
-#define MAX_ACTIVE_SMOKES 16
-#define TASK_SMOKE_BLIND  73491
-
-#define SMOKE_BLIND_RADIUS 85.0
-#define SMOKE_BLIND_Z_MIN  -10.0
-#define SMOKE_BLIND_Z_MAX  85.0
-
-enum {
-    PHASE_STATIC = 0,
-    PHASE_FADEOUT
-}
-
 enum _: CustomPEV {
-    _pev_phase          = pev_iuser1,   // SmokePhase (0: static sleep, 1: fadeout)
-    _pev_stepCount      = pev_iuser2,   // Current step in fadeout
-    _pev_maxSteps       = pev_iuser3,   // Total fadeout steps
-    _pev_baseAlpha      = pev_iuser4,   // Base opacity (integer)
+    _pev_spawnInside    = pev_iuser1,
+    _pev_popCreated     = pev_iuser2,
 
-    _pev_fadeStartTime  = pev_fuser1    // Gametime when fadeout begins
+    _pev_scaleSpeed     = pev_fuser2,
+    _pev_dieTime        = pev_fuser3,
+    _pev_timeCreated    = pev_fuser4,
 }
 
 static        amx_smokegren_replacemode
 static        amx_smokegren_fix_waterrender
-static        amx_smokegren_blind
 static Float: amx_smokegren_color[4]
 static Float: amx_smokegren_pieces
 static Float: amx_smokegren_lifetime
 
-static Float: g_smokeOrigins[MAX_ACTIVE_SMOKES][3]
-static Float: g_smokeDieTimes[MAX_ACTIVE_SMOKES]
-static bool:  g_smokeActive[MAX_ACTIVE_SMOKES]
-static        g_totalActiveSmokes = 0
-
-static bool:  g_bPlayerInSmoke[MAX_PLAYERS + 1]
-static        g_iMsgScreenFade = 0
-
 public plugin_precache() {
-    register_plugin(PluginName, PluginVersion, PluginAuthor)
+    #if (!defined PluginDescription)
+        register_plugin(PluginName, PluginVersion, PluginAuthor)
+    #endif
+
     StartupCheck()
+
     precache_model(g_sprFile)
 }
 
 public plugin_init() {
     register_event("HLTV", "CSGameRules_RestartRound", "a", "1=0", "2=0")
-    register_event("DeathMsg", "Event_DeathMsg", "a")
+
     register_forward(FM_PlaybackEvent, "EV_Playback", ._post = false)
     RegisterHam(Ham_Think, g_baseClassname, "CNullEntity_Think", .Post = false)
-    RegisterHam(Ham_Spawn, "player", "CPlayer_Spawn_Post", .Post = true)
 
-    g_iMsgScreenFade = get_user_msgid("ScreenFade")
-
-    Create_ConVars()
-
-    // Enforce true volumetric 3D smoke rendering on server host
-    server_cmd("fastsprites 0")
+    Create_ConVars(.createConfigFile = true)
 
     if (amx_smokegren_fix_waterrender)
         ChangeRenderMode("func_water", kRenderNormal)
-}
-
-public client_putinserver(id) {
-    g_bPlayerInSmoke[id] = false
-    if (!is_user_bot(id)) {
-        // Enforce true 3D volumetric smoke rendering instead of flat 2D billboards
-        client_cmd(id, "fastsprites 0")
-        set_task(1.2, "Task_EnforceFastSprites", id)
-    }
-}
-
-public Task_EnforceFastSprites(id) {
-    if (is_user_connected(id) && !is_user_bot(id)) {
-        client_cmd(id, "fastsprites 0")
-    }
-}
-
-public client_disconnected(id) {
-    g_bPlayerInSmoke[id] = false
-    remove_task(id)
-}
-
-public CPlayer_Spawn_Post(id) {
-    if (is_user_alive(id)) {
-        if (g_bPlayerInSmoke[id]) {
-            ClearSmokeFade(id)
-        }
-        if (!is_user_bot(id)) {
-            client_cmd(id, "fastsprites 0")
-        }
-    }
-}
-
-public Event_DeathMsg() {
-    new victim = read_data(2)
-    if (1 <= victim <= MaxClients && g_bPlayerInSmoke[victim]) {
-        ClearSmokeFade(victim)
-    }
 }
 
 public EV_Playback(flags, invoker, eventIndex, Float: delay, Float: origin[3],
                     Float: angles[3], Float: fparam1, Float: fparam2,
                     iparam1, iparam2, bparam1, bparam2) {
 
+    // https://github.com/s1lentq/ReGameDLL_CS/blob/1e49d947927e7f6f2fd70d8398e4a9519a34450a/regamedll/dlls/wpn_shared/wpn_smokegrenade.cpp#L34
     static m_usCreateSmoke
     if (!m_usCreateSmoke)
         m_usCreateSmoke = engfunc(EngFunc_PrecacheEvent, 1, "events/createsmoke.sc")
@@ -154,434 +157,356 @@ public EV_Playback(flags, invoker, eventIndex, Float: delay, Float: origin[3],
     if (eventIndex != m_usCreateSmoke)
         return FMRES_IGNORED
 
-    // If replacement mode is disabled (0), allow standard client event
-    if (amx_smokegren_replacemode == 0)
+    new bool: isFirstSmoke = (iparam2 == 1)
+    if (!isFirstSmoke)
         return FMRES_IGNORED
 
-    // In CS 1.6 / ReGameDLL, iparam2 == 1 triggers the primary smoke explosion
-    if (iparam2 == 1) {
-        EV_CreateSmoke(origin)
-    }
-
-    // Modes >= 2 completely supercede native client smoke events to eliminate client-side GPU lag
-    if (amx_smokegren_replacemode >= 2)
-        return FMRES_SUPERCEDE
-
-    return FMRES_IGNORED
+    new bool: isSmokeReplaced = EV_CreateSmoke(origin)
+    return isSmokeReplaced ? FMRES_SUPERCEDE : FMRES_IGNORED
 }
 
 static bool: EV_CreateSmoke(const Float: origin[3]) {
+    // https://github.com/s1lentq/ReGameDLL_CS/blob/1e49d947927e7f6f2fd70d8398e4a9519a34450a/regamedll/dlls/ggrenade.cpp#L603
     if (amx_smokegren_replacemode == 0)
         return false
 
     new Float: colors[4]
     colors = GetColors(amx_smokegren_color)
 
-    CreateDenseSmokeCloud(origin, colors)
+    CreateGasInside(origin, colors)
 
     if (amx_smokegren_replacemode == 3)
         CreateSmokePop(origin, colors)
 
-    // Register active smoke cloud for tactical ScreenFade blindness
-    if (amx_smokegren_blind) {
-        RegisterSmokeCloud(origin)
-    }
+    if (amx_smokegren_replacemode >= 2)
+        return true
 
-    return true
-}
-
-static RegisterSmokeCloud(const Float: origin[3]) {
-    new slot = -1
-    for (new i = 0; i < MAX_ACTIVE_SMOKES; i++) {
-        if (!g_smokeActive[i]) {
-            slot = i
-            break
-        }
-    }
-
-    if (slot == -1) {
-        // Reuse oldest slot if table is completely full
-        new Float: oldestTime = 99999999.0
-        new oldestSlot = 0
-        for (new i = 0; i < MAX_ACTIVE_SMOKES; i++) {
-            if (g_smokeDieTimes[i] < oldestTime) {
-                oldestTime = g_smokeDieTimes[i]
-                oldestSlot = i
-            }
-        }
-        slot = oldestSlot
-    }
-
-    g_smokeOrigins[slot][0] = origin[0]
-    g_smokeOrigins[slot][1] = origin[1]
-    g_smokeOrigins[slot][2] = origin[2]
-    g_smokeDieTimes[slot] = get_gametime() + amx_smokegren_lifetime
-    g_smokeActive[slot] = true
-    g_totalActiveSmokes++
-
-    if (!task_exists(TASK_SMOKE_BLIND)) {
-        set_task(0.15, "Task_CheckSmokeBlind", TASK_SMOKE_BLIND, _, _, "b")
-    }
-}
-
-public Task_CheckSmokeBlind() {
-    if (!amx_smokegren_blind) {
-        for (new id = 1; id <= MaxClients; id++) {
-            if (g_bPlayerInSmoke[id]) {
-                ClearSmokeFade(id)
-            }
-        }
-        remove_task(TASK_SMOKE_BLIND)
-        return
-    }
-
-    new Float: gametime = get_gametime()
-    new activeCount = 0
-
-    // Clean up expired smoke clouds
-    for (new i = 0; i < MAX_ACTIVE_SMOKES; i++) {
-        if (g_smokeActive[i]) {
-            if (g_smokeDieTimes[i] <= gametime) {
-                g_smokeActive[i] = false
-            } else {
-                activeCount++
-            }
-        }
-    }
-    g_totalActiveSmokes = activeCount
-
-    // If no active smokes remain, clear any blinded players and stop recurring task
-    if (activeCount == 0) {
-        for (new id = 1; id <= MaxClients; id++) {
-            if (g_bPlayerInSmoke[id]) {
-                ClearSmokeFade(id)
-            }
-        }
-        remove_task(TASK_SMOKE_BLIND)
-        return
-    }
-
-    static Float: playerEye[3], Float: viewOfs[3]
-
-    for (new id = 1; id <= MaxClients; id++) {
-        if (!is_user_connected(id) || !is_user_alive(id) || is_user_bot(id)) {
-            if (g_bPlayerInSmoke[id]) {
-                g_bPlayerInSmoke[id] = false
-            }
-            continue
-        }
-
-        pev(id, pev_origin, playerEye)
-        pev(id, pev_view_ofs, viewOfs)
-        playerEye[0] += viewOfs[0]
-        playerEye[1] += viewOfs[1]
-        playerEye[2] += viewOfs[2]
-
-        new bool: insideAnySmoke = false
-
-        for (new i = 0; i < MAX_ACTIVE_SMOKES; i++) {
-            if (!g_smokeActive[i])
-                continue
-
-            new Float: dz = playerEye[2] - g_smokeOrigins[i][2]
-            if (dz < SMOKE_BLIND_Z_MIN || dz > SMOKE_BLIND_Z_MAX)
-                continue
-
-            new Float: dx = playerEye[0] - g_smokeOrigins[i][0]
-            new Float: dy = playerEye[1] - g_smokeOrigins[i][1]
-
-            if ((dx * dx + dy * dy) <= (SMOKE_BLIND_RADIUS * SMOKE_BLIND_RADIUS)) {
-                insideAnySmoke = true
-                break
-            }
-        }
-
-        if (insideAnySmoke) {
-            if (!g_bPlayerInSmoke[id]) {
-                ApplySmokeFade(id)
-            }
-        } else {
-            if (g_bPlayerInSmoke[id]) {
-                ClearSmokeFade(id)
-            }
-        }
-    }
-}
-
-static ApplySmokeFade(const id) {
-    if (!is_user_connected(id) || g_iMsgScreenFade <= 0)
-        return
-
-    g_bPlayerInSmoke[id] = true
-
-    message_begin(MSG_ONE_UNRELIABLE, g_iMsgScreenFade, _, id)
-    write_short(1 << 10) // 0.25s fast fade-in transition
-    write_short(1 << 12) // Hold duration
-    write_short(0x0004)  // FFADE_STAYOUT (hold dense blindness)
-    write_byte(190)      // Crisp dense smoke gray-white
-    write_byte(190)
-    write_byte(190)
-    write_byte(252)      // 252 alpha (virtually 100% opaque tactical blindness)
-    message_end()
-}
-
-static ClearSmokeFade(const id) {
-    g_bPlayerInSmoke[id] = false
-
-    if (!is_user_connected(id) || g_iMsgScreenFade <= 0)
-        return
-
-    message_begin(MSG_ONE_UNRELIABLE, g_iMsgScreenFade, _, id)
-    write_short(1 << 10) // 0.25s smooth restoration fade
-    write_short(0)       // 0 hold
-    write_short(0x0000)  // FFADE_IN (smooth recovery to clear vision)
-    write_byte(190)
-    write_byte(190)
-    write_byte(190)
-    write_byte(252)
-    message_end()
+    return false
 }
 
 public CNullEntity_Think(const entity) {
-    if (pev_valid(entity) != 2)
-        return
-
     static classname[32]
     pev(entity, pev_classname, classname, charsmax(classname))
 
-    if (classname[0] != 'p' || strcmp(classname, g_className) != 0)
+    if (strcmp(classname, g_className) != 0)
         return
 
     CPartSmokeGrenade_Think(entity)
 }
 
 public CSGameRules_RestartRound() {
-    new entity = 0
-    while ((entity = engfunc(EngFunc_FindEntityByString, entity, "classname", g_className)) > 0) {
-        set_pev(entity, pev_effects, EF_NODRAW)
+    new entity = MaxClients
+    while ((entity = engfunc(EngFunc_FindEntityByString, entity, "classname", g_className))) {
         set_pev(entity, pev_flags, pev(entity, pev_flags) | FL_KILLME)
-    }
 
-    for (new i = 0; i < MAX_ACTIVE_SMOKES; i++) {
-        g_smokeActive[i] = false
+        #if (defined DEBUG)
+            entityCount(-1)
+        #endif
     }
-    g_totalActiveSmokes = 0
-
-    for (new id = 1; id <= MaxClients; id++) {
-        if (g_bPlayerInSmoke[id]) {
-            ClearSmokeFade(id)
-        }
-    }
-    remove_task(TASK_SMOKE_BLIND)
 }
 
-static CPartSmokeGrenade_Create(const Float: origin[3],
-                                const model[],
-                                const Float: scale,
-                                const Float: color[4],
-                                const Float: lifetime) {
-    new entity = engfunc(EngFunc_CreateNamedEntity, engfunc(EngFunc_AllocString, g_baseClassname))
-    if (!pev_valid(entity))
-        return 0
+static CPartSmokeGrenade_Create(const Float: origin[3], const Float: velocity[3],
+                        const model[], const Float: scale,
+                        const Float: color[4] = { 175.0, 175.0, 175.0, 190.0 }) {
 
+    new entity = engfunc(EngFunc_CreateNamedEntity, engfunc(EngFunc_AllocString, g_baseClassname))
     set_pev(entity, pev_classname, g_className)
 
     engfunc(EngFunc_SetModel, entity, model)
     engfunc(EngFunc_SetOrigin, entity, origin)
+    set_pev(entity, pev_velocity, velocity)
     set_pev(entity, pev_movetype, MOVETYPE_NOCLIP)
-    set_pev(entity, pev_solid, SOLID_NOT)
     set_pev(entity, pev_gravity, 0.0)
     set_pev(entity, pev_scale, scale)
-    set_pev(entity, pev_frame, float(random_num(0, 1)))
-
-    set_pev(entity, pev_framerate, 0.0)
-    set_pev(entity, pev_animtime, 0.0)
-    set_pev(entity, pev_velocity, Float:{0.0, 0.0, 0.0})
-
-    // Natural random roll orientation for organic 3D appearance
-    new Float: angles[3]
-    angles[0] = 0.0
-    angles[1] = 0.0
-    angles[2] = random_float(0.0, 360.0)
-    set_pev(entity, pev_angles, angles)
-
-    // Subtle natural angular velocity (gentle swirling roll motion)
-    new Float: avelocity[3]
-    avelocity[0] = 0.0
-    avelocity[1] = 0.0
-    avelocity[2] = (random_num(0, 1) ? 1.0 : -1.0) * random_float(2.0, 5.0)
-    set_pev(entity, pev_avelocity, avelocity)
 
     set_pev(entity, pev_rendermode, kRenderTransAlpha)
     set_pev(entity, pev_rendercolor, color)
     set_pev(entity, pev_renderamt, color[3])
 
-    new Float: gametime = get_gametime()
-    const Float: FADEOUT_DURATION = 3.0 // Last 3.0s of lifetime
-
-    new Float: fadeStartTime = gametime + floatmax(1.5, lifetime - FADEOUT_DURATION)
-
-    set_pev(entity, _pev_phase, PHASE_STATIC)
-    set_pev(entity, _pev_stepCount, 0)
-    set_pev(entity, _pev_maxSteps, 5)
-    set_pev(entity, _pev_baseAlpha, floatround(color[3]))
-    set_pev(entity, _pev_fadeStartTime, fadeStartTime)
-
-    // ZERO-THINK ARCHITECTURE:
-    // Next think is scheduled directly to fadeStartTime (~22 seconds in future).
-    // During this entire interval: 0 thinks, 0 delta updates, 0 tickrate impact!
-    set_pev(entity, pev_nextthink, fadeStartTime)
+    #if (defined DEBUG)
+        client_print(0, print_center, "Smoke puffs entity count: `%i`", entityCount(1))
+    #endif
 
     return entity
 }
 
 static CPartSmokeGrenade_Think(const entity) {
-    new phase = pev(entity, _pev_phase)
+    if (!pev(entity, _pev_popCreated)) {
+        set_pev(entity, _pev_popCreated, true)
+
+        static Float: velocity[3]
+        pev(entity, pev_velocity, velocity)
+        xs_vec_mul_scalar(velocity, 0.035, velocity)
+
+        set_pev(entity, pev_velocity, velocity, sizeof(velocity))
+    }
+
+    // Main smoke part time
     new Float: gametime = get_gametime()
 
-    switch (phase) {
-        case PHASE_STATIC: {
-            // Woke up at fadeStartTime. Transition to smooth fadeout.
-            const FADEOUT_STEPS = 5
-            const Float: FADEOUT_INTERVAL = 0.6 // 5 steps * 0.6s = 3.0s fadeout
+    new Float: remainingTime = pev(entity, _pev_dieTime) - gametime
+    static Float: brightness
+    pev(entity, pev_renderamt, brightness)
 
-            set_pev(entity, _pev_phase, PHASE_FADEOUT)
-            set_pev(entity, _pev_stepCount, 0)
-            set_pev(entity, _pev_maxSteps, FADEOUT_STEPS)
+    if (brightness >= 255.0 && remainingTime < 3.0) {
+        set_pev(entity, _pev_scaleSpeed, 0.0)
+        set_pev(entity, _pev_timeCreated, gametime)
+        set_pev(entity, pev_avelocity, Float: {0.0, 0.0, 0.0})
+    }
 
-            set_pev(entity, pev_nextthink, gametime + FADEOUT_INTERVAL)
+    if (remainingTime < 5.0) {
+        if (brightness > 0.0) {
+            brightness -= (gametime - pev(entity, _pev_timeCreated)) * 0.1
+            set_pev(entity, pev_renderamt, brightness)
         }
 
-        case PHASE_FADEOUT: {
-            new step = pev(entity, _pev_stepCount) + 1
-            new maxSteps = pev(entity, _pev_maxSteps)
-            new baseAlpha = pev(entity, _pev_baseAlpha)
+        if (brightness < 0.0) {
+            brightness = 0.0
+            set_pev(entity, pev_renderamt, brightness)
 
-            new Float: remainingRatio = 1.0 - (float(step) / float(maxSteps))
-            new Float: newAlpha = float(baseAlpha) * remainingRatio
-
-            if (step >= maxSteps || newAlpha <= 15.0) {
-                // Clean entity destruction
-                set_pev(entity, pev_effects, EF_NODRAW)
-                set_pev(entity, pev_flags, pev(entity, pev_flags) | FL_KILLME)
-                return
-            }
-
-            set_pev(entity, pev_renderamt, newAlpha)
-            set_pev(entity, _pev_stepCount, step)
-
-            const Float: FADEOUT_INTERVAL = 0.6
-            set_pev(entity, pev_nextthink, gametime + FADEOUT_INTERVAL)
+            set_pev(entity, _pev_dieTime, gametime)
         }
     }
+
+    static Float: scale
+    pev(entity, pev_scale, scale)
+    scale += pev(entity, _pev_scaleSpeed)
+    set_pev(entity, pev_scale, scale)
+
+    const Float: thinkFreq = 0.05
+    if (pev(entity, _pev_dieTime) > gametime) {
+        set_pev(entity, pev_nextthink, gametime + thinkFreq)
+
+        return
+    }
+
+    // Dissapear part
+    const Float: divider = 2.5
+
+    static Float: renderAmt
+    pev(entity, pev_renderamt, renderAmt)
+    renderAmt = floatmax(0.0, renderAmt - (renderAmt / divider))
+    set_pev(entity, pev_renderamt, renderAmt)
+
+    pev(entity, pev_scale, scale)
+    scale = floatmax(0.0, scale - (scale / divider))
+    set_pev(entity, pev_scale, scale)
+
+    if (renderAmt > 1.0) {
+        const Float: fadeSpeed = 0.05
+        set_pev(entity, pev_nextthink, gametime + fadeSpeed)
+
+        return
+    }
+
+    // Kill particle
+    set_pev(entity, pev_effects, EF_NODRAW)
+    set_pev(entity, pev_flags, pev(entity, pev_flags) | FL_KILLME)
+
+    #if (defined DEBUG)
+        entityCount(-1)
+    #endif
 }
 
-static CreateDenseSmokeCloud(const Float: origin[3], Float: color[4]) {
-    new Float: lifetime = amx_smokegren_lifetime
+static CreateGasSmoke(const Float: origin[3], const Float: velocity[3],
+                    const Float: color[4], bool: insideCloud) {
 
-    // 1. Central Core Cluster (6 puffs with natural spatial offsets to prevent flat single-axis billboard perception)
-    new Float: corePos[3]
+    new entity = CPartSmokeGrenade_Create(
+        .origin = origin,
+        .velocity = velocity,
+        .model = g_sprFile,
+        .scale = random_float(2.5, 4.0),
+        .color = color
+    )
 
-    // Low Base (Ground Seal): eliminates feet/crouch gaps
-    corePos[0] = origin[0] + random_float(-8.0, 8.0)
-    corePos[1] = origin[1] + random_float(-8.0, 8.0)
-    corePos[2] = origin[2] + 16.0
-    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.4, 3.7), color, lifetime)
+    static Float: avelocity[3]
+    new Float: gametime = get_gametime()
+    new Float: dieTime = gametime + amx_smokegren_lifetime
 
-    // Low-Mid Core A (West/South offset for immediate 3D parallax)
-    corePos[0] = origin[0] - random_float(12.0, 18.0)
-    corePos[1] = origin[1] + random_float(-8.0, 10.0)
-    corePos[2] = origin[2] + 34.0
-    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.5, 3.8), color, lifetime)
+    const Float: scaleFactor = 1.42
+    const Float: maxRotateVelocity = 10.0
+    const Float: scaleSpeed = 0.1
 
-    // Low-Mid Core B (East/North offset counterbalancing A)
-    corePos[0] = origin[0] + random_float(12.0, 18.0)
-    corePos[1] = origin[1] + random_float(-10.0, 8.0)
-    corePos[2] = origin[2] + 40.0
-    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.5, 3.8), color, lifetime)
-
-    // Center Anchor (Standing eye/torso line)
-    corePos[0] = origin[0] + random_float(-5.0, 5.0)
-    corePos[1] = origin[1] + random_float(-5.0, 5.0)
-    corePos[2] = origin[2] + 54.0
-    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.6, 3.8), color, lifetime)
-
-    // Upper Core (North offset, covering head and elevated sightlines)
-    corePos[0] = origin[0] + random_float(-10.0, 10.0)
-    corePos[1] = origin[1] + random_float(12.0, 20.0)
-    corePos[2] = origin[2] + 68.0
-    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.4, 3.7), color, lifetime)
-
-    // Upper Crown (South offset, seals elevated catwalk/balcony downward sightlines)
-    corePos[0] = origin[0] + random_float(-8.0, 8.0)
-    corePos[1] = origin[1] - random_float(10.0, 18.0)
-    corePos[2] = origin[2] + 82.0
-    CPartSmokeGrenade_Create(corePos, g_sprFile, random_float(3.2, 3.5), color, lifetime)
-
-    // 2. Mid Volumetric Shell (4 diagonal puffs at radius 38-46 for rich 3D body and parallax)
-    for (new i = 0; i < 4; i++) {
-        new Float: angle = 45.0 + (90.0 * float(i)) + random_float(-8.0, 8.0)
-        new Float: dist = random_float(38.0, 46.0)
-        new Float: zOffset = (i % 2 == 0) ? random_float(28.0, 36.0) : random_float(54.0, 62.0)
-
-        new Float: midPos[3]
-        midPos[0] = origin[0] + (floatcos(angle, degrees) * dist)
-        midPos[1] = origin[1] + (floatsin(angle, degrees) * dist)
-        midPos[2] = origin[2] + zOffset
-
-        CPartSmokeGrenade_Create(midPos, g_sprFile, random_float(3.4, 3.7), color, lifetime)
+    if (insideCloud) {
+        avelocity[2] = random_float(-(maxRotateVelocity / scaleFactor), (maxRotateVelocity / scaleFactor))
+        set_pev(entity, _pev_scaleSpeed, scaleSpeed / scaleFactor)
+        set_pev(entity, _pev_dieTime, dieTime)
+    } else {
+        avelocity[2] = random_float(-maxRotateVelocity, maxRotateVelocity)
+        set_pev(entity, _pev_scaleSpeed, scaleSpeed)
+        set_pev(entity, _pev_dieTime, dieTime - (amx_smokegren_lifetime / 3.0))
     }
 
-    // 3. Radial Perimeter Ring (default 8 puffs at radius 66-78 for natural feathered billowing edges)
-    new numRadial = clamp(floatround(amx_smokegren_pieces), 6, 10)
-    new Float: stepAngle = 360.0 / float(numRadial)
+    set_pev(entity, _pev_spawnInside, insideCloud)
+    set_pev(entity, pev_avelocity, avelocity)
+    set_pev(entity, pev_nextthink, gametime + 0.15)
 
-    for (new i = 0; i < numRadial; i++) {
-        new Float: angle = (stepAngle * float(i)) + random_float(-5.0, 5.0)
-        new Float: dist = random_float(66.0, 78.0)
-
-        // 3-tier staggered height distribution
-        new Float: zOffset
-        switch (i % 3) {
-            case 0: zOffset = random_float(22.0, 28.0)
-            case 1: zOffset = random_float(44.0, 52.0)
-            case 2: zOffset = random_float(66.0, 74.0)
-        }
-
-        new Float: puffPos[3]
-        puffPos[0] = origin[0] + (floatcos(angle, degrees) * dist)
-        puffPos[1] = origin[1] + (floatsin(angle, degrees) * dist)
-        puffPos[2] = origin[2] + zOffset
-
-        new Float: puffScale = random_float(3.2, 3.5)
-
-        CPartSmokeGrenade_Create(puffPos, g_sprFile, puffScale, color, lifetime)
-    }
+    return entity
 }
 
 static CreateSmokePop(const Float: origin[3], Float: color[4]) {
-    // Mode 3 optional pop effect: 4 burst puffs
-    new Float: popLifetime = 10.0
-    for (new i = 0; i < 4; i++) {
-        new Float: angle = (90.0 * float(i)) + 45.0 + random_float(-6.0, 6.0)
-        new Float: dist = random_float(45.0, 60.0)
+    new Float: step = 360.0 / amx_smokegren_pieces
 
-        new Float: puffOrigin[3]
-        puffOrigin[0] = origin[0] + (floatcos(angle, degrees) * dist)
-        puffOrigin[1] = origin[1] + (floatsin(angle, degrees) * dist)
-        puffOrigin[2] = origin[2] + random_float(35.0, 50.0)
+    static Float: angles[3]
+    static Float: vForward[3], Float: vRight[3], Float: vUp[3]
 
-        CPartSmokeGrenade_Create(puffOrigin, g_sprFile, random_float(3.2, 3.5), color, popLifetime)
+    for (new Float: angleStep = 0.0; angleStep < 360.0; angleStep += step) {
+        angles[XS_YAW] += angleStep
+
+        engfunc(EngFunc_AngleVectors, angles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        static Float: velocity[3]
+        for (new i; i < sizeof(velocity); i++) {
+            velocity[i] = (vForward[i] * 375) + (vUp[i] * 165)
+        }
+
+        CreateGasSmoke(origin, velocity, color, .insideCloud = false)
     }
+
+    for (new Float: angleStep = 0.0; angleStep < 360.0; angleStep += step) {
+        angles[XS_YAW] += angleStep
+
+        engfunc(EngFunc_AngleVectors, angles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        new Float: velocity[3]
+        for (new i; i < sizeof(velocity); i++) {
+            velocity[i] = (vForward[i] * 375) + (vUp[i] * 265)
+        }
+
+        CreateGasSmoke(origin, velocity, color, .insideCloud = false)
+    }
+
+    #if (defined CLIENT_WIERD_CODE_DONT_USE_THIS)
+    {
+        angles[XS_YAW] = 45.0
+
+        engfunc(EngFunc_AngleVectors, angles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        static Float: velocity[3]
+        for (new i; i < sizeof(velocity); i++) {
+            velocity[i] = (vForward[i] * 375) + (vUp[i] * 120)
+        }
+
+        CreateGasSmoke(origin , velocity, color, .insideCloud = false)
+
+        angles[XS_YAW] = 270.0
+        engfunc(EngFunc_AngleVectors, angles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        for (new i; i < sizeof(velocity); i++) {
+            velocity[i] = (vForward[i] * 375) + (vUp[i] * 120)
+        }
+
+        CreateGasSmoke(origin, velocity, color, .insideCloud = false)
+    }
+    #endif
 }
 
-static Create_ConVars() {
+static CreateGasInside(const Float: origin[3], Float: color[4]) {
+    new Float: step = 360.0 / amx_smokegren_pieces
+
+    static Float: vAngles[3]
+    static Float: vForward[3], Float: vRight[3], Float: vUp[3]
+
+    for (new Float: fAngleStep = 0.0; fAngleStep < 360.0; fAngleStep += step) {
+        vAngles[XS_YAW] += fAngleStep
+
+        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        new Float: _origin[3]
+        for (new i; i < sizeof(_origin); i++) {
+            _origin[i] = origin[i] + (vForward[i] * random_num(90, 110)) + (vUp[i] * 45)
+        }
+
+        CreateGasSmoke(
+            _origin,
+            Float: {0.0, 0.0, 0.0},
+            color,
+            .insideCloud = true
+        )
+    }
+
+    for (new Float: fAngleStep = 0.0; fAngleStep < 360.0; fAngleStep += step) {
+        vAngles[XS_YAW] += fAngleStep
+
+        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        new Float: _origin[3]
+        for (new i; i < sizeof(_origin); i++) {
+            _origin[i] = origin[i] + (vForward[i] * 90) + (vUp[i] * 60)
+        }
+
+        CreateGasSmoke(
+            _origin,
+            Float: {0.0, 0.0, 0.0},
+            color,
+            .insideCloud = true
+        )
+    }
+
+    CreateGasSmoke(
+        origin,
+        Float: {0.0, 0.0, 0.0},
+        color,
+        .insideCloud = false
+    )
+
+    #if (defined CLIENT_WIERD_CODE_DONT_USE_THIS)
+    {
+        vAngles[XS_YAW] = 45.0
+
+        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        static Float: _origin[3]
+        for (new i; i < sizeof(_origin); i++) {
+            _origin[i] = origin[i] + (vForward[i] * 45) + (vUp[i] * 55)
+        }
+
+        CreateGasSmoke(
+            _origin,
+            Float: {0.0, 0.0, 0.0},
+            color,
+            .insideCloud = false
+        )
+
+        _origin = Float: {0.0, 0.0, 0.0}
+
+        vAngles[XS_YAW] = 270.0
+
+        engfunc(EngFunc_AngleVectors, vAngles, vForward, vRight, vUp)
+        xs_vec_normalize(vForward, vForward)
+
+        for (new i; i < sizeof(_origin); i++) {
+            _origin[i] = origin[i] + (vForward[i] * 45) + (vUp[i] * 55)
+        }
+
+        CreateGasSmoke(
+            _origin,
+            Float: {0.0, 0.0, 0.0},
+            color,
+            .insideCloud = false
+        )
+    }
+    #endif
+}
+
+static Create_ConVars(const bool: createConfigFile = true) {
     bind_pcvar_num(
         create_cvar(
-            "amx_smokegren_replacemode", "2",
+            "amx_smokegren_replacemode", "1",
             .has_min = true, .min_val = 0.0,
             .has_max = true, .max_val = 3.0,
-            .description = "Replacement method: 0-disabled, 1-overlay, 2-replace client smoke (zero FPS drop), 3-burst pop."
+            .description = "Replacement method. ^n\
+                            0 - disabled (does not change client smoke); ^n\
+                            1 - main cloud on over client smoke cloud; ^n\
+                            2 - main cloud only (optimization*); ^n\
+                            3 - fully recreated (2x load)."
         ),
         amx_smokegren_replacemode
     )
@@ -596,55 +521,57 @@ static Create_ConVars() {
         amx_smokegren_fix_waterrender
     )
 
-    bind_pcvar_num(
-        create_cvar(
-            "amx_smokegren_blind", "1",
-            .has_min = true, .min_val = 0.0,
-            .has_max = true, .max_val = 1.0,
-            .description = "Enable ScreenFade blinding fog for players inside the smoke cloud (1 = enabled)."
-        ),
-        amx_smokegren_blind
-    )
-
     bind_pcvar_float(
         create_cvar(
             "amx_smokegren_pieces", "8",
-            .has_min = true, .min_val = 4.0,
-            .has_max = true, .max_val = 12.0,
-            .description = "Number of radial smoke particles (default 8 = 18 total with core and mid rings)."
+            .has_min = true, .min_val = 2.0,
+            .has_max = true, .max_val = 10.0,
+            .description = "Number of smoke particles for one smoke cloud."
         ),
         amx_smokegren_pieces
     )
 
     hook_cvar_change(
         create_cvar(
-            "amx_smokegren_color", "185 185 185 215",
-            .description = "The color of the smoke cloud in [R G B A] format (default 215 alpha for rich 3D feathered opacity)."
+            "amx_smokegren_color", "175 175 175 190",
+            .description = "The color of the smoke cloud is in the format [R G B A]. ^n\
+                            `-1 -1 -1` - random color.^n\
+                            `A` - is the opacity (transparency)"
         ),
         "CVarChange_amx_smokegren_color"
     )
-    CVarChange_amx_smokegren_color(0, "", "185 185 185 215")
+    CVarChange_amx_smokegren_color(0, "", "175 175 175 190")
 
     bind_pcvar_float(
         create_cvar(
-            "amx_smokegren_lifetime", "25.0",
+            "amx_smokegren_lifetime", "29.5",
             .has_min = true, .min_val = 6.0,
             .has_max = true, .max_val = 60.0,
-            .description = "Smoke cloud lifetime in seconds."
+            .description = "Smoke cloud lifetime (in seconds)."
         ),
         amx_smokegren_lifetime
     )
 
-    AutoExecConfig()
+    if (createConfigFile) {
+        AutoExecConfig()
+    }
 }
 
+/**
+ * Parses a color buffer into an array of RGBA values.
+ *
+ * This function parses a color buffer (e.g., "255 0 0 128") into an array of RGBA values.
+ *
+ * @param buffer    The color buffer to parse.
+ * @return          Returns an array of RGBA values [R, G, B, A].
+ */
 stock Float: ParseColors4(const buffer[]) {
     new stringParsed[4][4]
     new Float: colors[4]
 
     if (!strlen(buffer))
         return colors
-
+    
     new parsedArgs = parse(
         buffer,
         stringParsed[0], charsmax(stringParsed[]),  // R
@@ -658,9 +585,6 @@ stock Float: ParseColors4(const buffer[]) {
 
     for (new i; i < sizeof(stringParsed); i++)
         colors[i] = strtof(stringParsed[i])
-
-    if (parsedArgs < 4 || colors[3] <= 0.0)
-        colors[3] = 215.0
 
     return colors
 }
@@ -676,6 +600,7 @@ static Float: GetColors(const Float: colors[4]) {
         for (new i; i < sizeof(newColors) - 1; i++) {
             newColors[i] = random_float(1.0, 255.0)
         }
+
         return newColors
     }
 
@@ -705,4 +630,11 @@ static StartupCheck() {
 
     if (!file_exists(g_sprFile))
         set_fail_state("The file `%s` is missing!", g_sprFile)
+}
+
+static stock entityCount(const add = 0) {
+    static count
+    count += add
+
+    return count
 }

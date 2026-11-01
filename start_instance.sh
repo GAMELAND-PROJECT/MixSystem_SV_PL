@@ -210,10 +210,6 @@ if [[ -f "${MANAGER_ROOT}/cstrike/sprites/gas_puff_02.spr" && ! -f "${SERVER_DIR
     cp -f "${MANAGER_ROOT}/cstrike/sprites/gas_puff_02.spr" "${SERVER_DIR}/cstrike/sprites/gas_puff_02.spr" 2>/dev/null || true
     chmod 666 "${SERVER_DIR}/cstrike/sprites/gas_puff_02.spr" 2>/dev/null || true
 fi
-if [[ -f "${MANAGER_ROOT}/cstrike/sprites/gameland_smoke.spr" && ! -f "${SERVER_DIR}/cstrike/sprites/gameland_smoke.spr" ]]; then
-    cp -f "${MANAGER_ROOT}/cstrike/sprites/gameland_smoke.spr" "${SERVER_DIR}/cstrike/sprites/gameland_smoke.spr" 2>/dev/null || true
-    chmod 666 "${SERVER_DIR}/cstrike/sprites/gameland_smoke.spr" 2>/dev/null || true
-fi
 if [[ -f "${MANAGER_ROOT}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" && ! -f "${SERVER_DIR}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" ]]; then
     cp -f "${MANAGER_ROOT}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" "${SERVER_DIR}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" 2>/dev/null || true
     chmod 666 "${SERVER_DIR}/cstrike/addons/amxmodx/plugins/gameland_dense_smoke.amxx" 2>/dev/null || true
