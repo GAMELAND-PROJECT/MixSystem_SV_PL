@@ -407,6 +407,10 @@ public plugin_init()
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_ChooseTeam_Post", 1)
 	RegisterHookChain(RG_CSGameRules_CanHavePlayerItem, "RG_CSGameRules_CanHavePlayerItem_Pre")
 
+	RegisterHookChain(RG_GetForceCamera, "RG_GetForceCamera_Pre")
+	RegisterHookChain(RG_CBasePlayer_Observer_SetMode, "RG_Observer_SetMode_Pre")
+	RegisterHookChain(RG_CBasePlayer_Observer_FindNextPlayer, "RG_Observer_FindNextPlayer_Pre")
+
 	RegisterHookChain(RG_CBasePlayer_TakeDamage, "RG_PlayerTakeDamage_Pre")
 	RegisterHookChain(RG_CBasePlayer_TakeDamage, "RG_PlayerTakeDamage_Post", 1)
 	#if defined PUNCH_ANGLE
@@ -2072,6 +2076,77 @@ public RG_CheckWinConditions_Pre()
 	return HC_CONTINUE
 }
 
+// -----------------------------------------------------------------------------
+// SPECTATOR & OBSERVER VOID PROTECTION (Fixes (0,0,0) camera drop bug)
+// -----------------------------------------------------------------------------
+stock bool:HasAliveTeammates(id)
+{
+	new TeamName:team = get_member(id, m_iTeam)
+	if(team != TEAM_TERRORIST && team != TEAM_CT)
+		return false
+
+	new players[32], num
+	get_players(players, num, "ae", (team == TEAM_TERRORIST) ? "TERRORIST" : "CT")
+	for(new i = 0; i < num; i++)
+	{
+		if(players[i] != id)
+			return true
+	}
+	return false
+}
+
+public RG_GetForceCamera_Pre(const pObserver)
+{
+	if(!is_user_connected(pObserver))
+		return HC_CONTINUE
+
+	new TeamName:team = get_member(pObserver, m_iTeam)
+	if(team == TEAM_SPECTATOR || team == TEAM_UNASSIGNED)
+	{
+		SetHookChainReturn(ATYPE_INTEGER, 0)
+		return HC_SUPERCEDE
+	}
+
+	return HC_CONTINUE
+}
+
+public RG_Observer_SetMode_Pre(const this, iMode)
+{
+	if(!is_user_connected(this))
+		return HC_CONTINUE
+
+	new TeamName:team = get_member(this, m_iTeam)
+	if(team == TEAM_SPECTATOR || team == TEAM_UNASSIGNED)
+		return HC_CONTINUE
+
+	if(HasAliveTeammates(this))
+	{
+		if(iMode != OBS_IN_EYE && iMode != OBS_CHASE_LOCKED)
+		{
+			SetHookChainArg(2, ATYPE_INTEGER, OBS_IN_EYE)
+		}
+	}
+
+	return HC_CONTINUE
+}
+
+public RG_Observer_FindNextPlayer_Pre(const this, const bool:bReverse, const szName[])
+{
+	if(!is_user_connected(this))
+		return HC_CONTINUE
+
+	new TeamName:team = get_member(this, m_iTeam)
+	if(team == TEAM_SPECTATOR || team == TEAM_UNASSIGNED)
+		return HC_CONTINUE
+
+	if(!HasAliveTeammates(this))
+	{
+		return HC_SUPERCEDE
+	}
+
+	return HC_CONTINUE
+}
+
 public task_end_round(index)
 {
 	new WinStatus:status = WinStatus:index
@@ -2221,11 +2296,12 @@ public task_end_round(index)
 		OvertimeConfig()
 
 		set_pcvar_num(g_cFreezeTime, 15)
-		set_task(0.2, "task_delayed_swap")
-		set_task(2.5, "task_show_overtime_start")
-		set_task(12.0, "task_halftime_restart1")
-		set_task(17.0, "task_halftime_restart2")
-		set_task(22.0, "task_overtime_live")
+		set_task(0.1, "task_swap_score")
+		set_task(0.5, "task_delayed_swap")
+		set_task(1.0, "task_show_overtime_start")
+		set_task(5.0, "task_halftime_restart1")
+		set_task(8.0, "task_halftime_restart2")
+		set_task(11.0, "task_overtime_live")
 	}
 
 	if(g_eBooleans[bOvertime])
@@ -2365,11 +2441,11 @@ public task_end_round(index)
 		{
 			set_pcvar_num(g_cFreezeTime, g_ePluginSettings[iFreezetimeSwap])
 			set_task(0.1, "task_swap_score")
-			set_task(0.2, "task_delayed_swap")
-			set_task(2.5, "task_show_halftime")
-			set_task(12.0, "task_halftime_restart1")
-			set_task(17.0, "task_halftime_restart2")
-			set_task(22.0, "task_halftime_live")
+			set_task(0.5, "task_delayed_swap")
+			set_task(1.0, "task_show_halftime")
+			set_task(5.0, "task_halftime_restart1")
+			set_task(8.0, "task_halftime_restart2")
+			set_task(11.0, "task_halftime_live")
 		}
 	}
 
@@ -2847,11 +2923,12 @@ public clcmd_overtime(id)
 	OvertimeConfig()
 
 	set_pcvar_num(g_cFreezeTime, 15)
-	set_task(0.2, "task_delayed_swap")
-	set_task(2.5, "task_show_overtime_start")
-	set_task(12.0, "task_halftime_restart1")
-	set_task(17.0, "task_halftime_restart2")
-	set_task(22.0, "task_overtime_live")
+	set_task(0.1, "task_swap_score")
+	set_task(0.5, "task_delayed_swap")
+	set_task(1.0, "task_show_overtime_start")
+	set_task(5.0, "task_halftime_restart1")
+	set_task(8.0, "task_halftime_restart2")
+	set_task(11.0, "task_overtime_live")
 
 	g_eBooleans[bOvertime] = true
 
@@ -3135,6 +3212,10 @@ public task_delayed_swap()
 
 	rg_swap_all_players()
 
+	SetMembers()
+	set_member_game(m_bCTCantBuy, true)
+	set_member_game(m_bTCantBuy, true)
+
 	for(new i; i < iNum; i++)
 	{
 		iPlayer = iPlayers[i]
@@ -3143,16 +3224,12 @@ public task_delayed_swap()
 
 		if(iTeam == TEAM_UNASSIGNED || iTeam == TEAM_SPECTATOR)
 			continue 
-		SetMembers()
-		set_member_game(m_bCTCantBuy, true)
-		set_member_game(m_bTCantBuy, true)
+
 		rg_add_account(iPlayer, get_cvar_num("mp_startmoney"), AS_SET)
 		rg_remove_all_items(iPlayer, true)
 
 		set_task(1.4, "task_give_equipment", iPlayer + TASK_GIVE_EQUIPMENT)
 	}
-
-	rg_round_end(1.0, WINSTATUS_NONE, ROUND_GAME_OVER)
 
 	set_task(1.2, "task_delayed_members")
 }
@@ -3369,10 +3446,7 @@ public task_swap_score()
 
 	set_pcvar_num(g_cFreezeTime, g_iFreezeTime)
 
-	for(new i; i < ArraySize(g_aPlayerData); i++)
-	{
-		ArrayDeleteItem(g_aPlayerData, i)
-	}
+	ArrayClear(g_aPlayerData)
 }
 
 public clcmd_specall(id)
@@ -3408,8 +3482,9 @@ public clcmd_specall(id)
 		}
 
 		rg_join_team(iPlayer, TEAM_SPECTATOR)
-		rg_round_end(1.0, WINSTATUS_DRAW, ROUND_END_DRAW, "ROUND DRAW", "ROUND DRAW", true)
 	}
+
+	rg_round_end(1.0, WINSTATUS_DRAW, ROUND_END_DRAW, "ROUND DRAW", "ROUND DRAW", true)
 
 	return PLUGIN_HANDLED
 }
@@ -4087,11 +4162,11 @@ stock CheckOvertimePhase()
 
 			set_pcvar_num(g_cFreezeTime, 15)
 			set_task(0.1, "task_swap_score")
-			set_task(0.2, "task_delayed_swap")
-			set_task(2.5, "task_show_halftime")
-			set_task(12.0, "task_halftime_restart1")
-			set_task(17.0, "task_halftime_restart2")
-			set_task(22.0, "task_overtime_halftime_live")
+			set_task(0.5, "task_delayed_swap")
+			set_task(1.0, "task_show_halftime")
+			set_task(5.0, "task_halftime_restart1")
+			set_task(8.0, "task_halftime_restart2")
+			set_task(11.0, "task_overtime_halftime_live")
 		}
 	}
 
@@ -4438,7 +4513,8 @@ public task_overtime_halftime_live()
 {
 	server_cmd("sv_restart 1")
 	set_pcvar_num(g_cFreezeTime, 12)
-	set_task(2.5, "task_show_halftime")
+	set_task(1.5, "task_delayed_members")
+	set_task(1.5, "task_show_live")
 }
 
 public clcmd_hs1(id)
@@ -5164,7 +5240,14 @@ public Menu_MovePlayerTargetHandler(id, iMenu, iItem)
 
 	if(is_user_connected(iTarget))
 	{
-		rg_set_user_team(iTarget, iTargetTeam)
+		if(iTargetTeam == TEAM_SPECTATOR)
+		{
+			rg_join_team(iTarget, TEAM_SPECTATOR)
+		}
+		else
+		{
+			rg_set_user_team(iTarget, iTargetTeam)
+		}
 		new szTeamName[16]
 		switch(iTargetTeam)
 		{

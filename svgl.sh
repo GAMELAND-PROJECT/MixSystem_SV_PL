@@ -198,7 +198,7 @@ json_escape() {
 }
 
 registry_append() {
-    local id="$1" name="$2" port="$3" dir="$4" rcon="$5" mode="${6:-clanwar}" slots="${7:-10}"
+    local id="$1" name="$2" port="$3" dir="$4" rcon="$5" mode="${6:-mix5v5}" slots="${7:-18}"
     ensure_registry
 
     php -r '
@@ -211,8 +211,8 @@ registry_append() {
             if (($server["id"] ?? "") === $id) {
                 $server["name"] = $argv[3];
                 $server["hostname"] = $argv[3];
-                $server["mode"] = $argv[7] ?? "clanwar";
-                $server["slots"] = (int)($argv[8] ?? 10);
+                $server["mode"] = $argv[7] ?? "mix5v5";
+                $server["slots"] = (int)($argv[8] ?? 18);
                 file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
                 @mkdir("/opt/gameland/persistent", 0777, true);
                 @file_put_contents("/opt/gameland/persistent/servers.json", json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
@@ -228,8 +228,8 @@ registry_append() {
             "rcon_password" => $argv[5],
             "service_name" => "gameland@" . $id . ".service",
             "server_dir" => $argv[6],
-            "mode" => $argv[7] ?? "clanwar",
-            "slots" => (int)($argv[8] ?? 10),
+            "mode" => $argv[7] ?? "mix5v5",
+            "slots" => (int)($argv[8] ?? 18),
         ];
         $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
         file_put_contents($file, $json);
@@ -269,7 +269,7 @@ read_rcon_password() {
 
 create_instance() {
     need_root_for_systemd
-    local id="${1:-}" port="${2:-}" name="${3:-}" slots="${4:-}" mode="${5:-clanwar}"
+    local id="${1:-}" port="${2:-}" name="${3:-}" slots="${4:-}" mode="${5:-mix5v5}"
     if [[ -z "$id" || -z "$port" ]]; then
         echo -e "${RED}[ERROR] Usage: svgl add <id> <port> [name] [slots] [mode]${NC}"
         exit 1
@@ -292,7 +292,7 @@ create_instance() {
         elif [[ "$mode" == "public" ]]; then
             slots="24"
         else
-            slots="10"
+            slots="18"
         fi
     fi
 

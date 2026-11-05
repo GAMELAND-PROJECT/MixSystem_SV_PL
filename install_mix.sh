@@ -199,7 +199,7 @@ if [ -z "$MAIN_MODE" ] && [ -f "${PLUGINS_INI}" ]; then
 fi
 
 # Source 5: absolute last resort - only if every source above failed
-[ -z "$MAIN_MODE" ] && MAIN_MODE="clanwar"
+[ -z "$MAIN_MODE" ] && MAIN_MODE="mix5v5"
 
 echo "  -> Detected active mode: ${MAIN_MODE}"
 mkdir -p /opt/gameland/persistent "${PROJECT_DIR}/instances" 2>/dev/null || true
@@ -233,19 +233,7 @@ for plugin_entry in \
 done
 
 # Enforce MAIN_MODE cleanly in plugins.ini without overwriting user mode
-if [ "$MAIN_MODE" = "mix5v5" ]; then
-    echo "  -> 5v5 Mix Mode is active for main: ensuring mix_system.amxx is active!"
-    if grep -qE "^[[:space:]]*;+[[:space:]]*mix_system\.amxx([[:space:]]|$)" "${PLUGINS_INI}"; then
-        sed -i -E "s/^[[:space:]]*;+[[:space:]]*(mix_system\.amxx.*)$/\1/" "${PLUGINS_INI}"
-    elif ! grep -qE "^[[:space:]]*mix_system\.amxx([[:space:]]|$)" "${PLUGINS_INI}"; then
-        printf 'mix_system.amxx\t; GAMELAND 5v5 mix and match manager\n' >> "${PLUGINS_INI}"
-    fi
-    sed -i -E 's/^[[:space:]]*clanwar_system\.amxx([[:space:]].*)?$/;clanwar_system.amxx\t; GAMELAND 10-slot Clan War Mode manager/' "${PLUGINS_INI}"
-elif [ "$MAIN_MODE" = "public" ]; then
-    echo "  -> Public Mode is active for main: disabling clanwar and mix managers!"
-    sed -i -E 's/^[[:space:]]*clanwar_system\.amxx([[:space:]].*)?$/;clanwar_system.amxx\t; GAMELAND 10-slot Clan War Mode manager/' "${PLUGINS_INI}"
-    sed -i -E 's/^[[:space:]]*mix_system\.amxx([[:space:]].*)?$/;mix_system.amxx\t; GAMELAND 5v5 mix and match manager/' "${PLUGINS_INI}"
-else
+if [ "$MAIN_MODE" = "clanwar" ]; then
     echo "  -> Clan War Mode is active for main: ensuring clanwar_system.amxx is active!"
     if grep -qE "^[[:space:]]*;+[[:space:]]*clanwar_system\.amxx([[:space:]]|$)" "${PLUGINS_INI}"; then
         sed -i -E "s/^[[:space:]]*;+[[:space:]]*(clanwar_system\.amxx.*)$/\1/" "${PLUGINS_INI}"
@@ -253,6 +241,18 @@ else
         printf 'clanwar_system.amxx\t; GAMELAND 10-slot Clan War Mode manager\n' >> "${PLUGINS_INI}"
     fi
     sed -i -E 's/^[[:space:]]*mix_system\.amxx([[:space:]].*)?$/;mix_system.amxx\t; GAMELAND 5v5 mix and match manager/' "${PLUGINS_INI}"
+elif [ "$MAIN_MODE" = "public" ]; then
+    echo "  -> Public Mode is active for main: disabling clanwar and mix managers!"
+    sed -i -E 's/^[[:space:]]*clanwar_system\.amxx([[:space:]].*)?$/;clanwar_system.amxx\t; GAMELAND 10-slot Clan War Mode manager/' "${PLUGINS_INI}"
+    sed -i -E 's/^[[:space:]]*mix_system\.amxx([[:space:]].*)?$/;mix_system.amxx\t; GAMELAND 5v5 mix and match manager/' "${PLUGINS_INI}"
+else
+    echo "  -> 5v5 Mix Mode is active for main: ensuring mix_system.amxx is active!"
+    if grep -qE "^[[:space:]]*;+[[:space:]]*mix_system\.amxx([[:space:]]|$)" "${PLUGINS_INI}"; then
+        sed -i -E "s/^[[:space:]]*;+[[:space:]]*(mix_system\.amxx.*)$/\1/" "${PLUGINS_INI}"
+    elif ! grep -qE "^[[:space:]]*mix_system\.amxx([[:space:]]|$)" "${PLUGINS_INI}"; then
+        printf 'mix_system.amxx\t; GAMELAND 5v5 mix and match manager\n' >> "${PLUGINS_INI}"
+    fi
+    sed -i -E 's/^[[:space:]]*clanwar_system\.amxx([[:space:]].*)?$/;clanwar_system.amxx\t; GAMELAND 10-slot Clan War Mode manager/' "${PLUGINS_INI}"
 fi
 
 # ─── 5. Adjust start.sh for 5v5 Match (12 Slots) ───────
@@ -462,8 +462,8 @@ for p in ["'"${PROJECT_DIR}"'/instances/servers.json", "/opt/gameland/persistent
 sys.exit(1)
 ' "$s_id" 2>/dev/null || true)
 
-    inst_mode="clanwar"
-    inst_slots=10
+    inst_mode="mix5v5"
+    inst_slots=18
     if [ -n "$inst_mode_info" ]; then
         inst_mode="${inst_mode_info%%|*}"
         inst_slots="${inst_mode_info##*|}"

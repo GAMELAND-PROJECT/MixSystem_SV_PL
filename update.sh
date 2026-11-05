@@ -61,16 +61,16 @@ elif [ -f "$PERSIST_SERVERS" ]; then
 fi
 
 # Detect & Preserve Main Server's current active mode and plugins.ini
-MAIN_MODE="clanwar"
+MAIN_MODE="mix5v5"
 if [ -f "${PERSIST_DIR}/main_mode.txt" ] && grep -qE '^(clanwar|mix5v5|public)$' "${PERSIST_DIR}/main_mode.txt" 2>/dev/null; then
     MAIN_MODE=$(cat "${PERSIST_DIR}/main_mode.txt" | tr -d '[:space:]')
 elif [ -f "$MAIN_PINI" ]; then
-    if grep -qE '^[[:space:]]*mix_system\.amxx([[:space:]]|$)' "$MAIN_PINI"; then
-        MAIN_MODE="mix5v5"
-    elif grep -qE '^[[:space:]]*clanwar_system\.amxx([[:space:]]|$)' "$MAIN_PINI"; then
+    if grep -qE '^[[:space:]]*clanwar_system\.amxx([[:space:]]|$)' "$MAIN_PINI"; then
         MAIN_MODE="clanwar"
+    elif grep -qE '^[[:space:]]*mix_system\.amxx([[:space:]]|$)' "$MAIN_PINI"; then
+        MAIN_MODE="mix5v5"
     else
-        MAIN_MODE="public"
+        MAIN_MODE="mix5v5"
     fi
 fi
 echo "$MAIN_MODE" > "${PERSIST_DIR}/main_mode.txt"
@@ -196,23 +196,23 @@ if [ -f "${PERSIST_DIR}/main_plugins.ini" ] && [ -s "${PERSIST_DIR}/main_plugins
     cp -f "${PERSIST_DIR}/main_plugins.ini" "$MAIN_PINI"
 fi
 SAVED_MAIN_MODE=$(cat "${PERSIST_DIR}/main_mode.txt" 2>/dev/null | tr -d '[:space:]')
-if [ -z "$SAVED_MAIN_MODE" ]; then SAVED_MAIN_MODE="clanwar"; fi
+if [ -z "$SAVED_MAIN_MODE" ]; then SAVED_MAIN_MODE="mix5v5"; fi
 
-if [ "$SAVED_MAIN_MODE" = "mix5v5" ]; then
-    sed -i -E 's/^[[:space:]]*;?[[:space:]]*mix_system\.amxx([[:space:]].*)?$/mix_system.amxx/' "$MAIN_PINI" 2>/dev/null || true
-    sed -i -E 's/^[[:space:]]*clanwar_system\.amxx/;\0/' "$MAIN_PINI" 2>/dev/null || true
-    sed -i 's/MAX_PLAYERS=".*"/MAX_PLAYERS="18"/' "${SCRIPT_DIR}/start.sh" 2>/dev/null || true
-    echo "[*] Restored main server mode: 5v5 Match (18 slots)"
+if [ "$SAVED_MAIN_MODE" = "clanwar" ]; then
+    sed -i -E 's/^[[:space:]]*;?[[:space:]]*clanwar_system\.amxx([[:space:]].*)?$/clanwar_system.amxx/' "$MAIN_PINI" 2>/dev/null || true
+    sed -i -E 's/^[[:space:]]*mix_system\.amxx/;\0/' "$MAIN_PINI" 2>/dev/null || true
+    sed -i 's/MAX_PLAYERS=".*"/MAX_PLAYERS="10"/' "${SCRIPT_DIR}/start.sh" 2>/dev/null || true
+    echo "[*] Restored main server mode: Clan War (10 slots)"
 elif [ "$SAVED_MAIN_MODE" = "public" ]; then
     sed -i -E 's/^[[:space:]]*clanwar_system\.amxx/;\0/' "$MAIN_PINI" 2>/dev/null || true
     sed -i -E 's/^[[:space:]]*mix_system\.amxx/;\0/' "$MAIN_PINI" 2>/dev/null || true
     sed -i 's/MAX_PLAYERS=".*"/MAX_PLAYERS="24"/' "${SCRIPT_DIR}/start.sh" 2>/dev/null || true
     echo "[*] Restored main server mode: Public (24 slots)"
 else
-    sed -i -E 's/^[[:space:]]*;?[[:space:]]*clanwar_system\.amxx([[:space:]].*)?$/clanwar_system.amxx/' "$MAIN_PINI" 2>/dev/null || true
-    sed -i -E 's/^[[:space:]]*mix_system\.amxx/;\0/' "$MAIN_PINI" 2>/dev/null || true
-    sed -i 's/MAX_PLAYERS=".*"/MAX_PLAYERS="10"/' "${SCRIPT_DIR}/start.sh" 2>/dev/null || true
-    echo "[*] Restored main server mode: Clan War (10 slots)"
+    sed -i -E 's/^[[:space:]]*;?[[:space:]]*mix_system\.amxx([[:space:]].*)?$/mix_system.amxx/' "$MAIN_PINI" 2>/dev/null || true
+    sed -i -E 's/^[[:space:]]*clanwar_system\.amxx/;\0/' "$MAIN_PINI" 2>/dev/null || true
+    sed -i 's/MAX_PLAYERS=".*"/MAX_PLAYERS="18"/' "${SCRIPT_DIR}/start.sh" 2>/dev/null || true
+    echo "[*] Restored main server mode: 5v5 Match (18 slots)"
 fi
 if grep -qE '^[[:space:]]*;+[[:space:]]*gameland_dense_smoke\.amxx([[:space:]]|$)' "$MAIN_PINI"; then
     sed -i -E 's/^[[:space:]]*;+[[:space:]]*(gameland_dense_smoke\.amxx.*)$/\1/' "$MAIN_PINI" 2>/dev/null || true
