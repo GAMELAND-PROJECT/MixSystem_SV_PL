@@ -234,8 +234,6 @@ public plugin_init()
     RegisterHookChain(RG_CBasePlayer_Observer_IsValidTarget, "RG_Observer_IsValidTarget_Pre", .post = false)
     RegisterHookChain(RG_CBasePlayer_Observer_FindNextPlayer, "RG_Observer_FindNextPlayer_Pre", .post = false)
     RegisterHookChain(RG_CBasePlayer_Observer_SetMode, "RG_Observer_SetMode_Pre", .post = false)
-    register_clcmd("spec_menu", "Cmd_BlockSpecCmd")
-    register_clcmd("spec_mode", "Cmd_BlockSpecCmd")
     RegisterHookChain(RG_CBasePlayer_SwitchTeam, "RG_CBasePlayer_SwitchTeam_Pre", .post = false)
     RegisterHookChain(RG_CSGameRules_CanPlayerHearPlayer, "RG_CSGameRules_CanPlayerHearPlayer_Pre", .post = false)
     RegisterHookChain(RG_CBasePlayer_HasRestrictItem, "RG_CBasePlayer_HasRestrictItem_Pre", .post = false)
@@ -966,7 +964,7 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
     // In competitive modes (Knife & Match Live):
     // Allow natural ~3.0s Counter-Strike deathcam / killer tracking to play completely unhindered!
     // Never abruptly rip the camera away; let the natural death animation and killer follow finish.
-    set_task(3.5, "Task_EnforceTeammateObserver", iVictim)
+    set_task(1.2, "Task_EnforceTeammateObserver", iVictim)
 
 
 
@@ -996,6 +994,13 @@ public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
     }
 }
 
+bool:HasAdminAccess(id)
+{
+    if(!id)
+        return true
+    return bool:(get_user_flags(id) & read_flags(g_szAdminAccess))
+}
+
 ApplySpectatorCameraSettings()
 {
     // AFK Guard, AutoKick, and Auto Team Balance strictly disabled
@@ -1020,15 +1025,6 @@ ApplySpectatorCameraSettings()
     }
 }
 
-public Cmd_BlockSpecCmd(id)
-{
-    if(g_iMatchState != STATE_WARMUP && is_user_connected(id) && !is_user_alive(id))
-    {
-        return PLUGIN_HANDLED
-    }
-    return PLUGIN_CONTINUE
-}
-
 public RG_Observer_SetMode_Pre(const id, iMode)
 {
     // If player is disconnected, alive, in warmup, or leaving spectator mode (OBS_NONE = 0), never interfere!
@@ -1036,37 +1032,20 @@ public RG_Observer_SetMode_Pre(const id, iMode)
         return HC_CONTINUE
 
     new TeamName:team = get_member(id, m_iTeam)
-    if(team != TEAM_CT && team != TEAM_TERRORIST)
+
+    // Spectators outside the match (TEAM_SPECTATOR) and Admins can use ANY camera mode freely:
+    // (Free Look, First Person, Third Person, Roaming, Map Overview)
+    if(team == TEAM_SPECTATOR || HasAdminAccess(id))
         return HC_CONTINUE
 
-    // If still within ~3.0s death sequence / killer follow cam, NEVER interfere!
-    new Float:fDeadTime = Float:get_member(id, m_fDeadTime)
-    if(fDeadTime > 0.0 && (get_gametime() - fDeadTime) < 3.0)
+    // For dead players on CT or Terrorist during competitive match:
+    // Enforce First Person Only (OBS_IN_EYE = 4) without cancelling the engine hook
+    if(team == TEAM_CT || team == TEAM_TERRORIST)
     {
-        return HC_CONTINUE
-    }
-
-    // Check if alive teammates exist on this player's team
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ae", (team == TEAM_CT) ? "CT" : "TERRORIST")
-
-    // If no alive teammates exist (round end, entire team wiped out):
-    // MUST NOT lock or enforce OBS_IN_EYE! Let the engine transition camera modes freely to avoid crash!
-    if(iNum <= 0)
-    {
-        return HC_CONTINUE
-    }
-
-    // Alive teammates exist: in competitive 5v5 mix, enforce STRICTLY FIRST PERSON ONLY (OBS_IN_EYE = 4)
-    if(iMode != 4)
-    {
-        new iCurMode = get_entvar(id, var_iuser1)
-        if(iCurMode == 4)
+        if(iMode != 4)
         {
-            return HC_SUPERCEDE
+            SetHookChainArg(2, ATYPE_INTEGER, 4)
         }
-
-        SetHookChainArg(2, ATYPE_INTEGER, 4) // Arg 2 is iMode (Arg 1 is 'this' - NEVER overwrite Arg 1!)
     }
 
     return HC_CONTINUE
@@ -1077,76 +1056,78 @@ public RG_Observer_FindNextPlayer_Pre(const id, bool:bReverse, const szName[])
     if(!is_user_connected(id) || is_user_alive(id))
         return HC_CONTINUE
 
-    if(g_iMatchState == STATE_WARMUP)
-        return HC_CONTINUE
-
-    new TeamName:iMyTeam = get_member(id, m_iTeam)
-    if(iMyTeam != TEAM_TERRORIST && iMyTeam != TEAM_CT)
-        return HC_CONTINUE
-
-    // During the 3.0s natural death sequence / killer follow cam:
-    // STRICTLY prevent skipping or switching between teammates!
-    // Player MUST stay on their killer / death view for the full 3 seconds like vanilla CS!
-    new Float:fDeadTime = Float:get_member(id, m_fDeadTime)
-    if(fDeadTime > 0.0 && (get_gametime() - fDeadTime) < 3.0)
-    {
-        return HC_SUPERCEDE
-    }
-
-    // If no alive teammates exist (round end / team elimination), let engine handle it naturally
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ae", (iMyTeam == TEAM_CT) ? "CT" : "TERRORIST")
-    if(iNum <= 0)
-    {
-        return HC_CONTINUE
-    }
-
+    // Allow ReGameDLL's native player finding to run smoothly without artificial blocks or delays
     return HC_CONTINUE
 }
 
 public RG_Observer_IsValidTarget_Pre(const id, iTargetIndex, bool:bSameTeam)
 {
-    if(!is_user_connected(id) || is_user_alive(id) || g_iMatchState == STATE_WARMUP)
+    if(!is_user_connected(id) || is_user_alive(id))
         return HC_CONTINUE
+
+    // Basic validity checks on target index
+    if(iTargetIndex <= 0 || iTargetIndex > MaxClients || iTargetIndex == id)
+    {
+        SetHookChainReturn(ATYPE_INTEGER, 0)
+        return HC_SUPERCEDE
+    }
+
+    // Target must be connected and alive
+    if(!is_user_connected(iTargetIndex) || !is_user_alive(iTargetIndex))
+    {
+        SetHookChainReturn(ATYPE_INTEGER, 0)
+        return HC_SUPERCEDE
+    }
+
+    new TeamName:iTargetTeam = get_member(iTargetIndex, m_iTeam)
+    // Target must be an active player on CT or Terrorist
+    if(iTargetTeam != TEAM_CT && iTargetTeam != TEAM_TERRORIST)
+    {
+        SetHookChainReturn(ATYPE_INTEGER, 0)
+        return HC_SUPERCEDE
+    }
 
     new TeamName:iMyTeam = get_member(id, m_iTeam)
-    if(iMyTeam != TEAM_TERRORIST && iMyTeam != TEAM_CT)
-        return HC_CONTINUE
 
-    // During natural 3.0s death sequence / killer follow cam:
-    // ALLOW observing killer / natural death view! Never reject killer here or ReGameDLL panics into (0,0,0)!
-    new Float:fDeadTime = Float:get_member(id, m_fDeadTime)
-    if(fDeadTime > 0.0 && (get_gametime() - fDeadTime) < 3.0)
+    // CASE 1: Outside Spectators (TEAM_SPECTATOR), Admins, or Warmup:
+    // Authorized to spectate ANY alive player in the match!
+    if(iMyTeam == TEAM_SPECTATOR || HasAdminAccess(id) || g_iMatchState == STATE_WARMUP)
     {
-        return HC_CONTINUE
-    }
-
-    // If no alive teammates exist on our team (e.g. round end team wipe),
-    // let engine handle spectator target resolution naturally to prevent camera loops!
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ae", (iMyTeam == TEAM_CT) ? "CT" : "TERRORIST")
-    if(iNum <= 0)
-    {
-        return HC_CONTINUE
-    }
-
-    // Target must be a connected, alive teammate!
-    if(!iTargetIndex || !is_user_connected(iTargetIndex) || !is_user_alive(iTargetIndex) || iTargetIndex == id)
-    {
-        SetHookChainReturn(ATYPE_INTEGER, 0)
+        SetHookChainReturn(ATYPE_INTEGER, iTargetIndex)
         return HC_SUPERCEDE
     }
 
-    // If target is on the opposite/enemy team: reject!
-    if(get_member(iTargetIndex, m_iTeam) != iMyTeam)
+    // CASE 2: Competitive Match - Dead player on CT or Terrorist
+    new iTeammateCount = 0
+    for(new p = 1; p <= MaxClients; p++)
     {
-        SetHookChainReturn(ATYPE_INTEGER, 0)
-        return HC_SUPERCEDE
+        if(p != id && is_user_connected(p) && is_user_alive(p) && get_member(p, m_iTeam) == iMyTeam)
+        {
+            iTeammateCount++
+        }
     }
 
-    // TARGET IS A VALID ALIVE TEAMMATE:
-    // RETURN HC_CONTINUE so ReGameDLL returns its internal CBasePlayer* pointer!
-    return HC_CONTINUE
+    if(iTeammateCount > 0)
+    {
+        // Teammates exist: ONLY accept alive teammates!
+        if(iTargetTeam == iMyTeam)
+        {
+            SetHookChainReturn(ATYPE_INTEGER, iTargetIndex)
+            return HC_SUPERCEDE
+        }
+        else
+        {
+            SetHookChainReturn(ATYPE_INTEGER, 0)
+            return HC_SUPERCEDE
+        }
+    }
+    else
+    {
+        // All teammates are dead (team wiped out / round ending):
+        // Allow spectating remaining alive players so camera NEVER detaches into the void (0, 0, 0)!
+        SetHookChainReturn(ATYPE_INTEGER, iTargetIndex)
+        return HC_SUPERCEDE
+    }
 }
 
 public RG_CBasePlayer_SwitchTeam_Pre(const id)
@@ -1227,6 +1208,15 @@ public Task_FixSpectatorClientCmd(id)
     }
 }
 
+public Task_InitSpectatorTarget(id)
+{
+    if(!is_user_connected(id) || is_user_alive(id))
+        return
+
+    rg_observer_find_next_player(id, false)
+    rg_set_observer_mode(id, 4)
+}
+
 public Task_EnforceTeammateObserver(id)
 {
     if(!is_user_connected(id) || is_user_alive(id))
@@ -1239,41 +1229,24 @@ public Task_EnforceTeammateObserver(id)
     if(iMyTeam != TEAM_TERRORIST && iMyTeam != TEAM_CT)
         return
 
-    new iTarget = get_member(id, m_hObserverTarget)
-    new bool:bNeedsFix = false
-
-    if(!iTarget || !is_user_connected(iTarget) || !is_user_alive(iTarget) || iTarget == id)
+    new iTeammateCount = 0
+    for(new p = 1; p <= MaxClients; p++)
     {
-        bNeedsFix = true
-    }
-    else if(get_member(iTarget, m_iTeam) != iMyTeam)
-    {
-        bNeedsFix = true
-    }
-
-    if(bNeedsFix)
-    {
-        new iPlayers[MAX_PLAYERS], iNum
-        get_players(iPlayers, iNum, "ae", (iMyTeam == TEAM_CT) ? "CT" : "TERRORIST")
-        for(new i = 0; i < iNum; i++)
+        if(p != id && is_user_connected(p) && is_user_alive(p) && get_member(p, m_iTeam) == iMyTeam)
         {
-            new p = iPlayers[i]
-            if(p != id && is_user_alive(p))
-            {
-                rg_set_observer_mode(id, 4) // Strictly OBS_IN_EYE
-                set_entvar(id, var_iuser1, 4)
-                set_entvar(id, var_iuser2, p)
-                set_member(id, m_hObserverTarget, p)
-                break
-            }
+            iTeammateCount++
         }
     }
-    else
-    {
-        rg_set_observer_mode(id, 4)
-        set_entvar(id, var_iuser1, 4)
-    }
 
+    if(iTeammateCount > 0)
+    {
+        new iCurTarget = get_member(id, m_hObserverTarget)
+        if(!iCurTarget || !is_user_connected(iCurTarget) || !is_user_alive(iCurTarget) || get_member(iCurTarget, m_iTeam) != iMyTeam)
+        {
+            rg_observer_find_next_player(id, false)
+        }
+        rg_set_observer_mode(id, 4) // Strictly OBS_IN_EYE
+    }
 }
 
 public RG_CSGameRules_CanPlayerHearPlayer_Pre(const iListener, const iSender)
@@ -2830,12 +2803,7 @@ public Task_HudDisplay()
 // -----------------------------------------------------------------------------
 // Admin & Client Commands Handlers
 // -----------------------------------------------------------------------------
-bool:HasAdminAccess(id)
-{
-    if(!id)
-        return true
-    return bool:(get_user_flags(id) & read_flags(g_szAdminAccess))
-}
+// bool:HasAdminAccess defined above before spectator handlers
 
 bool:HasRconOrBanAccess(id)
 {
@@ -3275,6 +3243,7 @@ public Cmd_SpecAll(id)
             user_silentkill(p)
         }
         rg_set_user_team(p, TEAM_SPECTATOR)
+        set_task(0.2, "Task_InitSpectatorTarget", p)
     }
 
     g_bPickMode = true
@@ -3332,7 +3301,12 @@ public Cmd_MoveSpec(id)
     if(!iTarget)
         return PLUGIN_HANDLED
 
+    if(is_user_alive(iTarget))
+    {
+        user_silentkill(iTarget)
+    }
     rg_set_user_team(iTarget, TEAM_SPECTATOR)
+    set_task(0.2, "Task_InitSpectatorTarget", iTarget)
     client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^4SPECTATOR^1 by ^4%s^1.", g_szChatPrefix, g_szUserName[iTarget], g_szUserName[id])
     return PLUGIN_HANDLED
 }
@@ -4067,7 +4041,15 @@ public Menu_MovePlayerTargetHandler(id, iMenu, iItem)
 
     if(is_user_connected(iTarget))
     {
+        if(team == TEAM_SPECTATOR && is_user_alive(iTarget))
+        {
+            user_silentkill(iTarget)
+        }
         rg_set_user_team(iTarget, team)
+        if(team == TEAM_SPECTATOR)
+        {
+            set_task(0.2, "Task_InitSpectatorTarget", iTarget)
+        }
         client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^3%s ^1by ^4%s^1.",
             g_szChatPrefix, g_szUserName[iTarget],
             team == TEAM_CT ? "CT" : (team == TEAM_TERRORIST ? "TERRORIST" : "SPECTATOR"),
