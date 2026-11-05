@@ -65,6 +65,20 @@ new Float:g_flLastMapVoteTime[MAX_PLAYERS + 1]
 new g_iVoteCreator
 new g_iVoteSecondsLeft
 
+
+stock bool:AdminTools_IsMixActive()
+{
+	if(cvar_exists("amx_mix_state") || cvar_exists("gameland_mix_version"))
+	{
+		return true
+	}
+	if(is_plugin_loaded("mix_system.amxx", true) != -1 || is_plugin_loaded("GAMELAND Match Server", false) != -1)
+	{
+		return true
+	}
+	return false
+}
+
 public plugin_init()
 {
 	register_plugin(PLUGIN, VERSION, AUTHOR)
@@ -227,7 +241,7 @@ public client_putinserver(id)
 
 public MessageShowMenu(msgId, msgDest, id)
 {
-	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	if(AdminTools_IsMixActive())
 	{
 		return PLUGIN_CONTINUE
 	}
@@ -283,7 +297,7 @@ public client_disconnected(id)
 
 public ShowInitialJoinMenu(taskId)
 {
-	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	if(AdminTools_IsMixActive())
 	{
 		return
 	}
@@ -312,6 +326,11 @@ public ShowInitialJoinMenu(taskId)
 
 public TaskSpecGuard()
 {
+	if(AdminTools_IsMixActive())
+	{
+		return
+	}
+
 	new afkMode = get_pcvar_num(g_pAfkGuard)
 	if(afkMode <= 0)
 	{
@@ -1421,7 +1440,7 @@ public CmdMoveAllToSpec(id, level, cid)
 
 public CmdSwapTeams(id, level, cid)
 {
-	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	if(AdminTools_IsMixActive())
 	{
 		return PLUGIN_CONTINUE
 	}
@@ -1446,7 +1465,7 @@ public CmdSwapTeams(id, level, cid)
 
 public CmdRestartRound(id, level, cid)
 {
-	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	if(AdminTools_IsMixActive())
 	{
 		return PLUGIN_CONTINUE
 	}
@@ -1628,7 +1647,7 @@ public CmdJoinLock(id, level, cid)
 
 public CmdJoinTeam(id)
 {
-	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	if(AdminTools_IsMixActive())
 	{
 		return PLUGIN_CONTINUE
 	}
@@ -1656,7 +1675,7 @@ public CmdJoinTeam(id)
 
 public CmdChooseTeam(id)
 {
-	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	if(AdminTools_IsMixActive())
 	{
 		return PLUGIN_CONTINUE
 	}
@@ -1680,7 +1699,7 @@ public CmdChooseTeam(id)
 
 public AdminTools_ShowVGUIMenu_Pre(id, VGUIMenu:menuType, const bitsSlots, szOldMenu[])
 {
-	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	if(AdminTools_IsMixActive())
 	{
 		return HC_CONTINUE
 	}
@@ -1703,7 +1722,7 @@ public AdminTools_ShowVGUIMenu_Pre(id, VGUIMenu:menuType, const bitsSlots, szOld
 
 public Cmd_AdminToolsTemp2(id)
 {
-	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	if(AdminTools_IsMixActive())
 	{
 		return PLUGIN_CONTINUE
 	}
@@ -1722,7 +1741,7 @@ public Cmd_AdminToolsTemp2(id)
 
 public Cmd_AdminToolsTemp3(id)
 {
-	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	if(AdminTools_IsMixActive())
 	{
 		return PLUGIN_CONTINUE
 	}
@@ -2206,64 +2225,20 @@ stock HandleAdminToolsServerTransfer(id, iKeyNum)
 
 public ShowOpenTeamMenu(id)
 {
-	if(!is_user_connected(id))
+	if(AdminTools_IsMixActive() || !is_user_connected(id))
 	{
 		return
 	}
 
-	new iCurrentTemp = 0, szCurParent[32]
-	new bool:bIsTemp = AdminTools_IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent))
+	new iKeys = MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_0
+	new szMenu[256], iLen = 0
 
-	new szTemp2Id[32], bool:bTemp2Online = false, iExp2 = 0, iRem2 = 0, iSlots2 = 15
-	AdminTools_GetTempServerId(2, szTemp2Id, charsmax(szTemp2Id))
-	AdminTools_ReadTempServerStatus(szTemp2Id, bTemp2Online, iExp2, iRem2, iSlots2)
-	new bool:bTemp2Running = (bTemp2Online && (iRem2 > 0 || iExp2 == 0))
-	
-	new szTemp3Id[32], bool:bTemp3Online = false, iExp3 = 0, iRem3 = 0, iSlots3 = 15
-	AdminTools_GetTempServerId(3, szTemp3Id, charsmax(szTemp3Id))
-	AdminTools_ReadTempServerStatus(szTemp3Id, bTemp3Online, iExp3, iRem3, iSlots3)
-	new bool:bTemp3Running = (bTemp3Online && (iRem3 > 0 || iExp3 == 0))
-	
-	new iKeys = MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_7 | MENU_KEY_8 | MENU_KEY_0
-	new szMenu[512], iLen = 0
-
-	if(bIsTemp)
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND]\w Temp Server #%d - Team & Server Select^n^n", iCurrentTemp)
-	else
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND]\w Team & Server Select^n^n")
-
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND]\w Select Team^n^n")
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1.\w Terrorist Force^n")
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2.\w Counter-Terrorist Force^n^n")
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y6.\w Spectator^n")
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y6.\w Spectator^n^n")
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y0.\w Cancel")
 
-	if(!bIsTemp)
-	{
-		// On Main Server:
-		if(bTemp2Running)
-			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y7.\w Go to \yTemp Server 2 \g[Online]\w")
-		else
-			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y7.\w Go to \yTemp Server 2 \d[Offline]\w")
-
-		if(bTemp3Running)
-			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server 3 \g[Online]\w")
-		else
-			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server 3 \d[Offline]\w")
-	}
-	else
-	{
-		// On Temp Server
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y7.\w Go to \yMain Server\w")
-
-		new iOtherTemp = (iCurrentTemp == 2) ? 3 : 2
-		new bool:bOtherRunning = (iOtherTemp == 2) ? bTemp2Running : bTemp3Running
-
-		if(bOtherRunning)
-			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server %d \g[Online]\w", iOtherTemp)
-		else
-			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server %d \d[Offline]\w", iOtherTemp)
-	}
-
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n^n\y0.\w Cancel")
 	set_member(id, m_iMenu, CS_Menu_OFF)
 	show_menu(id, iKeys, szMenu, -1, "GAMELAND_Open_Team_Menu")
 }
@@ -2288,8 +2263,9 @@ stock AdminTools_SpawnPlayerOnTeam(id, TeamName:iNewTeam)
 	set_entvar(id, var_iuser1, OBS_NONE)
 	set_entvar(id, var_iuser2, 0)
 	set_member(id, m_hObserverTarget, 0)
-	set_entvar(id, var_deadflag, DEAD_DEAD)
+	set_entvar(id, var_deadflag, DEAD_NO)
 
+	set_member(id, m_iJoiningState, JOINED)
 	rg_set_user_team(id, iNewTeam, MODEL_AUTO)
 	set_member(id, m_iMenu, CS_Menu_OFF)
 
@@ -2298,27 +2274,7 @@ stock AdminTools_SpawnPlayerOnTeam(id, TeamName:iNewTeam)
 
 public HandleOpenTeamMenu(id, key)
 {
-	if(!is_user_connected(id) || g_iJoinMode != 1)
-	{
-		return PLUGIN_HANDLED
-	}
-
-	if(key == 6) // Key 7
-	{
-		HandleAdminToolsServerTransfer(id, 7)
-		return PLUGIN_HANDLED
-	}
-	else if(key == 7) // Key 8
-	{
-		HandleAdminToolsServerTransfer(id, 8)
-		return PLUGIN_HANDLED
-	}
-	else if(key == 8) // Key 9
-	{
-		HandleAdminToolsServerTransfer(id, 9)
-		return PLUGIN_HANDLED
-	}
-	else if(key == 9) // Key 0
+	if(AdminTools_IsMixActive() || !is_user_connected(id) || g_iJoinMode != 1)
 	{
 		return PLUGIN_HANDLED
 	}
@@ -2504,7 +2460,7 @@ public HookClientCommand(id)
 	// When mix_system is active, mix_system owns team selection & M menu completely!
 	if(equali(commandName, "chooseteam") || equali(commandName, "jointeam"))
 	{
-		if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+		if(AdminTools_IsMixActive())
 		{
 			return FMRES_IGNORED
 		}
@@ -2562,6 +2518,11 @@ public HookTeamSelectMenu(id, key)
 
 public HookChooseTeam_Pre(id, MenuChooseTeam:slot)
 {
+	if(AdminTools_IsMixActive())
+	{
+		return HC_CONTINUE
+	}
+
 	if(!IsJoinLockedPlayer(id))
 	{
 		return HC_CONTINUE

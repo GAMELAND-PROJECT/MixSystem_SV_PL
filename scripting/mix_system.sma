@@ -195,6 +195,7 @@ public plugin_init()
 {
     register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR)
     register_cvar("gameland_mix_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
+    register_cvar("amx_mix_state", "1", FCVAR_SERVER | FCVAR_SPONLY)
     new pMixBase = register_cvar("mix_base_hostname", "")
     if(pMixBase)
         hook_cvar_change(pMixBase, "CvarHook_BaseHostname")
@@ -461,7 +462,7 @@ public plugin_init()
     register_menucmd(register_menuid("GAMELAND_Team_Select_Menu", 1), 1023, "HandleTeamSelectMenu")
 
     // Periodic countdown notice for temp servers (every 60s)
-    set_task(60.0, "Task_TempServerCountdownNotice", _, _, _, "b")
+    // set_task(60.0, "Task_TempServerCountdownNotice", _, _, _, "b")
 
     register_clcmd("say", "Hook_Say")
     register_clcmd("say_team", "Hook_SayTeam")
@@ -1314,7 +1315,36 @@ public RG_ShowVGUIMenu_Pre(id, VGUIMenu:menuType, const bitsSlots, szOldMenu[])
 
 public RG_HandleMenu_ChooseTeam_Pre(const id, const MenuChooseTeam:slot)
 {
-    return HC_SUPERCEDE
+    if(!is_user_connected(id))
+        return HC_CONTINUE
+
+    switch(slot)
+    {
+        case MenuChoose_T:
+        {
+            HandlePlayerTeamSelection(id, 1)
+            return HC_SUPERCEDE
+        }
+        case MenuChoose_CT:
+        {
+            HandlePlayerTeamSelection(id, 2)
+            return HC_SUPERCEDE
+        }
+        case MenuChoose_AutoSelect:
+        {
+            new iTs = GetTeamPlayerCount(TEAM_TERRORIST)
+            new iCTs = GetTeamPlayerCount(TEAM_CT)
+            new iChoice = (iTs > iCTs) ? 2 : 1
+            HandlePlayerTeamSelection(id, iChoice)
+            return HC_SUPERCEDE
+        }
+        case MenuChoose_Spec:
+        {
+            HandlePlayerTeamSelection(id, 6)
+            return HC_SUPERCEDE
+        }
+    }
+    return HC_CONTINUE
 }
 
 stock bool:SwitchToTeammate(id, bool:bReverse)
@@ -3381,7 +3411,13 @@ public Cmd_MoveCT(id)
     if(!iTarget)
         return PLUGIN_HANDLED
 
+    set_member(iTarget, m_iJoiningState, JOINED)
+    set_entvar(iTarget, var_deadflag, DEAD_NO)
     rg_set_user_team(iTarget, TEAM_CT)
+    if(g_iMatchState == STATE_WARMUP)
+    {
+        rg_round_respawn(iTarget)
+    }
     client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^4CT^1 by ^4%s^1.", g_szChatPrefix, g_szUserName[iTarget], g_szUserName[id])
     return PLUGIN_HANDLED
 }
@@ -3397,7 +3433,13 @@ public Cmd_MoveT(id)
     if(!iTarget)
         return PLUGIN_HANDLED
 
+    set_member(iTarget, m_iJoiningState, JOINED)
+    set_entvar(iTarget, var_deadflag, DEAD_NO)
     rg_set_user_team(iTarget, TEAM_TERRORIST)
+    if(g_iMatchState == STATE_WARMUP)
+    {
+        rg_round_respawn(iTarget)
+    }
     client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^4TERRORIST^1 by ^4%s^1.", g_szChatPrefix, g_szUserName[iTarget], g_szUserName[id])
     return PLUGIN_HANDLED
 }
@@ -4218,7 +4260,24 @@ public Menu_MovePlayerTargetHandler(id, iMenu, iItem)
 
     if(is_user_connected(iTarget))
     {
-        rg_set_user_team(iTarget, team)
+        if(team == TEAM_CT || team == TEAM_TERRORIST)
+        {
+            set_member(iTarget, m_iJoiningState, JOINED)
+            set_entvar(iTarget, var_deadflag, DEAD_NO)
+            rg_set_user_team(iTarget, team)
+            if(g_iMatchState == STATE_WARMUP)
+            {
+                rg_round_respawn(iTarget)
+            }
+        }
+        else
+        {
+            rg_set_user_team(iTarget, team)
+            if(team == TEAM_SPECTATOR)
+            {
+                set_task(0.1, "Task_InitSpectatorTarget", iTarget)
+            }
+        }
         client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^3%s ^1by ^4%s^1.",
             g_szChatPrefix, g_szUserName[iTarget],
             team == TEAM_CT ? "CT" : (team == TEAM_TERRORIST ? "TERRORIST" : "SPECTATOR"),
@@ -5018,7 +5077,6 @@ public Cmd_JoinTeam(id)
     if(!is_user_connected(id))
         return PLUGIN_HANDLED
 
-    // If this call was dispatched internally via engclient_cmd, allow it to pass through to the game DLL
     if(g_bInternalTeamCmd[id])
         return PLUGIN_CONTINUE
 
@@ -5031,24 +5089,17 @@ public Cmd_JoinTeam(id)
     read_argv(1, szArg, charsmax(szArg))
     new iChoice = str_to_num(szArg)
 
-    if(iChoice == 7)
-    {
-        HandleTeamMenuServerAction(id, 7)
-        return PLUGIN_HANDLED
-    }
-    else if(iChoice == 8)
-    {
-        HandleTeamMenuServerAction(id, 8)
-        return PLUGIN_HANDLED
-    }
-    else if(iChoice == 9)
-    {
-        HandleTeamMenuServerAction(id, 9)
-        return PLUGIN_HANDLED
-    }
-    else if(iChoice == 6)
+    if(iChoice == 6)
     {
         HandlePlayerTeamSelection(id, 6)
+        return PLUGIN_HANDLED
+    }
+    else if(iChoice == 5)
+    {
+        new iTs = GetTeamPlayerCount(TEAM_TERRORIST)
+        new iCTs = GetTeamPlayerCount(TEAM_CT)
+        new iTeamChoice = (iTs > iCTs) ? 2 : 1
+        HandlePlayerTeamSelection(id, iTeamChoice)
         return PLUGIN_HANDLED
     }
     else if(iChoice == 1 || iChoice == 2)
@@ -5080,59 +5131,15 @@ public ShowTeamSelectMenu(id)
     if(!is_user_connected(id))
         return PLUGIN_HANDLED
 
-    new iCurrentTemp = 0, szCurParent[32]
-    new bool:bIsTemp = IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent))
+    new iKeys = MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_5 | MENU_KEY_6 | MENU_KEY_0
+    new szMenu[256], iLen = 0
 
-    new szTemp2Id[32], bool:bTemp2Online = false, iExp2 = 0, iRem2 = 0, iSlots2 = 15
-    GetTempServerId(2, szTemp2Id, charsmax(szTemp2Id))
-    ReadTempServerStatus(szTemp2Id, bTemp2Online, iExp2, iRem2, iSlots2)
-    new bool:bTemp2Running = (bTemp2Online && (iRem2 > 0 || iExp2 == 0))
-
-    new szTemp3Id[32], bool:bTemp3Online = false, iExp3 = 0, iRem3 = 0, iSlots3 = 15
-    GetTempServerId(3, szTemp3Id, charsmax(szTemp3Id))
-    ReadTempServerStatus(szTemp3Id, bTemp3Online, iExp3, iRem3, iSlots3)
-    new bool:bTemp3Running = (bTemp3Online && (iRem3 > 0 || iExp3 == 0))
-
-    new iKeys = MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_7 | MENU_KEY_8 | MENU_KEY_0
-    new szMenu[512], iLen = 0
-
-    if(bIsTemp)
-        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND]\w Temp Server #%d - Team & Server Select^n^n", iCurrentTemp)
-    else
-        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND]\w Team & Server Select^n^n")
-
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND 5v5]\w Select Team^n^n")
     iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1.\w Terrorist Force^n")
     iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2.\w Counter-Terrorist Force^n^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y6.\w Spectator^n")
-
-    if(!bIsTemp)
-    {
-        // On Main Server:
-        if(bTemp2Running)
-            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y7.\w Go to \yTemp Server 2 \g[Online]\w")
-        else
-            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y7.\w Go to \yTemp Server 2 \d[Offline]\w")
-
-        if(bTemp3Running)
-            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server 3 \g[Online]\w")
-        else
-            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server 3 \d[Offline]\w")
-    }
-    else
-    {
-        // On Temp Server
-        iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y7.\w Go to \yMain Server\w")
-
-        new iOtherTemp = (iCurrentTemp == 2) ? 3 : 2
-        new bool:bOtherRunning = (iOtherTemp == 2) ? bTemp2Running : bTemp3Running
-
-        if(bOtherRunning)
-            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server %d \g[Online]\w", iOtherTemp)
-        else
-            iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server %d \d[Offline]\w", iOtherTemp)
-    }
-
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n^n\y0.\w Cancel")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y5.\w Auto-Select^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y6.\w Spectator^n^n")
+    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y0.\w Cancel")
 
     set_member(id, m_iMenu, CS_Menu_OFF)
     show_menu(id, iKeys, szMenu, -1, "GAMELAND_Team_Select_Menu")
@@ -5154,21 +5161,16 @@ public HandleTeamSelectMenu(id, key)
         {
             HandlePlayerTeamSelection(id, 2)
         }
+        case 4: // Key 5 -> Auto-Select
+        {
+            new iTs = GetTeamPlayerCount(TEAM_TERRORIST)
+            new iCTs = GetTeamPlayerCount(TEAM_CT)
+            new iChoice = (iTs > iCTs) ? 2 : 1
+            HandlePlayerTeamSelection(id, iChoice)
+        }
         case 5: // Key 6 -> Spectator
         {
             HandlePlayerTeamSelection(id, 6)
-        }
-        case 6: // Key 7 -> Temp Server 2 (or Main Server)
-        {
-            HandleTeamMenuServerAction(id, 7)
-        }
-        case 7: // Key 8 -> Temp Server 3 (or Other Temp)
-        {
-            HandleTeamMenuServerAction(id, 8)
-        }
-        case 8: // Key 9 -> Fallback
-        {
-            HandleTeamMenuServerAction(id, 9)
         }
         case 9: // Key 0 -> Cancel
         {
@@ -5176,6 +5178,20 @@ public HandleTeamSelectMenu(id, key)
         }
     }
     return PLUGIN_HANDLED
+}
+
+
+stock GetTeamPlayerCount(TeamName:team)
+{
+    new iCount = 0
+    for(new i = 1; i <= MaxClients; i++)
+    {
+        if(is_user_connected(i) && get_member(i, m_iTeam) == team)
+        {
+            iCount++
+        }
+    }
+    return iCount
 }
 
 stock SpawnPlayerOnTeam(id, TeamName:iNewTeam)
@@ -5198,14 +5214,30 @@ stock SpawnPlayerOnTeam(id, TeamName:iNewTeam)
     set_entvar(id, var_iuser1, OBS_NONE)
     set_entvar(id, var_iuser2, 0)
     set_member(id, m_hObserverTarget, 0)
-    set_entvar(id, var_deadflag, DEAD_DEAD)
+    set_entvar(id, var_deadflag, DEAD_NO)
 
+    set_member(id, m_iJoiningState, JOINED)
     rg_set_user_team(id, iNewTeam, MODEL_AUTO)
     set_member(id, m_iMenu, CS_Menu_OFF)
 
     if(g_iMatchState == STATE_WARMUP)
     {
         rg_round_respawn(id)
+        set_task(0.1, "Task_EnsureWarmupSpawn", id)
+    }
+}
+
+public Task_EnsureWarmupSpawn(id)
+{
+    if(is_user_connected(id) && !is_user_alive(id) && g_iMatchState == STATE_WARMUP)
+    {
+        new TeamName:iTeam = get_member(id, m_iTeam)
+        if(iTeam == TEAM_TERRORIST || iTeam == TEAM_CT)
+        {
+            set_member(id, m_iJoiningState, JOINED)
+            set_entvar(id, var_deadflag, DEAD_NO)
+            rg_round_respawn(id)
+        }
     }
 }
 
@@ -5682,28 +5714,6 @@ public Cmd_TempServerStatus(id)
 
 public Task_TempServerCountdownNotice()
 {
-    new iCurrentTemp = 0, szCurParent[32]
-    if(!IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent)))
-        return
-
-    new szTempId[32], bool:bRunning = false, iExpireAt = 0, iRemainingSec = 0, iSlots = 15
-    GetTempServerId(iCurrentTemp, szTempId, charsmax(szTempId))
-    ReadTempServerStatus(szTempId, bRunning, iExpireAt, iRemainingSec, iSlots)
-
-    if(bRunning && iRemainingSec > 0)
-    {
-        new iMinutes = iRemainingSec / 60
-        if(iMinutes == 15 || iMinutes == 10 || iMinutes == 5 || iMinutes == 3 || iMinutes == 1)
-        {
-            client_print_color(0, print_team_default, "^4[GAMELAND] ^1Notice: Temp Server #%d will ^3AUTO-EXPIRE ^1in ^4%d minute%s^1! Admins can type ^3/renew ^1to extend +4 hours.",
-                iCurrentTemp, iMinutes, (iMinutes == 1) ? "" : "s")
-            if(iMinutes <= 5)
-            {
-                set_dhudmessage(255, 100, 0, -1.0, 0.25, 0, 0.0, 4.0, 0.1, 0.5)
-                show_dhudmessage(0, "Temp Server #%d Expires in %d min!^nType /renew to extend +4h", iCurrentTemp, iMinutes)
-            }
-        }
-    }
 }
 
 public Task_RefreshTempMenu(iData)
