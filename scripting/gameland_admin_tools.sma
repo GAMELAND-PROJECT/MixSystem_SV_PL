@@ -27,6 +27,7 @@
 #define BAN_OPTIONS_MENU_ID "GAMELAND_Ban_Options"
 #define MAX_BAN_ENTRIES 128
 #define TASK_MAP_VOTE 19500
+#define TASK_PLAYER_REDIRECT 19600
 #define MAP_VOTE_DURATION 20.0
 #define MAX_VOTE_MAPS 7
 
@@ -137,15 +138,28 @@ public plugin_init()
 	register_clcmd("say /j2", "CmdJoinBlack", ADMIN_CVAR)
 	register_clcmd("say_team /j2", "CmdJoinBlack", ADMIN_CVAR)
 	register_clcmd("j2", "CmdJoinBlack", ADMIN_CVAR)
+	register_clcmd("say /j3", "CmdJoinLock", ADMIN_CVAR)
+	register_clcmd("say_team /j3", "CmdJoinLock", ADMIN_CVAR)
+	register_clcmd("j3", "CmdJoinLock", ADMIN_CVAR)
+	register_clcmd("say /lockjoin", "CmdJoinLock", ADMIN_CVAR)
+	register_clcmd("say_team /lockjoin", "CmdJoinLock", ADMIN_CVAR)
+	register_clcmd("lockjoin", "CmdJoinLock", ADMIN_CVAR)
 	register_clcmd("jointeam", "CmdJoinTeam")
 	register_clcmd("chooseteam", "CmdChooseTeam")
+	register_clcmd("say /sv2", "Cmd_AdminToolsTemp2")
+	register_clcmd("say_team /sv2", "Cmd_AdminToolsTemp2")
+	register_clcmd("sv2", "Cmd_AdminToolsTemp2")
+	register_clcmd("say /sv3", "Cmd_AdminToolsTemp3")
+	register_clcmd("say_team /sv3", "Cmd_AdminToolsTemp3")
+	register_clcmd("sv3", "Cmd_AdminToolsTemp3")
 	register_forward(FM_ClientCommand, "HookClientCommand")
 	register_forward(FM_CmdStart, "HookCmdStart", 1)
 	register_message(get_user_msgid("ShowMenu"), "MessageShowMenu")
+	RegisterHookChain(RG_ShowVGUIMenu, "AdminTools_ShowVGUIMenu_Pre")
 	RegisterHookChain(RG_HandleMenu_ChooseTeam, "HookChooseTeam_Pre")
 	register_menucmd(register_menuid("Team_Select", 1), 1023, "HookTeamSelectMenu")
 	register_menucmd(register_menuid(JOIN_MENU_ID, 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_0, "HandleJoinMenu")
-	register_menucmd(register_menuid("GAMELAND_Open_Team_Menu", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_0, "HandleOpenTeamMenu")
+	register_menucmd(register_menuid("GAMELAND_Open_Team_Menu", 1), 1023, "HandleOpenTeamMenu")
 	register_menucmd(register_menuid("GAMELAND_Map_Categories", 1), MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_3 | MENU_KEY_0, "HandleMapCategoryMenu")
 	register_menucmd(register_menuid("GAMELAND_VoteMap_Select", 1), 1023, "HandleVoteMapSelect")
 	register_menucmd(register_menuid("GAMELAND_Vote_Map_Choice", 1), 1023, "HandleVoteMapChoice")
@@ -160,7 +174,7 @@ public plugin_init()
 	g_pAfkGuard = register_cvar("gameland_afk_guard", "0")
 	g_pAfkIdleTime = register_cvar("gameland_afk_idle_time", "120")
 	g_pAfkSpecGrace = register_cvar("gameland_afk_spec_grace", "300")
-	g_iJoinMode = clamp(get_pcvar_num(g_pJoinMode), 0, 2)
+	g_iJoinMode = clamp(get_pcvar_num(g_pJoinMode), 0, 3)
 	if(g_iJoinMode == 2)
 	{
 		set_task(0.5, "RefreshBlackScreen", TASK_BLACK_SCREEN, _, _, "b")
@@ -173,8 +187,34 @@ public plugin_init()
 	// set_task(1.0, "Task_EnsureFastDuckFixSourceUpdated")
 }
 
+stock bool:CheckAdminToolsJoinLock(id)
+{
+	if(g_iJoinMode != 3 && get_cvar_num("gameland_join_lock") != 1)
+		return false
+
+	if(is_user_hltv(id) || is_user_bot(id))
+		return false
+
+	if(IsAdminExempt(id))
+		return false
+
+	rh_drop_client(id, "Server is currently locked by Admin [/j3]")
+	server_cmd("kick #%d ^"Server is currently locked by Admin [/j3]^"", get_user_userid(id))
+	server_exec()
+	return true
+}
+
+public client_authorized(id, const authid[])
+{
+	if(CheckAdminToolsJoinLock(id))
+		return
+}
+
 public client_putinserver(id)
 {
+	if(CheckAdminToolsJoinLock(id))
+		return
+
 	g_flLastActivity[id] = get_gametime()
 	g_flSpecEnteredAt[id] = 0.0
 	g_bSpecConfirmOpen[id] = false
@@ -187,6 +227,11 @@ public client_putinserver(id)
 
 public MessageShowMenu(msgId, msgDest, id)
 {
+	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	{
+		return PLUGIN_CONTINUE
+	}
+
 	if(!is_user_connected(id) || !IsJoinMenuPlayer(id))
 	{
 		return PLUGIN_CONTINUE
@@ -238,6 +283,11 @@ public client_disconnected(id)
 
 public ShowInitialJoinMenu(taskId)
 {
+	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	{
+		return
+	}
+
 	new id = taskId - TASK_INITIAL_JOIN_MENU
 	if(!is_user_connected(id))
 	{
@@ -1371,6 +1421,11 @@ public CmdMoveAllToSpec(id, level, cid)
 
 public CmdSwapTeams(id, level, cid)
 {
+	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	{
+		return PLUGIN_CONTINUE
+	}
+
 	if(!cmd_access(id, level, cid, 1))
 	{
 		return PLUGIN_HANDLED
@@ -1391,6 +1446,11 @@ public CmdSwapTeams(id, level, cid)
 
 public CmdRestartRound(id, level, cid)
 {
+	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	{
+		return PLUGIN_CONTINUE
+	}
+
 	if(!cmd_access(id, level, cid, 1))
 	{
 		return PLUGIN_HANDLED
@@ -1560,8 +1620,19 @@ public CmdJoinBlack(id, level, cid)
 	return SetJoinMode(id, level, cid, 2)
 }
 
+public CmdJoinLock(id, level, cid)
+{
+	new newMode = (g_iJoinMode == 3) ? 1 : 3
+	return SetJoinMode(id, level, cid, newMode)
+}
+
 public CmdJoinTeam(id)
 {
+	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	{
+		return PLUGIN_CONTINUE
+	}
+
 	if(!IsJoinLockedPlayer(id))
 	{
 		return PLUGIN_CONTINUE
@@ -1569,6 +1640,11 @@ public CmdJoinTeam(id)
 
 	new requested[8]
 	read_argv(1, requested, charsmax(requested))
+	if(equali(requested, "7") || equali(requested, "8") || equali(requested, "9"))
+	{
+		HandleAdminToolsServerTransfer(id, str_to_num(requested))
+		return PLUGIN_HANDLED
+	}
 	if(equali(requested, "1") || equali(requested, "2") || equali(requested, "5") || equali(requested, "6"))
 	{
 		ApplyRestrictedJoinKey(id, str_to_num(requested) - 1, true)
@@ -1580,6 +1656,11 @@ public CmdJoinTeam(id)
 
 public CmdChooseTeam(id)
 {
+	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	{
+		return PLUGIN_CONTINUE
+	}
+
 	if(g_iJoinMode == 1 && is_user_connected(id))
 	{
 		ShowOpenTeamMenu(id)
@@ -1592,13 +1673,535 @@ public CmdChooseTeam(id)
 		return PLUGIN_HANDLED
 	}
 
-	if(g_iJoinMode != 1 && is_user_connected(id)
-	&& (cs_get_user_team(id) == CS_TEAM_T || cs_get_user_team(id) == CS_TEAM_CT))
+
+
+	return CmdJoinTeam(id)
+}
+
+public AdminTools_ShowVGUIMenu_Pre(id, VGUIMenu:menuType, const bitsSlots, szOldMenu[])
+{
+	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
 	{
+		return HC_CONTINUE
+	}
+
+	if(menuType == VGUI_Menu_Team)
+	{
+		if(g_iJoinMode == 1)
+		{
+			ShowOpenTeamMenu(id)
+			return HC_SUPERCEDE
+		}
+		else if(IsJoinLockedPlayer(id))
+		{
+			ShowRestrictedJoinMenu(id)
+			return HC_SUPERCEDE
+		}
+	}
+	return HC_CONTINUE
+}
+
+public Cmd_AdminToolsTemp2(id)
+{
+	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	{
+		return PLUGIN_CONTINUE
+	}
+
+	new iCurrentTemp = 0, szCurParent[32]
+	new bool:bIsTemp = AdminTools_IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent))
+	if(bIsTemp && iCurrentTemp == 2)
+	{
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are already connected to ^3Temp Server #2^1.")
 		return PLUGIN_HANDLED
 	}
 
-	return CmdJoinTeam(id)
+	AdminTools_TransferPlayerToServer(id, AdminTools_GetTempServerPort(2), "Temp Server #2")
+	return PLUGIN_HANDLED
+}
+
+public Cmd_AdminToolsTemp3(id)
+{
+	if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+	{
+		return PLUGIN_CONTINUE
+	}
+
+	new iCurrentTemp = 0, szCurParent[32]
+	new bool:bIsTemp = AdminTools_IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent))
+	if(bIsTemp && iCurrentTemp == 3)
+	{
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are already connected to ^3Temp Server #3^1.")
+		return PLUGIN_HANDLED
+	}
+
+	AdminTools_TransferPlayerToServer(id, AdminTools_GetTempServerPort(3), "Temp Server #3")
+	return PLUGIN_HANDLED
+}
+
+stock AdminTools_GetServerCurrentPort()
+{
+	new iPort = get_cvar_num("port")
+	if(iPort >= 1024 && iPort <= 65535)
+		return iPort
+
+	new szIp[32]
+	get_user_ip(0, szIp, charsmax(szIp), 0)
+	new iColon = contain(szIp, ":")
+	if(iColon != -1)
+	{
+		iPort = str_to_num(szIp[iColon + 1])
+		if(iPort >= 1024 && iPort <= 65535)
+			return iPort
+	}
+
+	return 27015
+}
+
+stock bool:AdminTools_IsCurrentServerTemp(&iCurrentTempIndex, szParentId[], iParentMaxLen)
+{
+	iCurrentTempIndex = 0
+	copy(szParentId, iParentMaxLen, "main")
+
+	new szInstance[32]
+	get_cvar_string("gameland_instance_id", szInstance, charsmax(szInstance))
+	trim(szInstance)
+	if(!szInstance[0])
+	{
+		new iPort = AdminTools_GetServerCurrentPort()
+		if(iPort == 27015 || iPort <= 0)
+			copy(szInstance, charsmax(szInstance), "main")
+		else
+			formatex(szInstance, charsmax(szInstance), "cs_%d", iPort)
+	}
+
+	new iLen = strlen(szInstance)
+	if(iLen >= 4 && szInstance[iLen - 4] == '_' && szInstance[iLen - 3] == 's' && szInstance[iLen - 2] == 'v')
+	{
+		if(szInstance[iLen - 1] == '2')
+		{
+			iCurrentTempIndex = 2
+			copy(szParentId, iParentMaxLen, szInstance)
+			szParentId[iLen - 4] = '^0'
+			return true
+		}
+		else if(szInstance[iLen - 1] == '3')
+		{
+			iCurrentTempIndex = 3
+			copy(szParentId, iParentMaxLen, szInstance)
+			szParentId[iLen - 4] = '^0'
+			return true
+		}
+	}
+
+	// Secondary check: examine hostname for "[SV2]" / "_sv2" or "[SV3]" / "_sv3"
+	new szHostname[64]
+	get_cvar_string("hostname", szHostname, charsmax(szHostname))
+	if(containi(szHostname, "[SV2]") != -1 || containi(szHostname, "_sv2") != -1)
+	{
+		iCurrentTempIndex = 2
+		copy(szParentId, iParentMaxLen, szInstance)
+		return true
+	}
+	else if(containi(szHostname, "[SV3]") != -1 || containi(szHostname, "_sv3") != -1)
+	{
+		iCurrentTempIndex = 3
+		copy(szParentId, iParentMaxLen, szInstance)
+		return true
+	}
+
+	copy(szParentId, iParentMaxLen, szInstance)
+	return false
+}
+
+stock AdminTools_GetParentServerId(szOut[], iMaxLen)
+{
+	new iTempIdx
+	if(AdminTools_IsCurrentServerTemp(iTempIdx, szOut, iMaxLen))
+	{
+		return
+	}
+
+	new szInstance[32]
+	get_cvar_string("gameland_instance_id", szInstance, charsmax(szInstance))
+	trim(szInstance)
+	if(szInstance[0])
+	{
+		copy(szOut, iMaxLen, szInstance)
+	}
+	else
+	{
+		new iPort = AdminTools_GetServerCurrentPort()
+		if(iPort == 27015 || iPort <= 0)
+			copy(szOut, iMaxLen, "main")
+		else
+			formatex(szOut, iMaxLen, "cs_%d", iPort)
+	}
+}
+
+stock AdminTools_GetTempServerId(iTempIndex, szOut[], iMaxLen)
+{
+	new szParent[32], iCurrentTempIndex
+	if(AdminTools_IsCurrentServerTemp(iCurrentTempIndex, szParent, charsmax(szParent)))
+	{
+		if(iCurrentTempIndex == iTempIndex)
+		{
+			get_cvar_string("gameland_instance_id", szOut, iMaxLen)
+			trim(szOut)
+			return
+		}
+	}
+	else
+	{
+		AdminTools_GetParentServerId(szParent, charsmax(szParent))
+	}
+
+	formatex(szOut, iMaxLen, "%s_sv%d", szParent, iTempIndex)
+}
+
+stock AdminTools_GetTempServerPort(iTempIndex)
+{
+	new szParent[32], iCurrentTempIndex
+	new iCurrentPort = AdminTools_GetServerCurrentPort()
+	if(AdminTools_IsCurrentServerTemp(iCurrentTempIndex, szParent, charsmax(szParent)))
+	{
+		if(iCurrentTempIndex == iTempIndex)
+			return iCurrentPort
+
+		new iParentPort = (iCurrentTempIndex == 2) ? (iCurrentPort - 100) : (iCurrentPort - 101)
+		return (iTempIndex == 2) ? (iParentPort + 100) : (iParentPort + 101)
+	}
+
+	return (iTempIndex == 2) ? (iCurrentPort + 100) : (iCurrentPort + 101)
+}
+
+stock AdminTools_GetParentServerPort()
+{
+	new szParent[32], iCurrentTempIndex
+	new iCurrentPort = AdminTools_GetServerCurrentPort()
+	if(AdminTools_IsCurrentServerTemp(iCurrentTempIndex, szParent, charsmax(szParent)))
+	{
+		return (iCurrentTempIndex == 2) ? (iCurrentPort - 100) : (iCurrentPort - 101)
+	}
+	return iCurrentPort
+}
+
+stock bool:AdminTools_ReadTempServerStatus(const szTempId[], &bool:bRunning, &iExpireAt, &iRemainingSec, &iSlots)
+{
+	bRunning = false
+	iExpireAt = 0
+	iRemainingSec = 0
+	iSlots = 15
+
+	new szDataDir[96]
+	get_datadir(szDataDir, charsmax(szDataDir))
+
+	new szCandidateStatus[4][192]
+	new iStatusCount = 0
+	formatex(szCandidateStatus[iStatusCount++], charsmax(szCandidateStatus[]), "/tmp/gameland_temp_status/%s.status", szTempId)
+	formatex(szCandidateStatus[iStatusCount++], charsmax(szCandidateStatus[]), "/opt/gameland/instances/.status/%s.status", szTempId)
+	formatex(szCandidateStatus[iStatusCount++], charsmax(szCandidateStatus[]), "instances/.status/%s.status", szTempId)
+	formatex(szCandidateStatus[iStatusCount++], charsmax(szCandidateStatus[]), "%s/temp_servers/status/%s.status", szDataDir, szTempId)
+
+	new iFile = 0
+	for(new i = 0; i < iStatusCount; i++)
+	{
+		iFile = fopen(szCandidateStatus[i], "rt")
+		if(iFile)
+			break
+	}
+
+	if(iFile)
+	{
+		new szLine[128], szKey[32], szVal[64]
+		while(!feof(iFile))
+		{
+			fgets(iFile, szLine, charsmax(szLine))
+			trim(szLine)
+			if(!szLine[0] || szLine[0] == ';' || szLine[0] == '#')
+				continue
+
+			if(contain(szLine, "=") != -1)
+			{
+				strtok2(szLine, szKey, charsmax(szKey), szVal, charsmax(szVal), '=', TRIM_INNER)
+				trim(szKey)
+				trim(szVal)
+
+				if(equali(szKey, "running"))
+					bRunning = (str_to_num(szVal) == 1)
+				else if(equali(szKey, "expire_at"))
+					iExpireAt = str_to_num(szVal)
+				else if(equali(szKey, "slots"))
+					iSlots = str_to_num(szVal)
+			}
+			else if(isdigit(szLine[0]))
+			{
+				iExpireAt = str_to_num(szLine)
+			}
+		}
+		fclose(iFile)
+
+		new iNow = get_systime()
+		if(bRunning)
+		{
+			if(iExpireAt > iNow)
+				iRemainingSec = iExpireAt - iNow
+			else if(iExpireAt > 0 && iNow >= iExpireAt)
+			{
+				bRunning = false
+				iRemainingSec = 0
+			}
+			else
+				iRemainingSec = 14400
+		}
+		return true
+	}
+
+	new szCandidateExpire[4][192]
+	new iExpCount = 0
+	formatex(szCandidateExpire[iExpCount++], charsmax(szCandidateExpire[]), "/opt/gameland/instances/%s.expire", szTempId)
+	formatex(szCandidateExpire[iExpCount++], charsmax(szCandidateExpire[]), "instances/%s.expire", szTempId)
+	formatex(szCandidateExpire[iExpCount++], charsmax(szCandidateExpire[]), "/tmp/gameland_temp_status/%s.expire", szTempId)
+	formatex(szCandidateExpire[iExpCount++], charsmax(szCandidateExpire[]), "%s/temp_servers/%s.expire", szDataDir, szTempId)
+
+	for(new i = 0; i < iExpCount; i++)
+	{
+		iFile = fopen(szCandidateExpire[i], "rt")
+		if(iFile)
+		{
+			new szLine[64]
+			if(fgets(iFile, szLine, charsmax(szLine)))
+			{
+				trim(szLine)
+				iExpireAt = str_to_num(szLine)
+			}
+			fclose(iFile)
+
+			new iNow = get_systime()
+			if(iExpireAt > iNow)
+			{
+				bRunning = true
+				iRemainingSec = iExpireAt - iNow
+				return true
+			}
+			else if(iExpireAt > 0)
+			{
+				bRunning = false
+				iRemainingSec = 0
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+stock AdminTools_GetServerPublicIp(szIpOut[], iMaxLen)
+{
+	szIpOut[0] = '^0'
+
+	get_cvar_string("gameland_server_ip", szIpOut, iMaxLen)
+	trim(szIpOut)
+	if(AdminTools_IsPublicWanIp(szIpOut))
+		return
+
+	new szCandidateFiles[5][192]
+	new iFileCount = 0
+	formatex(szCandidateFiles[iFileCount++], charsmax(szCandidateFiles[]), "instances/public_ip.txt")
+	formatex(szCandidateFiles[iFileCount++], charsmax(szCandidateFiles[]), "cstrike/instances/public_ip.txt")
+	formatex(szCandidateFiles[iFileCount++], charsmax(szCandidateFiles[]), "/opt/gameland/instances/public_ip.txt")
+	formatex(szCandidateFiles[iFileCount++], charsmax(szCandidateFiles[]), "/tmp/gameland_public_ip.txt")
+	formatex(szCandidateFiles[iFileCount++], charsmax(szCandidateFiles[]), "/opt/gameland/server/instances/public_ip.txt")
+
+	for(new i = 0; i < iFileCount; i++)
+	{
+		new iFile = fopen(szCandidateFiles[i], "rt")
+		if(iFile)
+		{
+			fgets(iFile, szIpOut, iMaxLen)
+			fclose(iFile)
+			trim(szIpOut)
+			if(AdminTools_IsPublicWanIp(szIpOut))
+				return
+		}
+	}
+
+	get_cvar_string("net_address", szIpOut, iMaxLen)
+	new iColon = contain(szIpOut, ":")
+	if(iColon != -1)
+		szIpOut[iColon] = '^0'
+	trim(szIpOut)
+	if(AdminTools_IsPublicWanIp(szIpOut))
+		return
+
+	get_user_ip(0, szIpOut, iMaxLen, 1)
+	trim(szIpOut)
+	if(AdminTools_IsPublicWanIp(szIpOut))
+		return
+
+	get_cvar_string("ip", szIpOut, iMaxLen)
+	trim(szIpOut)
+	if(AdminTools_IsPublicWanIp(szIpOut))
+		return
+
+	copy(szIpOut, iMaxLen, "185.236.38.83")
+}
+
+stock bool:AdminTools_IsPublicWanIp(const szIp[])
+{
+	if(!szIp[0] || equal(szIp, "0.0.0.0") || equal(szIp, "127.0.0.1") || equal(szIp, "localhost"))
+		return false
+
+	if(equal(szIp, "10.", 3) || equal(szIp, "192.168.", 8) || equal(szIp, "169.254.", 8))
+		return false
+
+	if(equal(szIp, "172.", 4))
+	{
+		new szSecond[4]
+		new iDot = contain(szIp[4], ".")
+		if(iDot != -1 && iDot <= 3)
+		{
+			copy(szSecond, iDot, szIp[4])
+			new iSec = str_to_num(szSecond)
+			if(iSec >= 16 && iSec <= 31)
+				return false
+		}
+	}
+
+	return true
+}
+
+stock AdminTools_SendDirectorRedirect(id, const szIp[], iPort)
+{
+	if(!is_user_connected(id) || is_user_bot(id) || is_user_hltv(id))
+		return
+
+	new szCmd[96]
+	formatex(szCmd, charsmax(szCmd), "connect %s:%d^n", szIp, iPort)
+
+	static iMsgDirector = 0
+	if(!iMsgDirector)
+	{
+		iMsgDirector = get_user_msgid("Director")
+		if(iMsgDirector <= 0)
+			iMsgDirector = 51
+	}
+
+	message_begin(MSG_ONE, iMsgDirector, _, id)
+	write_byte(strlen(szCmd) + 2)
+	write_byte(DRC_CMD_STUFFTEXT) // 12 (DRC_CMD_STUFFTEXT)
+	write_string(szCmd)
+	message_end()
+}
+
+public Task_AdminToolsDelayedRedirect(const aData[])
+{
+	new id = aData[0]
+	new iPort = aData[1]
+	if(!is_user_connected(id) || is_user_bot(id) || is_user_hltv(id))
+		return
+
+	new szIp[32]
+	AdminTools_GetServerPublicIp(szIp, charsmax(szIp))
+
+	client_cmd(id, "slot10")
+	client_cmd(id, "Connect %s:%d", szIp, iPort)
+	client_cmd(id, "connect %s:%d", szIp, iPort)
+	client_cmd(id, ";connect %s:%d", szIp, iPort)
+	client_cmd(id, "engine connect %s:%d", szIp, iPort)
+	AdminTools_SendDirectorRedirect(id, szIp, iPort)
+}
+
+stock AdminTools_TransferPlayerToServer(id, iTargetPort, const szServerName[])
+{
+	if(!is_user_connected(id))
+		return
+
+	new szIp[32], szName[MAX_NAME_LENGTH]
+	AdminTools_GetServerPublicIp(szIp, charsmax(szIp))
+	get_user_name(id, szName, charsmax(szName))
+
+	// 1. In-game Chat Notice (Clean & Professional - NO IP LEAK)
+	client_print_color(id, print_team_default, "^4[GAMELAND] ^1Transferring you to ^3%s^1...", szServerName)
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1is transferring to ^3%s^1.", szName, szServerName)
+
+	// 2. High-visibility Top-screen DHUD notice (Clean - NO IP LEAK)
+	set_dhudmessage(0, 220, 255, -1.0, 0.20, 0, 0.0, 4.0, 0.1, 0.5)
+	show_dhudmessage(id, "[GAMELAND] Transferring to %s...", szServerName)
+
+	// 3. Clean Console Output (NO IP LEAK)
+	console_print(id, " ")
+	console_print(id, "==========================================================")
+	console_print(id, "[GAMELAND] Connecting to %s...", szServerName)
+	console_print(id, "==========================================================")
+	console_print(id, " ")
+
+	// 4. Force dismissal of any active menu before connecting
+	show_menu(id, 0, "^n", 0)
+	client_cmd(id, "slot10")
+
+	// 5. Multi-Layer Client Command executions without newline
+	client_cmd(id, "Connect %s:%d", szIp, iTargetPort)
+	client_cmd(id, "connect %s:%d", szIp, iTargetPort)
+	client_cmd(id, ";connect %s:%d", szIp, iTargetPort)
+	client_cmd(id, "engine connect %s:%d", szIp, iTargetPort)
+
+	// 6. SVC_DIRECTOR engine redirect (bypasses some client-side stufftext blockers)
+	AdminTools_SendDirectorRedirect(id, szIp, iTargetPort)
+
+	// 7. Instant HTML MOTD Redirect (Triggers steam://connect for Steam & modern clients)
+	new szMotd[512]
+	formatex(szMotd, charsmax(szMotd),
+		"<html><head><meta http-equiv=^"refresh^" content=^"0;url=steam://connect/%s:%d^"><script>window.location=^"steam://connect/%s:%d^";</script></head><body bgcolor=^"#000000^" style=^"color:#fff;text-align:center;font-family:sans-serif;padding-top:40px;^"><h2>Transferring to %s...</h2></body></html>",
+		szIp, iTargetPort, szIp, iTargetPort, szServerName)
+	show_motd(id, szMotd, "GAMELAND Transfer")
+
+	// 8. Delayed follow-up redirect task (ensures execution after menu dismissal)
+	new aData[2]
+	aData[0] = id
+	aData[1] = iTargetPort
+	set_task(0.2, "Task_AdminToolsDelayedRedirect", TASK_PLAYER_REDIRECT + id, aData, sizeof(aData))
+	set_task(0.6, "Task_AdminToolsDelayedRedirect", TASK_PLAYER_REDIRECT + id + 100, aData, sizeof(aData))
+}
+
+stock HandleAdminToolsServerTransfer(id, iKeyNum)
+{
+	if(!is_user_connected(id))
+		return
+
+	new iCurrentTemp = 0, szCurParent[32]
+	new bool:bIsTemp = AdminTools_IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent))
+
+	if(!bIsTemp)
+	{
+		// On Main Server
+		if(iKeyNum == 7)
+		{
+			AdminTools_TransferPlayerToServer(id, AdminTools_GetTempServerPort(2), "Temp Server #2")
+		}
+		else if(iKeyNum == 8 || iKeyNum == 9)
+		{
+			AdminTools_TransferPlayerToServer(id, AdminTools_GetTempServerPort(3), "Temp Server #3")
+		}
+	}
+	else
+	{
+		// On Temp Server
+		new iCurPort = AdminTools_GetServerCurrentPort()
+		new iParentPort = (iCurrentTemp == 2) ? (iCurPort - 100) : (iCurPort - 101)
+		new iOtherTemp = (iCurrentTemp == 2) ? 3 : 2
+
+		if(iKeyNum == 7)
+		{
+			AdminTools_TransferPlayerToServer(id, iParentPort, "Main Server")
+		}
+		else if(iKeyNum == 8 || iKeyNum == 9)
+		{
+			new szTargetName[32]
+			formatex(szTargetName, charsmax(szTargetName), "Temp Server #%d", iOtherTemp)
+			AdminTools_TransferPlayerToServer(id, AdminTools_GetTempServerPort(iOtherTemp), szTargetName)
+		}
+	}
 }
 
 public ShowOpenTeamMenu(id)
@@ -1608,18 +2211,89 @@ public ShowOpenTeamMenu(id)
 		return
 	}
 
-	if(cs_get_user_team(id) == CS_TEAM_T || cs_get_user_team(id) == CS_TEAM_CT)
+	new iCurrentTemp = 0, szCurParent[32]
+	new bool:bIsTemp = AdminTools_IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent))
+
+	new szTemp2Id[32], bool:bTemp2Online = false, iExp2 = 0, iRem2 = 0, iSlots2 = 15
+	AdminTools_GetTempServerId(2, szTemp2Id, charsmax(szTemp2Id))
+	AdminTools_ReadTempServerStatus(szTemp2Id, bTemp2Online, iExp2, iRem2, iSlots2)
+	new bool:bTemp2Running = (bTemp2Online && (iRem2 > 0 || iExp2 == 0))
+	
+	new szTemp3Id[32], bool:bTemp3Online = false, iExp3 = 0, iRem3 = 0, iSlots3 = 15
+	AdminTools_GetTempServerId(3, szTemp3Id, charsmax(szTemp3Id))
+	AdminTools_ReadTempServerStatus(szTemp3Id, bTemp3Online, iExp3, iRem3, iSlots3)
+	new bool:bTemp3Running = (bTemp3Online && (iRem3 > 0 || iExp3 == 0))
+	
+	new iKeys = MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_7 | MENU_KEY_8 | MENU_KEY_0
+	new szMenu[512], iLen = 0
+
+	if(bIsTemp)
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND]\w Temp Server #%d - Team & Server Select^n^n", iCurrentTemp)
+	else
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND]\w Team & Server Select^n^n")
+
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1.\w Terrorist Force^n")
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2.\w Counter-Terrorist Force^n^n")
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y6.\w Spectator^n")
+
+	if(!bIsTemp)
 	{
-		show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6 | MENU_KEY_0,
-			"\y[GAMELAND]\w Team options^n^n\y1.\w Terrorist^n\y2.\w Counter-Terrorist^n^n\y6.\w Spectator^n^n\y0.\w Cancel",
-			-1, "GAMELAND_Open_Team_Menu")
+		// On Main Server:
+		if(bTemp2Running)
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y7.\w Go to \yTemp Server 2 \g[Online]\w")
+		else
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y7.\w Go to \yTemp Server 2 \d[Offline]\w")
+
+		if(bTemp3Running)
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server 3 \g[Online]\w")
+		else
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server 3 \d[Offline]\w")
 	}
 	else
 	{
-		show_menu(id, MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_6,
-			"\y[GAMELAND]\w Choose your team^n^n\y1.\w Terrorist^n\y2.\w Counter-Terrorist^n^n\y6.\w Spectator",
-			-1, "GAMELAND_Open_Team_Menu")
+		// On Temp Server
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y7.\w Go to \yMain Server\w")
+
+		new iOtherTemp = (iCurrentTemp == 2) ? 3 : 2
+		new bool:bOtherRunning = (iOtherTemp == 2) ? bTemp2Running : bTemp3Running
+
+		if(bOtherRunning)
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server %d \g[Online]\w", iOtherTemp)
+		else
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\y8.\w Go to \yTemp Server %d \d[Offline]\w", iOtherTemp)
 	}
+
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n^n\y0.\w Cancel")
+	set_member(id, m_iMenu, CS_Menu_OFF)
+	show_menu(id, iKeys, szMenu, -1, "GAMELAND_Open_Team_Menu")
+}
+
+stock AdminTools_SpawnPlayerOnTeam(id, TeamName:iNewTeam)
+{
+	if(!is_user_connected(id))
+		return
+
+	remove_task(id)
+
+	if(is_user_alive(id))
+	{
+		user_silentkill(id)
+	}
+
+	new iFlags = get_entvar(id, var_flags)
+	if(iFlags & FL_SPECTATOR)
+	{
+		set_entvar(id, var_flags, iFlags & ~FL_SPECTATOR)
+	}
+	set_entvar(id, var_iuser1, OBS_NONE)
+	set_entvar(id, var_iuser2, 0)
+	set_member(id, m_hObserverTarget, 0)
+	set_entvar(id, var_deadflag, DEAD_DEAD)
+
+	rg_set_user_team(id, iNewTeam, MODEL_AUTO)
+	set_member(id, m_iMenu, CS_Menu_OFF)
+
+	rg_round_respawn(id)
 }
 
 public HandleOpenTeamMenu(id, key)
@@ -1629,42 +2303,47 @@ public HandleOpenTeamMenu(id, key)
 		return PLUGIN_HANDLED
 	}
 
-	// On first connection, the open-join menu exposes only 1, 2 and 6:
-	// Terrorist, Counter-Terrorist and Spectator.
-	if(cs_get_user_team(id) == CS_TEAM_UNASSIGNED)
+	if(key == 6) // Key 7
 	{
-		if(key == 5)
-		{
-			MoveToFreeSpectator(id)
-		}
-		else if(key == 0)
-		{
-			g_bInternalTeamChange[id] = true
-			engclient_cmd(id, "jointeam", "1")
-			g_bInternalTeamChange[id] = false
-		}
-		else if(key == 1)
-		{
-			g_bInternalTeamChange[id] = true
-			engclient_cmd(id, "jointeam", "2")
-			g_bInternalTeamChange[id] = false
-		}
+		HandleAdminToolsServerTransfer(id, 7)
+		return PLUGIN_HANDLED
+	}
+	else if(key == 7) // Key 8
+	{
+		HandleAdminToolsServerTransfer(id, 8)
+		return PLUGIN_HANDLED
+	}
+	else if(key == 8) // Key 9
+	{
+		HandleAdminToolsServerTransfer(id, 9)
+		return PLUGIN_HANDLED
+	}
+	else if(key == 9) // Key 0
+	{
 		return PLUGIN_HANDLED
 	}
 
-	if(key == 0)
+	if(key == 0) // Key 1: Terrorist
 	{
-		g_bInternalTeamChange[id] = true
-		engclient_cmd(id, "jointeam", "1")
-		g_bInternalTeamChange[id] = false
+		if(cs_get_user_team(id) == CS_TEAM_T)
+		{
+			client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are already on the ^3Terrorist ^1team.")
+			return PLUGIN_HANDLED
+		}
+		AdminTools_SpawnPlayerOnTeam(id, TEAM_TERRORIST)
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You joined the ^3Terrorist ^1team.")
 	}
-	else if(key == 1)
+	else if(key == 1) // Key 2: Counter-Terrorist
 	{
-		g_bInternalTeamChange[id] = true
-		engclient_cmd(id, "jointeam", "2")
-		g_bInternalTeamChange[id] = false
+		if(cs_get_user_team(id) == CS_TEAM_CT)
+		{
+			client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are already on the ^3Counter-Terrorist ^1team.")
+			return PLUGIN_HANDLED
+		}
+		AdminTools_SpawnPlayerOnTeam(id, TEAM_CT)
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You joined the ^3Counter-Terrorist ^1team.")
 	}
-	else if(key == 5)
+	else if(key == 5) // Key 6: Spectator
 	{
 		MoveToFreeSpectator(id)
 	}
@@ -1745,6 +2424,15 @@ stock ApplyRestrictedJoinKey(id, key, bool:showMenu)
 	return PLUGIN_HANDLED
 }
 
+public Task_AdminTools_InitSpec(id)
+{
+	if(!is_user_connected(id) || is_user_alive(id))
+		return
+
+	rg_observer_find_next_player(id, false)
+	rg_set_observer_mode(id, 4)
+}
+
 stock MoveToFreeSpectator(id)
 {
 	if(!is_user_connected(id))
@@ -1752,16 +2440,25 @@ stock MoveToFreeSpectator(id)
 		return
 	}
 
+	if(cs_get_user_team(id) == CS_TEAM_SPECTATOR)
+	{
+		client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are already a ^3Spectator^1.")
+		return
+	}
+
+	remove_task(id)
+
 	if(is_user_alive(id))
 	{
 		user_silentkill(id)
 	}
 
-	g_bInternalTeamChange[id] = true
-	engclient_cmd(id, "jointeam", "6")
-	cs_set_user_team(id, CS_TEAM_SPECTATOR)
-	g_bInternalTeamChange[id] = false
-	set_task(0.1, "FinalizeSpectator", TASK_SPECTATOR_FINALIZE + id)
+	rg_set_user_team(id, TEAM_SPECTATOR)
+	set_member(id, m_iMenu, CS_Menu_OFF)
+
+	set_task(0.1, "Task_AdminTools_InitSpec", id)
+
+	client_print_color(id, print_team_default, "^4[GAMELAND] ^1You moved to ^3Spectator^1.")
 	g_flSpecEnteredAt[id] = get_gametime()
 }
 
@@ -1779,6 +2476,7 @@ public FinalizeSpectator(taskId)
 	}
 
 	cs_set_user_team(id, CS_TEAM_SPECTATOR)
+	set_task(0.1, "Task_AdminTools_InitSpec", id)
 }
 
 stock KickRestrictedClient(id)
@@ -1800,16 +2498,16 @@ public HookClientCommand(id)
 		return FMRES_IGNORED
 	}
 
-	// While j0 is active, players already in a team must not reopen
-	// the default team menu with M/chooseteam. Spectators still get
-	// the restricted menu handled below.
 	new commandName[32]
 	read_argv(0, commandName, charsmax(commandName))
-	if(g_iJoinMode == 0 && is_user_connected(id)
-	&& (equali(commandName, "chooseteam") || equali(commandName, "jointeam"))
-	&& (cs_get_user_team(id) == CS_TEAM_T || cs_get_user_team(id) == CS_TEAM_CT))
+
+	// When mix_system is active, mix_system owns team selection & M menu completely!
+	if(equali(commandName, "chooseteam") || equali(commandName, "jointeam"))
 	{
-		return FMRES_SUPERCEDE
+		if(cvar_exists("amx_mix_state") || is_plugin_loaded("mix_system.amxx") != -1)
+		{
+			return FMRES_IGNORED
+		}
 	}
 
 	if(!IsJoinLockedPlayer(id))
@@ -1921,8 +2619,18 @@ stock SetJoinMode(id, level, cid, mode)
 	}
 	SetCvar(g_pAllowSpectators, 1)
 
-	if(mode == 2)
+	if(mode == 3)
 	{
+		remove_task(TASK_BLACK_SCREEN)
+		SetCvar(g_pForceCamera, 0)
+		SetCvar(g_pForceChaseCam, 0)
+		SetCvar(g_pFadeToBlack, 0)
+		ClearBlackScreens()
+		set_cvar_num("gameland_join_lock", 1)
+	}
+	else if(mode == 2)
+	{
+		set_cvar_num("gameland_join_lock", 0)
 		SetCvar(g_pForceCamera, 2)
 		SetCvar(g_pForceChaseCam, 2)
 		// Keep dead CT/T players able to spectate teammates. The custom
@@ -1933,6 +2641,7 @@ stock SetJoinMode(id, level, cid, mode)
 	}
 	else
 	{
+		set_cvar_num("gameland_join_lock", 0)
 		remove_task(TASK_BLACK_SCREEN)
 		SetCvar(g_pForceCamera, 0)
 		SetCvar(g_pForceChaseCam, 0)

@@ -40,8 +40,10 @@ enum MatchState
 {
     STATE_WARMUP = 0,
     STATE_FIRST_HALF,
+    STATE_HALFTIME,
     STATE_SECOND_HALF,
     STATE_OVERTIME_FIRST_HALF,
+    STATE_OVERTIME_HALFTIME,
     STATE_OVERTIME_SECOND_HALF
 }
 
@@ -344,6 +346,9 @@ public plugin_init()
     register_clcmd("s0", "Cmd_Spec0")
     register_clcmd("say /halftime", "Cmd_Halftime")
     register_clcmd("say_team /halftime", "Cmd_Halftime")
+    register_clcmd("say /st", "Cmd_Halftime")
+    register_clcmd("say_team /st", "Cmd_Halftime")
+    register_clcmd("st", "Cmd_Halftime")
 
     // Master /a Admin Menu commands
     register_clcmd("say /a", "Cmd_AdminDashboard")
@@ -725,6 +730,12 @@ UpdateServerHostname()
         // WarmUp Mode active
         formatex(szNewHostname, charsmax(szNewHostname), "%s [WarmUp]", g_szBaseHostname)
     }
+    else if(g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_OVERTIME_HALFTIME)
+    {
+        // Halftime Intermission
+        formatex(szNewHostname, charsmax(szNewHostname), "%s | CT [%d] TR [%d] [Halftime]", 
+            g_szBaseHostname, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+    }
     else // Match live (STATE_FIRST_HALF, STATE_SECOND_HALF, OVERTIME_FIRST_HALF, OVERTIME_SECOND_HALF)
     {
         // Exact live score format: GAMELAND CT [5] TR [7]
@@ -962,8 +973,8 @@ public client_putinserver(id)
     g_iMatchPlants[id] = 0
     g_iMatchDefuses[id] = 0
 
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
+    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_SECOND_HALF ||
+       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
     {
         set_task(1.0, "Task_LateJoinScoreSync", id)
     }
@@ -1034,6 +1045,13 @@ public RG_CBasePlayer_Spawn_Post(id)
             rg_remove_item(id, "weapon_c4")
             set_entvar(id, var_takedamage, DAMAGE_NO)
             set_task(2.0, "Task_RemoveSpawnProtection", id)
+        }
+        case STATE_HALFTIME, STATE_OVERTIME_HALFTIME:
+        {
+            SyncPlayerScore(id)
+            rg_add_account(id, 800, AS_SET, true)
+            rg_remove_all_items(id)
+            rg_give_item(id, "weapon_knife")
         }
         case STATE_FIRST_HALF, STATE_SECOND_HALF, STATE_OVERTIME_FIRST_HALF, STATE_OVERTIME_SECOND_HALF:
         {
@@ -1597,8 +1615,8 @@ public RG_CSGameRules_RestartRound_Post()
 
     ApplySpectatorCameraSettings()
 
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
+    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_SECOND_HALF ||
+       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
     {
         SyncTeamScores()
         if(g_bHalftimePendingSync)
@@ -1772,11 +1790,12 @@ public Task_CheckMatchProgress()
 }
 
 // -----------------------------------------------------------------------------
-// Halftime Execution (Clean atomic swap, stat & score preservation)
+// Halftime Execution (Tournament Standard Single Intermission Break)
 // -----------------------------------------------------------------------------
 TriggerHalftime()
 {
-    g_iMatchState = STATE_SECOND_HALF
+    g_iMatchState = STATE_HALFTIME
+    g_bHalftimeActive = true
 
     // Record exact 1st half score
     g_iFirstHalfScore[CT_SCORE] = g_iScore[CT_SCORE]
@@ -1787,12 +1806,6 @@ TriggerHalftime()
     g_iScore[CT_SCORE] = g_iScore[TERO_SCORE]
     g_iScore[TERO_SCORE] = iTemp
 
-    // Atomically swap all players using ReAPI native
-    rg_swap_all_players()
-
-    // Activate Halftime buying lock & strip weapons / money
-    g_bHalftimeActive = true
-
     // Save player frags and deaths across the halftime restart
     new iPlayers[MAX_PLAYERS], iNum
     get_players(iPlayers, iNum, "ch")
@@ -1801,116 +1814,127 @@ TriggerHalftime()
         new id = iPlayers[i]
         g_iSavedFrags[id] = floatround(Float:get_entvar(id, var_frags))
         g_iSavedDeaths[id] = get_member(id, m_iDeaths)
-        // Reset money to $800 and strip weapons so leftover 1st half cash cannot be used
+    }
+
+    // Atomically swap all players using ReAPI rg_set_user_team (synchronizes model and TeamInfo network message)
+    for(new i = 0; i < iNum; i++)
+    {
+        new id = iPlayers[i]
+        new TeamName:iTeam = get_member(id, m_iTeam)
+        if(iTeam == TEAM_CT)
+        {
+            rg_set_user_team(id, TEAM_TERRORIST, MODEL_AUTO, true, false)
+        }
+        else if(iTeam == TEAM_TERRORIST)
+        {
+            rg_set_user_team(id, TEAM_CT, MODEL_AUTO, true, false)
+        }
+        // Reset money to $800 and strip weapons so leftover 1st half items cannot be used
         rg_add_account(id, 800, AS_SET, true)
         rg_remove_all_items(id)
         rg_give_item(id, "weapon_knife")
     }
     g_bHalftimePendingSync = true
 
-    // Synchronize scores directly with ReGameDLL engine and scoreboard
+    CleanGroundWeapons()
     SyncTeamScores()
 
-    // Announce Halftime and upcoming 3 restarts (7s -> 5s -> 3s)
+    new iIntermission = (g_iFreezeTimeSwap > 0) ? g_iFreezeTimeSwap : 10
+
+    // Announce Halftime in chat
     client_print_color(0, print_team_default, "^4%s ^1=== ^4HALF TIME ^1=== Teams Swapped!", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^11st Half Finished: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE])
-    client_print_color(0, print_team_default, "^4%s ^1Transferred Starting Score: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-    client_print_color(0, print_team_default, "^4%s ^3Halftime Restarts: ^11st in ^47s^1, 2nd in ^45s^1, 3rd in ^43s ^3(LIVE)", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^11st Half Result: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE])
+    client_print_color(0, print_team_default, "^4%s ^1Second Half Starting Score: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+    client_print_color(0, print_team_default, "^4%s ^3Intermission: ^1Second half begins in ^4%d seconds^1...", g_szChatPrefix, iIntermission)
 
-    set_dhudmessage(0, 150, 255, -1.0, 0.35, 2, 0.1, 5.0, 0.1, 1.0)
-    show_dhudmessage(0, "=== HALF TIME ===\nTeams Swapped!\nScore: CT %d - %d TR\nRestarts: 7s -> 5s -> 3s (LIVE)", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+    // Prominent DHUD Halftime Banner
+    set_dhudmessage(0, 200, 255, -1.0, 0.35, 2, 0.1, 5.0, 0.1, 1.0)
+    show_dhudmessage(0, "=== HALF TIME ===\nTeams Swapped!\n1st Half: CT %d - %d TR\n2nd Half starts in %d seconds...",
+        g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE], iIntermission)
 
-    // Initial clean round restart to move players to new spawn bases
-    new iFirstWait = (g_iFreezeTimeSwap > 0) ? g_iFreezeTimeSwap : 7
-    set_cvar_num("mp_freezetime", iFirstWait)
-    set_cvar_num("sv_alltalk", 1) // Allow all players to chat during halftime swap
+    // Halftime intermission settings:
+    set_cvar_num("mp_freezetime", iIntermission)
+    set_cvar_num("sv_alltalk", 1) // Allow all players to chat and talk during halftime
+    set_cvar_num("mp_semiclip", 1)
+
+    // Clean round restart to move players to their new spawn bases
     rg_restart_round()
     RestoreHalftimePlayerStats()
 
-    // Triple restart sequence: 7 seconds -> 5 seconds -> 3 seconds -> LIVE!
+    // Schedule 3-second warning and final LIVE transition
     remove_task(TASK_HALFTIME_LIVE)
-    set_task(float(iFirstWait), "Task_HalftimeRestart1", TASK_HALFTIME_LIVE)
-}
-
-public Task_HalftimeRestart1()
-{
-    rg_restart_round()
-    SyncTeamScores()
-    RestoreHalftimePlayerStats()
-
-    // Reinforce weapon strip & $800 money on all players
-    for(new i = 1; i <= MAX_PLAYERS; i++)
+    if(iIntermission > 3)
     {
-        if(is_user_connected(i))
-        {
-            rg_add_account(i, 800, AS_SET, true)
-            rg_remove_all_items(i)
-            rg_give_item(i, "weapon_knife")
-        }
+        set_task(float(iIntermission - 3), "Task_HalftimeLiveCountdown", TASK_HALFTIME_LIVE)
     }
-
-    client_print_color(0, print_team_default, "^4%s ^3[1/3] Restart 1/3 Completed! ^1Next restart in ^45s^1...", g_szChatPrefix)
-    set_dhudmessage(255, 200, 0, -1.0, 0.35, 0, 0.0, 3.0, 0.1, 0.5)
-    show_dhudmessage(0, "--- RESTART 1/3 ---\nNext restart in 5 seconds...")
-
-    set_cvar_num("mp_freezetime", 5)
-    set_task(5.0, "Task_HalftimeRestart2", TASK_HALFTIME_LIVE)
-}
-
-public Task_HalftimeRestart2()
-{
-    rg_restart_round()
-    SyncTeamScores()
-    RestoreHalftimePlayerStats()
-
-    // Reinforce weapon strip & $800 money on all players
-    for(new i = 1; i <= MAX_PLAYERS; i++)
+    else
     {
-        if(is_user_connected(i))
-        {
-            rg_add_account(i, 800, AS_SET, true)
-            rg_remove_all_items(i)
-            rg_give_item(i, "weapon_knife")
-        }
+        set_task(float(iIntermission), "Task_StartSecondHalfLive", TASK_HALFTIME_LIVE)
     }
-
-    client_print_color(0, print_team_default, "^4%s ^3[2/3] Restart 2/3 Completed! ^1Final restart in ^43s ^3(LIVE)^1...", g_szChatPrefix)
-    set_dhudmessage(255, 140, 0, -1.0, 0.35, 0, 0.0, 2.5, 0.1, 0.5)
-    show_dhudmessage(0, "--- RESTART 2/3 ---\nFinal restart in 3 seconds!")
-
-    set_cvar_num("mp_freezetime", 3)
-    set_task(3.0, "Task_HalftimeRestart3", TASK_HALFTIME_LIVE)
 }
 
-public Task_HalftimeRestart3()
+public Task_HalftimeLiveCountdown()
 {
-    // Halftime complete: Unlock buying and set fresh starting cash for 2nd half pistol round
+    client_print_color(0, print_team_default, "^4%s ^3Second half live in ^43 seconds^1! Get ready!", g_szChatPrefix)
+    set_dhudmessage(255, 200, 0, -1.0, 0.35, 0, 0.0, 2.5, 0.05, 0.2)
+    show_dhudmessage(0, "Second half live in 3 seconds!\nGet ready!")
+    client_cmd(0, "spk buttons/bell1")
+
+    remove_task(TASK_HALFTIME_LIVE)
+    set_task(3.0, "Task_StartSecondHalfLive", TASK_HALFTIME_LIVE)
+}
+
+public Task_StartSecondHalfLive()
+{
+    // Halftime complete: Unlock buying and set match to second half LIVE
+    g_iMatchState = STATE_SECOND_HALF
     g_bHalftimeActive = false
+    g_bHalftimePendingSync = false
 
-    set_cvar_num("mp_freezetime", 15)
-    rg_restart_round()
-    SyncTeamScores()
-    RestoreHalftimePlayerStats()
-
-    for(new i = 1; i <= MAX_PLAYERS; i++)
-    {
-        if(is_user_connected(i))
-        {
-            rg_add_account(i, 800, AS_SET, true)
-        }
-    }
-
-    set_cvar_num("sv_alltalk", 3)
+    set_cvar_num("mp_freezetime", 15) // Standard competitive freezetime
+    set_cvar_num("sv_alltalk", 3)      // Competitive voice: teammates hear teammates, spec hears all
     if(get_cvar_pointer("allow_spectators"))
         set_cvar_num("allow_spectators", 1)
 
     // Competitive camera: apply unified spectator camera settings
     ApplySpectatorCameraSettings()
+    CleanGroundWeapons()
+
+    // Single decisive round restart directly into Second Half LIVE
+    rg_restart_round()
+    SyncTeamScores()
+    RestoreHalftimePlayerStats()
+
+    // Reinforce $800 starting pistol round cash and knife
+    for(new i = 1; i <= MAX_PLAYERS; i++)
+    {
+        if(is_user_connected(i))
+        {
+            rg_add_account(i, 800, AS_SET, true)
+            rg_remove_all_items(i)
+            rg_give_item(i, "weapon_knife")
+            new TeamName:team = get_member(i, m_iTeam)
+            if(team == TEAM_CT)
+            {
+                rg_give_item(i, "weapon_usp")
+                rg_set_user_bpammo(i, WEAPON_USP, 24)
+            }
+            else if(team == TEAM_TERRORIST)
+            {
+                rg_give_item(i, "weapon_glock18")
+                rg_set_user_bpammo(i, WEAPON_GLOCK18, 40)
+            }
+        }
+    }
+
+    // Dynamic DHUD banner for Second Half LIVE
+    set_dhudmessage(0, 255, 50, -1.0, 0.35, 2, 0.1, 3.5, 0.05, 0.1)
+    show_dhudmessage(0, "=== SECOND HALF IS LIVE! ===\n* * * LIVE! LIVE! LIVE! * * *\nTarget: %d Wins", g_iMixEndRound)
 
     // Green ScreenFade Heartbeat & Prominent LIVE notice
     StartLiveGreenPulse()
 
-    client_print_color(0, print_team_default, "^4%s ^4* * * LIVE! LIVE! LIVE! * * * ^1Good Luck & Have Fun!", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^4* * * SECOND HALF IS LIVE! * * * ^1Good Luck & Have Fun!", g_szChatPrefix)
     client_print_color(0, print_team_default, "^4%s ^1Voice mode set to ^3Team Talk (Dead+Alive) + Spec All ^4[/t3 /s1]^1.", g_szChatPrefix)
     client_print_color(0, print_team_default, "^4%s ^1Current Score: ^4CT %d ^1- ^4%d TR ^1(Target: %d)", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iMixEndRound)
 }
@@ -1926,8 +1950,8 @@ public Task_PostHalftimeSync()
 // -----------------------------------------------------------------------------
 stock SyncTeamScores()
 {
-    if(g_iMatchState != STATE_FIRST_HALF && g_iMatchState != STATE_SECOND_HALF &&
-       g_iMatchState != STATE_OVERTIME_FIRST_HALF && g_iMatchState != STATE_OVERTIME_SECOND_HALF)
+    if(g_iMatchState != STATE_FIRST_HALF && g_iMatchState != STATE_HALFTIME && g_iMatchState != STATE_SECOND_HALF &&
+       g_iMatchState != STATE_OVERTIME_FIRST_HALF && g_iMatchState != STATE_OVERTIME_HALFTIME && g_iMatchState != STATE_OVERTIME_SECOND_HALF)
     {
         return
     }
@@ -1965,6 +1989,12 @@ stock SyncPlayerScore(id)
     if(!is_user_connected(id))
         return
 
+    if(g_iMatchState != STATE_FIRST_HALF && g_iMatchState != STATE_HALFTIME && g_iMatchState != STATE_SECOND_HALF &&
+       g_iMatchState != STATE_OVERTIME_FIRST_HALF && g_iMatchState != STATE_OVERTIME_HALFTIME && g_iMatchState != STATE_OVERTIME_SECOND_HALF)
+    {
+        return
+    }
+
     static iMsgTeamScore
     if(!iMsgTeamScore)
         iMsgTeamScore = get_user_msgid("TeamScore")
@@ -1991,6 +2021,8 @@ stock RestoreHalftimePlayerStats()
     if(!iMsgScoreInfo)
         iMsgScoreInfo = get_user_msgid("ScoreInfo")
 
+    new iStartMoney = (g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF) ? 10000 : 800
+
     new iPlayers[MAX_PLAYERS], iNum
     get_players(iPlayers, iNum, "ch")
     for(new i = 0; i < iNum; i++)
@@ -2006,8 +2038,8 @@ stock RestoreHalftimePlayerStats()
             set_member(id, m_iDeaths, g_iSavedDeaths[id])
         }
 
-        // Ensure pistol round starting money ($800)
-        rg_add_account(id, 800, AS_SET, true)
+        // Set starting money
+        rg_add_account(id, iStartMoney, AS_SET, true)
 
         // Broadcast updated ScoreInfo so TAB scoreboard updates immediately
         if(iMsgScoreInfo > 0)
@@ -2050,7 +2082,8 @@ public StartOvertime()
 
 TriggerOvertimeHalftime()
 {
-    g_iMatchState = STATE_OVERTIME_SECOND_HALF
+    g_iMatchState = STATE_OVERTIME_HALFTIME
+    g_bHalftimeActive = true
 
     new iTemp = g_iScore[CT_SCORE]
     g_iScore[CT_SCORE] = g_iScore[TERO_SCORE]
@@ -2060,10 +2093,6 @@ TriggerOvertimeHalftime()
     g_iOvertimeScore[CT_SCORE] = g_iOvertimeScore[TERO_SCORE]
     g_iOvertimeScore[TERO_SCORE] = iTempOT
 
-    rg_swap_all_players()
-
-    g_bHalftimeActive = true
-
     new iPlayers[MAX_PLAYERS], iNum
     get_players(iPlayers, iNum, "ch")
     for(new i = 0; i < iNum; i++)
@@ -2071,24 +2100,99 @@ TriggerOvertimeHalftime()
         new id = iPlayers[i]
         g_iSavedFrags[id] = floatround(Float:get_entvar(id, var_frags))
         g_iSavedDeaths[id] = get_member(id, m_iDeaths)
+    }
+
+    for(new i = 0; i < iNum; i++)
+    {
+        new id = iPlayers[i]
+        new TeamName:iTeam = get_member(id, m_iTeam)
+        if(iTeam == TEAM_CT)
+        {
+            rg_set_user_team(id, TEAM_TERRORIST, MODEL_AUTO, true, false)
+        }
+        else if(iTeam == TEAM_TERRORIST)
+        {
+            rg_set_user_team(id, TEAM_CT, MODEL_AUTO, true, false)
+        }
         rg_add_account(id, 10000, AS_SET, true)
         rg_remove_all_items(id)
         rg_give_item(id, "weapon_knife")
     }
     g_bHalftimePendingSync = true
 
-    new iFirstWait = (g_iFreezeTimeSwap > 0) ? g_iFreezeTimeSwap : 7
+    CleanGroundWeapons()
     SyncTeamScores()
-    set_cvar_num("mp_freezetime", iFirstWait)
+
+    new iIntermission = (g_iFreezeTimeSwap > 0) ? g_iFreezeTimeSwap : 10
+    set_cvar_num("mp_freezetime", iIntermission)
+    set_cvar_num("sv_alltalk", 1)
+    set_cvar_num("mp_semiclip", 1)
+
     rg_restart_round()
     RestoreHalftimePlayerStats()
 
     client_print_color(0, print_team_default, "^4%s ^1=== ^4OVERTIME HALF TIME ^1=== Teams Swapped!", g_szChatPrefix)
-    set_dhudmessage(255, 150, 0, -1.0, 0.35, 2, 0.1, 4.0, 0.1, 1.0)
-    show_dhudmessage(0, "=== OVERTIME HALF TIME ===\nTeams Swapped!\nScore: CT %d - %d TR\nRestarts: 7s -> 5s -> 3s (LIVE)", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+    client_print_color(0, print_team_default, "^4%s ^3Intermission: ^1Overtime 2nd half begins in ^4%d seconds^1...", g_szChatPrefix, iIntermission)
+
+    set_dhudmessage(255, 150, 0, -1.0, 0.35, 2, 0.1, 5.0, 0.1, 1.0)
+    show_dhudmessage(0, "=== OVERTIME HALF TIME ===\nTeams Swapped!\nScore: CT %d - %d TR\nStarts in %d seconds...",
+        g_iScore[CT_SCORE], g_iScore[TERO_SCORE], iIntermission)
 
     remove_task(TASK_HALFTIME_LIVE)
-    set_task(float(iFirstWait), "Task_HalftimeRestart1", TASK_HALFTIME_LIVE)
+    if(iIntermission > 3)
+    {
+        set_task(float(iIntermission - 3), "Task_OvertimeHalftimeLiveCountdown", TASK_HALFTIME_LIVE)
+    }
+    else
+    {
+        set_task(float(iIntermission), "Task_StartOvertimeSecondHalfLive", TASK_HALFTIME_LIVE)
+    }
+}
+
+public Task_OvertimeHalftimeLiveCountdown()
+{
+    client_print_color(0, print_team_default, "^4%s ^3Overtime 2nd half live in ^43 seconds^1! Get ready!", g_szChatPrefix)
+    set_dhudmessage(255, 200, 0, -1.0, 0.35, 0, 0.0, 2.5, 0.05, 0.2)
+    show_dhudmessage(0, "Overtime 2nd half live in 3 seconds!\nGet ready!")
+    client_cmd(0, "spk buttons/bell1")
+
+    remove_task(TASK_HALFTIME_LIVE)
+    set_task(3.0, "Task_StartOvertimeSecondHalfLive", TASK_HALFTIME_LIVE)
+}
+
+public Task_StartOvertimeSecondHalfLive()
+{
+    g_iMatchState = STATE_OVERTIME_SECOND_HALF
+    g_bHalftimeActive = false
+    g_bHalftimePendingSync = false
+
+    set_cvar_num("mp_freezetime", 15)
+    set_cvar_num("sv_alltalk", 3)
+    if(get_cvar_pointer("allow_spectators"))
+        set_cvar_num("allow_spectators", 1)
+
+    ApplySpectatorCameraSettings()
+    CleanGroundWeapons()
+
+    rg_restart_round()
+    SyncTeamScores()
+    RestoreHalftimePlayerStats()
+
+    for(new i = 1; i <= MAX_PLAYERS; i++)
+    {
+        if(is_user_connected(i))
+        {
+            rg_add_account(i, 10000, AS_SET, true)
+        }
+    }
+
+    set_dhudmessage(255, 150, 0, -1.0, 0.35, 2, 0.1, 3.5, 0.05, 0.1)
+    show_dhudmessage(0, "=== OVERTIME 2nd HALF IS LIVE! ===\n* * * LIVE! LIVE! LIVE! * * *")
+
+    StartLiveGreenPulse()
+
+    client_print_color(0, print_team_default, "^4%s ^4* * * OVERTIME 2nd HALF IS LIVE! * * * ^1Good Luck & Have Fun!", g_szChatPrefix)
+    client_print_color(0, print_team_default, "^4%s ^1Current Score: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
 }
 
 // -----------------------------------------------------------------------------
@@ -2719,6 +2823,12 @@ public Task_HudDisplay()
                         g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
                     set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
                 }
+                else if(g_iMatchState == STATE_HALFTIME)
+                {
+                    formatex(szMsg, charsmax(szMsg), "== [ HALF TIME - BREAK ] ==^nCT [ %d ]  :  [ %d ] TR^nTeams Swapped",
+                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+                    set_hudmessage(0, 200, 255, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+                }
                 else if(g_iMatchState == STATE_SECOND_HALF)
                 {
                     formatex(szMsg, charsmax(szMsg), "== [ 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
@@ -2730,6 +2840,12 @@ public Task_HudDisplay()
                     formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
                         g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
                     set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
+                }
+                else if(g_iMatchState == STATE_OVERTIME_HALFTIME)
+                {
+                    formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - HALF TIME ] ==^nCT [ %d ]  :  [ %d ] TR^nTeams Swapped",
+                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+                    set_hudmessage(255, 150, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
                 }
                 else if(g_iMatchState == STATE_OVERTIME_SECOND_HALF)
                 {
@@ -2906,8 +3022,8 @@ public Cmd_StartMix(id)
         return PLUGIN_HANDLED
     }
 
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
+    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_SECOND_HALF ||
+       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
     {
         client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_ALREADY_STARTED")
         return PLUGIN_HANDLED
@@ -2941,8 +3057,8 @@ public Cmd_DirectLive(id)
         return PLUGIN_HANDLED
     }
 
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
+    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_SECOND_HALF ||
+       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
     {
         client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_ALREADY_STARTED")
         return PLUGIN_HANDLED
@@ -3139,7 +3255,12 @@ public Cmd_Score(id)
     }
 
     client_print_color(id, print_team_default, "^4%s ^1Current Match Score: ^4CT %d ^1- ^4TR %d", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-    if(g_iMatchState == STATE_SECOND_HALF)
+    if(g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_OVERTIME_HALFTIME)
+    {
+        client_print_color(id, print_team_default, "^4%s ^1Match is currently in ^3Halftime Intermission^1. 1st Half: ^4CT %d ^3- ^4TR %d",
+            g_szChatPrefix, g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE])
+    }
+    else if(g_iMatchState == STATE_SECOND_HALF)
     {
         client_print_color(id, print_team_default, "^4%s ^1First Half Result: ^4CT %d ^3- ^4TR %d ^1| Target: ^4%d rounds",
             g_szChatPrefix, g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE], g_iMixEndRound)
@@ -4296,7 +4417,8 @@ public Hook_SayTeam(id)
 // -----------------------------------------------------------------------------
 public native_is_half(iPlugin, iParams)
 {
-    return (g_iMatchState == STATE_FIRST_HALF && (g_iScore[CT_SCORE] + g_iScore[TERO_SCORE]) >= 15)
+    return (g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_OVERTIME_HALFTIME ||
+            (g_iMatchState == STATE_FIRST_HALF && (g_iScore[CT_SCORE] + g_iScore[TERO_SCORE]) >= 15))
 }
 
 public native_is_last_round(iPlugin, iParams)
@@ -4324,8 +4446,8 @@ public native_can_overtime(iPlugin, iParams)
 
 public native_is_started(iPlugin, iParams)
 {
-    return (g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
-            g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
+    return (g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_SECOND_HALF ||
+            g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
 }
 
 public native_is_warm(iPlugin, iParams)
