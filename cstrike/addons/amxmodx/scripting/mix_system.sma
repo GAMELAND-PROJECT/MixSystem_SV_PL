@@ -1,5929 +1,4352 @@
-/*
- * GAMELAND Competitive 5v5 Mix System
- * Refactored & ReAPI Modernized Edition
- * Author: GAMELAND Team
- * Contact: l1gameland@gmail.com
- *
- * Features:
- * - 100% Pure ReAPI (Zero fun/cstrike, high performance, ReGameDLL native)
- * - Purged SQL / Database / Points / Rank clutter (Zero lag / zero MySQL dependencies)
- * - Warmup / DM1 Mode (/dm1 & /warm): $16,000 spawn money, normal practice rounds, clean team wipe reset
- * - Zero HLTV or Client Demo recording
- * - Fixed Double Round Score Count Bug (Protected by g_bRoundScored atomic flag)
- * - Fixed Halftime Team Swap Bug (Atomic rg_swap_all_players & score swap)
- * - Fixed Knife Round Restarts & Side Vote race condition
- * - Admin /mix Global Vote: Option 1: Knife Round | Option 2: Direct Live Match
- * - Professional /a Master Admin Menu:
- *     1. Admin Manager (Add Admin with presets/flags directly to users.ini + auto reload)
- *     2. Match / Mix Control (Vote Start, Direct Live, Knife, Warmup, Pause)
- *     3. Team Control (Swap Teams, Move CT/TR/SPEC, Spec All)
- *     4. Server Control (Restart 1s, Alltalk ON/OFF, Chat Mute, Password)
- *     5. Map & Moderation shortcuts (Kick, Ban, Slap, Maps)
- * - Full backward-compatible natives & forwards for external plugins
- */
+/* Sublime AMXX Editor v4.2 */
+
+/* 	Activare sistem de puncte 
+	Activate Points system 
+*/
+//#define POINTS_SYS
+
+/* 	Mod Fastcup ( /start, runda de cutite automata, alegere a echipei de catre echipa castigatoare ) 
+	Fastcup Mode ( /start, automatic knife round, choose start side by winning team )
+*/
+#define FASTCUP_MODE
+ 
+/* 	Modificarea indicilor kickback ale armelor care suporta acest lucru 
+	Modifying supported weapons kickback angles
+*/
+//#define PUNCH_ANGLE
+
+/* 	Optiuni pentru debugging, nu recomand a se porni daca nu se testeaza 
+	Debugging messages, uncomment only if you're testing
+*/
+//#define DEBUG
+
+/* 	Overtime-ul este doar de o runda, setarile din overtime.cfg se aplica 
+   	Only one round of overtime, settings from overtime.cfg applies
+*/
+//#define OVERTIME_ONE_ROUND
 
 #include <amxmodx>
 #include <amxmisc>
-#include <engine>
-#include <fakemeta>
+#include <cstrike>
+#include <fun>
 #include <reapi>
+#include <regex>
 #include <mix_system>
 
-#define PLUGIN_NAME        "GAMELAND Match Server"
-#define PLUGIN_VERSION     "2.1.0-ReAPI"
-#define PLUGIN_AUTHOR      "GAMELAND"
+#define PLUGIN  "Mix System"
+#if defined FASTCUP_MODE
+#undef PLUGIN
+#define PLUGIN  "Mix System ~ Fastcup Mode"
+#endif
 
-// -----------------------------------------------------------------------------
-// Constants & Enums
-// -----------------------------------------------------------------------------
+#define VERSION "2.19.13"
+#define AUTHOR  "Shadows Adi"
+
+#define SHOOTING_END_SCORE 10
+
+#define IsPlayer(%1)				((1 <= %1 <= MAX_PLAYERS) && is_user_connected(%1))
+#define NATIVE_ERROR				-1
+
+enum (+=1200)
+{
+	TASK_WARM = 8200,
+	TASK_SET_MONEY,
+	TASK_GIVE_WEAPON,
+	TASK_SWAP,
+	TASK_REVIVE,
+	TASK_CHANGE_BOOL,
+	#if defined FASTCUP_MODE
+	TASK_ASK,
+	TASK_CHECKVOTES,
+	#endif
+	TASK_SPECALL,
+	TASK_LOAD,
+	TASK_COUNT_DURATION,
+	TASK_GIVE_EQUIPMENT
+}
+
 enum MatchState
 {
-    STATE_WARMUP = 0,
-    STATE_FIRST_HALF,
-    STATE_HALFTIME,
-    STATE_SECOND_HALF,
-    STATE_OVERTIME_FIRST_HALF,
-    STATE_OVERTIME_HALFTIME,
-    STATE_OVERTIME_SECOND_HALF
+	MATCHSTATE_WARM = 0,
+	MATCHSTATE_IN_MATCH,
+	MATCHSTATE_KNIFE_ROUND,
+	MATCHSTATE_OVERTIME
 }
 
-enum TeamScore
+new const CHAT_PREFIX[]			=		"CHAT_PREFIX"
+new const OVERTIME_ROUNDS[]		=		"OVERTIME_ROUNDS"
+new const OVERTIME_SCORE[]		=		"OVERTIME_SCORE"
+new const MIX_END_ROUND[]		=		"MIX_END_ROUND"
+new const ADMIN_CHAT_FLAGS[]	=		"ADMIN_CHAT_FLAGS"
+new const ADMIN_ACCESS[]		=		"ADMIN_LEVEL_ACCESS"
+new const FREEZETIME_SWAP[]		=		"FREEZE_TIME_SWAP"
+new const AUTO_OVERTIME[]		=		"AUTOMATIC_OVERTIME"
+new const START_CFG[]			=		"START_CONFIG"
+new const STOP_CFG[]			=		"STOP_CONFIG"
+new const OVERTIME_CFG[]		=		"OVERTIME_CONFIG"
+new const FREEZETIME[]			=		"FREEZETIME"
+new const PAUSE_TIME[]			=		"PAUSE_DURATION"
+new const TEN_REQUIRED[]		=		"START_TEN_REQUIRED"
+new const KNIFE_ROUND_DELAY[]	=		"KNIFE_ROUND_START_DELAY"
+new const DEFAULT_POINTS[]		=		"DEFAULT_START_POINTS"
+new const FORCE_WARMUP[]		=		"FORCE_WARMUP"
+new const SHOW_COMMANDS[]		=		"SHOW_COMMANDS"
+new const START_COMMANDS[]		=		"START_MIX_COMMANDS"
+new const STOP_COMMANDS[]		=		"STOP_MIX_COMMANDS"
+new const WARM_COMMANDS[]		=		"WARM_COMMANDS"
+new const KNIFE_COMMANDS[]		=		"KNIFE_COMMANDS"
+new const CHAT_ON_COMMANDS[]	=		"CHAT_ON_COMMANDS"
+new const CHAT_OFF_COMMANDS[]	=		"CHAT_OFF_COMMANDS"
+new const OVERTIME_COMMANDS[]	=		"OVERTIME_COMMANDS"
+new const PASSON_COMMANDS[]		=		"PASSWORD_ON_COMMANDS"
+new const PASSOFF_COMMANDS[]	=		"PASSWORD_OFF_COMMANDS"
+new const SPECALL_COMMANDS[]	=		"SPECALL_COMMANDS"
+new const RESTART_COMMANDS[]	=		"RESTART_COMMANDS"
+new const SCORE_COMMANDS[]		=		"SCORE_COMMANDS"
+new const CT_COMMANDS[]			=		"MOVE_CT_COMMANDS"
+new const T_COMMANDS[]			=		"MOVE_TERO_COMMANDS"
+new const SPEC_COMMANDS[]		=		"MOVE_SPEC_COMMANDS"
+new const STARTDEMO_COMMANDS[]	=		"START_DEMO_COMMANDS"
+new const STOPDEMO_COMMANDS[]	=		"STOPDEMO_COMMANDS"
+new const PAUSE_COMMANDS[]		=		"PAUSE_COMMANDS"
+new const WARM_TYPE[]			=		"WARMUP_TYPE"
+new const WARM_SPAWN_MONEY[]	=		"WARMUP_SPAWN_MONEY"
+new const WARM_WEAPON_CT[]		=		"WARMUP_WEAPON_CT"
+new const WARM_WEAPON_TERO[]	=		"WARMUP_WEAPON_TERO"
+new const WARM_PISTOL[]			=		"WARMUP_PISTOL"
+new const WARM_BP_AMMO[]		=		"WARMUP_BP_AMMO"
+new const HUD_COLORS[]			=		"HUD_COLOR"
+new const HUD_POSITION[]		=		"HUD_POSITION"
+new const DEMO_AUTO[]			=		"AUTO_DEMO"
+new const DEMO_TYPE[]			= 		"DEMO_TYPE"
+new const DEMO_NAME[]			=		"DEMO_NAME"
+
+
+enum
 {
-    CT_SCORE = 0,
-    TERO_SCORE
+	SETTINGS_SECTION = 1,
+	COMMANDS_SECTION,
+	WARM_SETTINGS,
+	HUD_SETTINGS,
+	DEMO_SETTINGS,
+	POINTS_SYSTEM,
+	RANK_SYSTEM
 }
 
-#define TASK_HALFTIME_LIVE       3101
-#define TASK_LIVE_COUNTDOWN      3103
-#define TASK_HUD_STATUS          3104
-#define TASK_TIMEOUT_EXPIRE      3105
-#define TASK_END_ROUND           3106
-#define TASK_MATCH_END           3107
-#define TASK_LIVE_PULSE          3112
-#define TASK_VICTORY_PULSE       3110
-#define TASK_SHOW_LEADERBOARD    3111
-#define TASK_PLAYER_REDIRECT     3150
-
-// -----------------------------------------------------------------------------
-// Admin Manager Data Structure
-// -----------------------------------------------------------------------------
-enum AdminAddSession
+enum _:Settings
 {
-    SessionTargetId,
-    SessionAuth[64],
-    SessionName[32],
-    SessionFlags[36],
-    SessionAccountFlags[8],
-    SessionPassword[32]
+	szPrefix[64],
+	iRoundOvertime,
+	iMixEndRound,
+	iOvertimeScore[5],
+	szAdminFlags[22],
+	szAdminAccess[4],
+	iFreezetimeSwap,
+	iAutoOvertime,
+	szStartCfg[32],
+	szOvertimeCfg[32],
+	iPauseTime,
+	bool:bRequireTen,
+	iKnifeStartDelay,
+	iStartPoints,
+	bool:bForceWarmup,
+	szStopCfg[32],
+	}
+
+enum _:WarmSettings
+{
+	bool:bWarmType,
+	iWarmMoney[6],
+	szWeaponCT[16],
+	szWeaponT[16],
+	szPistol[16],
+	iBpAmmo
 }
 
-new g_eAdminSession[MAX_PLAYERS + 1][AdminAddSession]
+enum _:DemoSettings
+{
+	iDemoAuto,
+	iDemoType,
+	szDemoName[32],
+}
 
-// -----------------------------------------------------------------------------
-// Global Variables
-// -----------------------------------------------------------------------------
-new MatchState:g_iMatchState = STATE_WARMUP
+enum
+{
+	DEMO_MAPNAME,
+	DEMO_CUSTOM_NAME,
+	DEMO_CIN_NAME
+}
 
-new g_iScore[TeamScore]
-new g_iFirstHalfScore[TeamScore]
-new g_iOvertimeScore[TeamScore]
-new g_iSavedFrags[MAX_PLAYERS + 1]
-new g_iSavedDeaths[MAX_PLAYERS + 1]
-new bool:g_bHalftimePendingSync = false
-new bool:g_bHalftimeActive = false
+enum _:Score
+{
+	CT_SCORE,
+	TERO_SCORE,
+	CT_OVER_SCORE,
+	TERO_OVER_SCORE,
+	DRAW // Unusable, only for equal case in OverTime
+}
 
-// Competitive Match Statistics
-new g_iMatchKills[MAX_PLAYERS + 1]
-new g_iMatchDeaths[MAX_PLAYERS + 1]
-new g_iMatchHS[MAX_PLAYERS + 1]
-new g_iMatchKnifeKills[MAX_PLAYERS + 1]
-new g_iMatchPlants[MAX_PLAYERS + 1]
-new g_iMatchDefuses[MAX_PLAYERS + 1]
+enum
+{
+	CT_LAST = 1,
+	T_LAST
+}
 
-// Victory Celebration State
-new TeamName:g_iVictoryWinnerTeam = TEAM_UNASSIGNED
-new g_iVictoryPulseCount = 0
-new g_iMsgScreenFade = 0
+enum _:Infos
+{
+	MIX_STARTER[MAX_NAME_LENGTH],
+	MIX_STOPER[MAX_NAME_LENGTH],
+	CHAT[MAX_NAME_LENGTH],
+	WARM_CALLER[MAX_NAME_LENGTH],
+	KNIFE_STRATER[MAX_NAME_LENGTH],
+	OVERTIME_STARTER[MAX_NAME_LENGTH],
+	PASSON_CALLER[MAX_NAME_LENGTH],
+	PASSOFF_CALLER[MAX_NAME_LENGTH],
+	SPECALL_CALLER[MAX_NAME_LENGTH],
+	ACE[MAX_NAME_LENGTH],
+	SEMI_ACE[MAX_NAME_LENGTH]
+}
 
-new bool:g_bRoundScored = false
-new bool:g_bChatMuted = false
-new bool:g_bPaused = false
-new g_iPauseTimer = 0
-new bool:g_bTeamTimeoutUsed[TeamScore]
+enum _:Bools
+{
+	#if defined FASTCUP_MODE
+	bool:bWasKnife,
+	#endif
+	bool:bCanChat[MAX_PLAYERS + 1],
+	bool:bIsMixOn,
+	bool:bIsShooting,
+	bool:bShouldRecordMix,
+	bool:bIsKnife,
+	bool:bIsWarm,
+	bool:bTeamSwap,
+	bool:bOvertime,
+	bool:bIsStoppingMix,
+	bool:bCanShowStats
+}
 
-// Settings from MixSettings.ini
-new g_szChatPrefix[32] = "[MIX]"
-new g_iOvertimeRounds = 3
-new g_iOvertimeTriggerScore = 15
-new g_iMixEndRound = 16
-new g_szAdminFlags[16] = "c"
-new g_szAdminAccess[16] = "c"
-new g_iFreezeTimeSwap = 7
-new bool:g_bAutoOvertime = true
-new g_szStartConfig[64] = "start.cfg"
-new g_szStopConfig[64] = "stop.cfg"
-new g_iWarmMoney = 16000
-new bool:g_bForceWarmup = true
-new g_iPauseDuration = 60
+enum _:HudSettings
+{
+	Float:fHudPosX,
+	Float:fHudPosY,
+	iHudColorR,
+	iHudColorG,
+	iHudColorB
+}
 
-// Player data
-new g_szUserName[MAX_PLAYERS + 1][MAX_NAME_LENGTH]
+enum _:OVERTIME
+{
+	bool:FirstOvertime,
+	bool:SecondOvertime
+}
 
-// CS2-style round kill streak / cards
-new g_iRoundKills[MAX_PLAYERS + 1]
+enum 
+{
+	SPEC,
+	CT,
+	TERO
+}
 
-// Spawns are 100% natively handled by ReGameDLL (Global Tournament Standard)
+enum _:Pdata
+{
+	STEAMID[32],
+	KILLS,
+	DEATHS,
+	MONEY
+}
 
-// Infinite Revive Mode (/rev1 & /rev0)
-new bool:g_bReviveMode = false
+#if defined FASTCUP_MODE
+new g_iPlayers
 
-// Join Lock Feature (/j3 & /lockjoin)
-new bool:g_bJoinLocked = false
-new bool:g_bInternalTeamCmd[MAX_PLAYERS + 1] = {false, ...}
+enum _:TeamAnswers
+{
+	SWITCH = 0,
+	STAY
+}
+#endif
 
-// Dynamic Temp Sub-Servers (/sv2 & /sv3)
-new g_pCvarInstanceId = 0
-new g_pCvarJoinLock = 0
-new g_pCvarServerIp = 0
+enum _:PlayerScore
+{
+	iKILLS,
+	iDEATHS
+}
 
-// Dynamic Hostname & Captain Pick Mode Management
-new g_szBaseHostname[64] = "GAMELAND"
-new bool:g_bPickMode = false
-new g_iLivePulseCount = 0
-new bool:g_bUpdatingHostname = false
+enum _:Teams
+{
+	CT_PAUSE,
+	TERO_PAUSE
+}
 
-// Countdown
-new g_iMatchStartTime = 0
+enum _:PlayerStats
+{
+	DamageGiven,
+	HitsGiven,
+	PlayerHealth
+}
 
-// HUD Sync
-new g_iHudSync
+enum _:Forwards
+{
+	Kill,
+	GameOver,
+	GameBeginPre,
+	GameBeginPost,
+	GameStopped,
+	NewRound,
+	DatabaseConnected,
+	Winners,
+	Save,
+	MaxFwds
+}
 
-// Forwards
-new g_hFwdPlayerKilled
-new g_hFwdGameBeginPre
-new g_hFwdGameBeginPost
-new g_hFwdNewRound
-new g_hFwdGameStopped
-new g_hFwdGameOver
-new g_hFwdMatchWinner
-new g_hFwdUserSave
-new g_hFwdDbConnected
-new g_hFwdSysLeaver
-new g_iRet
-
-// Command dynamic arrays
 new Array:g_aStartCmds
 new Array:g_aStopCmds
 new Array:g_aWarmCmds
+new Array:g_aKnifeCmds
 new Array:g_aChatOnCmds
 new Array:g_aChatOffCmds
 new Array:g_aOvertimeCmds
 new Array:g_aPassOnCmds
 new Array:g_aPassOffCmds
 new Array:g_aSpecAllCmds
-new Array:g_aRestartCmds
-new Array:g_aScoreCmds
-new Array:g_aMoveCTCmds
-new Array:g_aMoveTCmds
-new Array:g_aMoveSpecCmds
-new Array:g_aPauseCmds
+new Array:g_aCTCmds
+new Array:g_aTCmds
+new Array:g_aSpecCmds
+new Array:g_aStartDemoCmds
+new Array:g_aStopDemoCmds
 
-// -----------------------------------------------------------------------------
-// Plugin Init & Configuration
-// -----------------------------------------------------------------------------
+new g_ePluginSettings[Settings]
+new g_eHudSettings[HudSettings]
+new g_eWarmSettings[WarmSettings]
+new g_eInformations[Infos]
+new g_eDemoSettings[DemoSettings]
+
+new g_eOvertime[OVERTIME]
+new g_iOvertimeScore[Score]
+
+new g_iScore[Score]
+new g_iRoundNum
+new g_iKnifes
+new g_iStart
+
+new g_szName[MAX_PLAYERS + 1][MAX_NAME_LENGTH]
+new g_szAuthID[MAX_PLAYERS][32]
+new Array:g_aPlayerData
+
+new g_eBooleans[Bools]
+
+new g_cFreezeTime
+new g_iFreezeTime
+new bool:g_bShootingOpening
+
+new g_szHltvDemoName[64]
+
+
+new g_iPlayerKills[MAX_PLAYERS + 1]
+new g_szWeapon[MAX_PLAYERS + 1][32]
+
+new g_ePlayerScore[MAX_PLAYERS + 1][PlayerScore]
+
+new g_eTeamPause[Teams]
+new bool:g_bPaused
+new g_iTimer
+
+#if defined FASTCUP_MODE
+new bool:g_bVoted
+new g_iVote
+new g_iAnswer[TeamAnswers]
+#endif
+
+new g_ePlayerStats[MAX_PLAYERS + 1][MAX_PLAYERS + 1][PlayerStats]
+
+new g_eForwards[Forwards]
+new g_iDuration
+
+new g_iRet
+
+
+new g_szConfigsDir[48]
+new g_iGaveC4
+
+new g_iMsgScreenFade
+
 public plugin_init()
 {
-    register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR)
-    register_cvar("gameland_mix_version", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY)
-    register_cvar("amx_mix_state", "1", FCVAR_SERVER | FCVAR_SPONLY)
-    new pMixBase = register_cvar("mix_base_hostname", "")
-    if(pMixBase)
-        hook_cvar_change(pMixBase, "CvarHook_BaseHostname")
+	register_plugin(PLUGIN, VERSION, AUTHOR)
 
-    new pCwBase = get_cvar_pointer("cw_base_hostname")
-    if(!pCwBase)
-        pCwBase = register_cvar("cw_base_hostname", "")
-    if(pCwBase)
-        hook_cvar_change(pCwBase, "CvarHook_BaseHostname")
+	register_cvar("mix_sys", VERSION, FCVAR_SERVER|FCVAR_EXTDLL|FCVAR_UNLOGGED|FCVAR_SPONLY)
 
-    new pHost = get_cvar_pointer("hostname")
-    if(pHost)
-        hook_cvar_change(pHost, "CvarHook_Hostname")
+	register_dictionary("mix_system.txt")
 
-    g_pCvarInstanceId = register_cvar("gameland_instance_id", "main")
-    g_pCvarJoinLock = register_cvar("gameland_join_lock", "0")
-    g_pCvarServerIp = register_cvar("gameland_server_ip", "185.236.38.83")
+	g_iMsgScreenFade = get_user_msgid("ScreenFade")
 
-    // Safety Interlock: prevent duplicate execution if clanwar_system is loaded concurrently
-    new iCwPlugin = is_plugin_loaded("GAMELAND Clan War Mode")
-    if(iCwPlugin != -1)
-    {
-        server_print("[GAMELAND MIX] CRITICAL: clanwar_system.amxx detected concurrently! Auto-pausing mix_system.amxx to eliminate conflict.")
-        pause("ac", "mix_system.amxx")
-    }
+	register_clcmd("say", "hook_say")
 
-    // Solid player collision: semiclip strictly DISABLED
-    if(get_cvar_pointer("mp_semiclip"))
-        set_cvar_num("mp_semiclip", 0)
-    if(get_cvar_pointer("mp_semiclip_actions"))
-        set_cvar_num("mp_semiclip_actions", 0)
+	register_clcmd("fullupdate", "clcmd_fullupdate")
 
-    register_dictionary("mix_system.txt")
+	RegisterHookChain(RG_RoundEnd, "RG_EndRound")
+	RegisterHookChain(RG_RoundEnd, "RG_EndRound_Pre", 0)
+	RegisterHookChain(RG_CSGameRules_CheckWinConditions, "RG_CheckWinConditions_Pre")
+	RegisterHookChain(RG_CSGameRules_PlayerKilled, "RG_Player_Killed_Post", 1)
+	RegisterHookChain(RG_CWeaponBox_SetModel, "RG_Weapon_Remove")
+	RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_ChooseTeam_Pre")
+	RegisterHookChain(RG_HandleMenu_ChooseAppearance, "ShootingAppearance_Pre")
+	RegisterHookChain(RG_CBasePlayer_Spawn, "ShootingSpawn_Post", 1)
+	RegisterHookChain(RG_CSGameRules_OnRoundFreezeEnd, "ShootingFreezeEnd_Post", 1)
+	RegisterHookChain(RG_CSGameRules_RestartRound, "ShootingRestart_Pre")
+	RegisterHookChain(RG_CSGameRules_RestartRound, "ShootingRestart_Post", 1)
+	RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_ChooseTeam_Post", 1)
+	RegisterHookChain(RG_CSGameRules_CanHavePlayerItem, "RG_CSGameRules_CanHavePlayerItem_Pre")
 
-    // ReAPI HookChains
-    RegisterHookChain(RG_CBasePlayer_Spawn, "RG_CBasePlayer_Spawn_Post", .post = true)
-    RegisterHookChain(RG_CBasePlayer_Killed, "RG_CBasePlayer_Killed_Post", .post = true)
-    RegisterHookChain(RG_RoundEnd, "RG_RoundEnd_Pre", .post = false)
-    RegisterHookChain(RG_RoundEnd, "RG_RoundEnd_Post", .post = true)
-    RegisterHookChain(RG_CSGameRules_CheckWinConditions, "RG_CSGameRules_CheckWinConditions_Pre", .post = false)
-    RegisterHookChain(RG_CSGameRules_RestartRound, "RG_CSGameRules_RestartRound_Post", .post = true)
-    RegisterHookChain(RG_CSGameRules_OnRoundFreezeEnd, "RG_CSGameRules_OnRoundFreezeEnd_Post", .post = true)
-    RegisterHookChain(RG_PlantBomb, "RG_PlantBomb_Post", .post = true)
-    RegisterHookChain(RG_CGrenade_DefuseBombEnd, "RG_CGrenade_DefuseBombEnd_Post", .post = true)
-    RegisterHookChain(RG_CBasePlayer_MakeBomber, "RG_CBasePlayer_MakeBomber_Pre", .post = false)
-    RegisterHookChain(RG_CBasePlayer_Observer_IsValidTarget, "RG_Observer_IsValidTarget_Pre", .post = false)
-    RegisterHookChain(RG_CBasePlayer_Observer_FindNextPlayer, "RG_Observer_FindNextPlayer_Pre", .post = false)
-    RegisterHookChain(RG_CBasePlayer_Observer_SetMode, "RG_Observer_SetMode_Pre", .post = false)
-    RegisterHookChain(RG_CBasePlayer_SwitchTeam, "RG_CBasePlayer_SwitchTeam_Pre", .post = false)
-    RegisterHookChain(RG_ShowVGUIMenu, "RG_ShowVGUIMenu_Pre", .post = false)
-    RegisterHookChain(RG_HandleMenu_ChooseTeam, "RG_HandleMenu_ChooseTeam_Pre", .post = false)
-    RegisterHookChain(RG_CSGameRules_CanPlayerHearPlayer, "RG_CSGameRules_CanPlayerHearPlayer_Pre", .post = false)
-    RegisterHookChain(RG_CBasePlayer_HasRestrictItem, "RG_CBasePlayer_HasRestrictItem_Pre", .post = false)
+	RegisterHookChain(RG_CBasePlayer_TakeDamage, "RG_PlayerTakeDamage_Pre")
+	RegisterHookChain(RG_CBasePlayer_TakeDamage, "RG_PlayerTakeDamage_Post", 1)
+	#if defined PUNCH_ANGLE
+	RegisterHookChain(RG_CBasePlayerWeapon_KickBack, "RG_KickBack_Pre")
+	#endif
 
-    register_clcmd("buy", "Cmd_BlockBuyDuringHalftime")
-    register_clcmd("buyammo1", "Cmd_BlockBuyDuringHalftime")
-    register_clcmd("buyammo2", "Cmd_BlockBuyDuringHalftime")
-    register_clcmd("cl_autobuy", "Cmd_BlockBuyDuringHalftime")
-    register_clcmd("cl_rebuy", "Cmd_BlockBuyDuringHalftime")
+	register_message(get_user_msgid("SayText"), "HookSay")
+	register_event("HLTV", "ev_NewRound", "a", "1=0", "2=0");
+	register_event("TextMsg", "ev_GameRestart", "a", "2=#Game_will_restart_in")
+	g_cFreezeTime = get_cvar_pointer("mp_freezetime")
 
-    ApplySpectatorCameraSettings()
+	#if defined DEBUG
+	register_clcmd("say /test_over", "clcmd_say_test_over")
+	register_clcmd("say /test_score", "clcmd_say_test_score")
+	register_clcmd("say /test", "clcmd_say_test")
+	#endif 
 
-    g_iMsgScreenFade = get_user_msgid("ScreenFade")
+	register_clcmd("hs1", "clcmd_hs1")
+	register_clcmd("say hs1", "clcmd_hs1")
+	register_clcmd("say /hs1", "clcmd_hs1")
+	register_clcmd("say .hs1", "clcmd_hs1")
+	register_clcmd("say_team hs1", "clcmd_hs1")
+	register_clcmd("say_team /hs1", "clcmd_hs1")
 
-    // Load map spawns for team safe positioning
-    // Dynamic arrays for commands
-    InitCommandArrays()
+	register_clcmd("hs0", "clcmd_hs0")
+	register_clcmd("say hs0", "clcmd_hs0")
+	register_clcmd("say /hs0", "clcmd_hs0")
+	register_clcmd("say .hs0", "clcmd_hs0")
+	register_clcmd("say_team hs0", "clcmd_hs0")
+	register_clcmd("say_team /hs0", "clcmd_hs0")
 
-    // Load configuration
-    LoadConfiguration()
+	// Stable aliases for opening/closing public chat during a mix.
+	// They use the same handlers as the configured chat commands.
+	register_clcmd("s1", "clcmd_chat_on")
+	register_clcmd("say s1", "clcmd_chat_on")
+	register_clcmd("say /s1", "clcmd_chat_on")
+	register_clcmd("say_team s1", "clcmd_chat_on")
+	register_clcmd("say_team /s1", "clcmd_chat_on")
+	register_clcmd("s0", "clcmd_chat_off")
+	register_clcmd("say s0", "clcmd_chat_off")
+	register_clcmd("say /s0", "clcmd_chat_off")
+	register_clcmd("say_team s0", "clcmd_chat_off")
+	register_clcmd("say_team /s0", "clcmd_chat_off")
+ 
 
-    // Create Forwards
-    g_hFwdPlayerKilled = CreateMultiForward("mix_player_killed", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_STRING, FP_STRING)
-    g_hFwdGameBeginPre = CreateMultiForward("mix_game_begin_pre", ET_IGNORE)
-    g_hFwdGameBeginPost = CreateMultiForward("mix_game_begin_post", ET_IGNORE, FP_CELL, FP_CELL, FP_STRING, FP_STRING, FP_CELL)
-    g_hFwdNewRound = CreateMultiForward("mix_game_new_round", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL)
-    g_hFwdGameStopped = CreateMultiForward("mix_game_stopped", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL)
-    g_hFwdGameOver = CreateMultiForward("mix_game_over", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_CELL)
-    g_hFwdMatchWinner = CreateMultiForward("mix_match_winner", ET_IGNORE, FP_CELL)
-    g_hFwdUserSave = CreateMultiForward("mix_user_save", ET_IGNORE, FP_CELL)
-    g_hFwdDbConnected = CreateMultiForward("mix_database_connected", ET_IGNORE, FP_CELL, FP_CELL)
-    g_hFwdSysLeaver = CreateMultiForward("mix_sys_leaver", ET_IGNORE, FP_STRING)
+	g_eForwards[Kill] = CreateMultiForward("mix_player_killed", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_STRING, FP_STRING)
+	g_eForwards[GameBeginPre] = CreateMultiForward("mix_game_begin_pre", ET_IGNORE)
+	g_eForwards[NewRound] = CreateMultiForward("mix_game_new_round", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL)
+	
+	new pcvar = get_cvar_pointer("amx_mode")
+	if(pcvar != 0)
+	{
+		hook_cvar_change(pcvar, "OnCvarChange")
+	}
 
-    // Execute initial dummy DB connected forward for third-party listeners
-    ExecuteForward(g_hFwdDbConnected, g_iRet, 0, 0)
 
-    g_iHudSync = CreateHudSyncObj()
+	set_task(0.1, "task_read_config")
+}
 
-    // Initialize Server Hostname State
-    InitBaseHostname()
-    UpdateServerHostname()
-    set_task(0.5, "Task_InitHostname")
-    set_task(1.5, "Task_InitHostname")
-    set_task(3.0, "Task_InitHostname")
-
-    // Register HUD task
-    set_task(1.0, "Task_HudDisplay", TASK_HUD_STATUS, .flags = "b")
-
-    // Mass Instant Revive All Dead Players Command (/rev)
-    register_clcmd("say /rev", "Cmd_ReviveAll")
-    register_clcmd("say_team /rev", "Cmd_ReviveAll")
-    register_clcmd("rev", "Cmd_ReviveAll")
-    register_concmd("amx_rev", "Cmd_ReviveAll", ADMIN_CFG, "- Revive all dead players immediately")
-
-    // Spectator & Captain Pick Mode (/spec)
-    register_clcmd("say /spec", "Cmd_SpecAll")
-    register_clcmd("say_team /spec", "Cmd_SpecAll")
-    register_clcmd("say /specall", "Cmd_SpecAll")
-    register_clcmd("say_team /specall", "Cmd_SpecAll")
-    register_clcmd("spec", "Cmd_SpecAll")
-    register_clcmd("specall", "Cmd_SpecAll")
-    register_concmd("amx_specall", "Cmd_SpecAll", ADMIN_CFG, "- Move all players to spectator (Captain Pick)")
-
-    // Infinite Revive Mode Commands (/rev1, /rev0, /dm1)
-    register_clcmd("say /rev1", "Cmd_ReviveOn")
-    register_clcmd("say_team /rev1", "Cmd_ReviveOn")
-    register_clcmd("say /rev0", "Cmd_ReviveOff")
-    register_clcmd("say_team /rev0", "Cmd_ReviveOff")
-    register_clcmd("say /dm1", "Cmd_LegacyDm")
-    register_clcmd("say_team /dm1", "Cmd_LegacyDm")
-    register_concmd("amx_rev1", "Cmd_ReviveOn", ADMIN_CFG, "- Enable Infinite Revive mode")
-    register_concmd("amx_rev0", "Cmd_ReviveOff", ADMIN_CFG, "- Disable Infinite Revive mode")
-
-    // Standard client commands fallback
-    register_clcmd("say /comenzi", "Cmd_ShowCommands")
-    register_clcmd("say_team /comenzi", "Cmd_ShowCommands")
-    register_clcmd("say /live", "Cmd_DirectLive")
-    register_clcmd("say_team /live", "Cmd_DirectLive")
-    register_clcmd("say /lv", "Cmd_DirectLive")
-    register_clcmd("say_team /lv", "Cmd_DirectLive")
-    register_clcmd("live", "Cmd_DirectLive")
-    register_clcmd("lv", "Cmd_DirectLive")
-
-    // Voice & Spectator Commands (/t1, /t2, /t3, /s1, /s0)
-    register_clcmd("say /t1", "Cmd_Alltalk1")
-    register_clcmd("say_team /t1", "Cmd_Alltalk1")
-    register_clcmd("t1", "Cmd_Alltalk1")
-    register_clcmd("say /t2", "Cmd_Alltalk2")
-    register_clcmd("say_team /t2", "Cmd_Alltalk2")
-    register_clcmd("t2", "Cmd_Alltalk2")
-    register_clcmd("say /t3", "Cmd_Alltalk3")
-    register_clcmd("say_team /t3", "Cmd_Alltalk3")
-    register_clcmd("t3", "Cmd_Alltalk3")
-    register_clcmd("say /s1", "Cmd_Spec1")
-    register_clcmd("say_team /s1", "Cmd_Spec1")
-    register_clcmd("s1", "Cmd_Spec1")
-    register_clcmd("say /s0", "Cmd_Spec0")
-    register_clcmd("say_team /s0", "Cmd_Spec0")
-    register_clcmd("s0", "Cmd_Spec0")
-    register_clcmd("say /halftime", "Cmd_Halftime")
-    register_clcmd("say_team /halftime", "Cmd_Halftime")
-    register_clcmd("say /st", "Cmd_Halftime")
-    register_clcmd("say_team /st", "Cmd_Halftime")
-    register_clcmd("st", "Cmd_Halftime")
-
-    // Master /a Admin Menu commands
-    register_clcmd("say /a", "Cmd_AdminDashboard")
-    register_clcmd("say_team /a", "Cmd_AdminDashboard")
-    register_clcmd("a", "Cmd_AdminDashboard")
-    register_clcmd("amx_a", "Cmd_AdminDashboard")
-    register_clcmd("say /adminmenu", "Cmd_AdminDashboard")
-    register_clcmd("say_team /adminmenu", "Cmd_AdminDashboard")
-
-    // Join Lock Commands (/j3, /lockjoin, /j1, /j0, /j2 hooks)
-    register_clcmd("say /j3", "Cmd_ToggleJoinLock")
-    register_clcmd("say_team /j3", "Cmd_ToggleJoinLock")
-    register_clcmd("j3", "Cmd_ToggleJoinLock")
-    register_clcmd("say /lockjoin", "Cmd_ToggleJoinLock")
-    register_clcmd("say_team /lockjoin", "Cmd_ToggleJoinLock")
-    register_clcmd("lockjoin", "Cmd_ToggleJoinLock")
-    register_clcmd("say /j1", "Cmd_HookJoinOpen")
-    register_clcmd("say_team /j1", "Cmd_HookJoinOpen")
-    register_clcmd("j1", "Cmd_HookJoinOpen")
-    register_clcmd("say /j0", "Cmd_HookJoinOther")
-    register_clcmd("say_team /j0", "Cmd_HookJoinOther")
-    register_clcmd("j0", "Cmd_HookJoinOther")
-    register_clcmd("say /j2", "Cmd_HookJoinOther")
-    register_clcmd("say_team /j2", "Cmd_HookJoinOther")
-    register_clcmd("j2", "Cmd_HookJoinOther")
-
-    // Bi-directional Server Navigation & Main Server Commands (/sv1, /main, /sv)
-    register_clcmd("say /sv1", "Cmd_MainServer")
-    register_clcmd("say_team /sv1", "Cmd_MainServer")
-    register_clcmd("sv1", "Cmd_MainServer")
-    register_clcmd("say /main", "Cmd_MainServer")
-    register_clcmd("say_team /main", "Cmd_MainServer")
-    register_clcmd("main", "Cmd_MainServer")
-    register_clcmd("say /sv", "Cmd_MainServer")
-    register_clcmd("say_team /sv", "Cmd_MainServer")
-    register_clcmd("sv", "Cmd_MainServer")
-    register_clcmd("say /server", "Cmd_MainServer")
-    register_clcmd("say_team /server", "Cmd_MainServer")
-    register_clcmd("server", "Cmd_MainServer")
-    register_clcmd("say /server1", "Cmd_MainServer")
-    register_clcmd("say_team /server1", "Cmd_MainServer")
-    register_clcmd("server1", "Cmd_MainServer")
-
-    // Dynamic Temp Sub-Server Commands (/sv2, /sv3, /renew, /temptime, /status)
-    register_clcmd("say /sv2", "Cmd_TempServer2")
-    register_clcmd("say_team /sv2", "Cmd_TempServer2")
-    register_clcmd("sv2", "Cmd_TempServer2")
-    register_clcmd("say /SV2", "Cmd_TempServer2")
-    register_clcmd("say_team /SV2", "Cmd_TempServer2")
-    register_clcmd("SV2", "Cmd_TempServer2")
-    register_clcmd("say /server2", "Cmd_TempServer2")
-    register_clcmd("say_team /server2", "Cmd_TempServer2")
-    register_clcmd("server2", "Cmd_TempServer2")
-    register_clcmd("say /Server2", "Cmd_TempServer2")
-    register_clcmd("say_team /Server2", "Cmd_TempServer2")
-    register_clcmd("Server2", "Cmd_TempServer2")
-    register_clcmd("say /sv3", "Cmd_TempServer3")
-    register_clcmd("say_team /sv3", "Cmd_TempServer3")
-    register_clcmd("sv3", "Cmd_TempServer3")
-    register_clcmd("say /SV3", "Cmd_TempServer3")
-    register_clcmd("say_team /SV3", "Cmd_TempServer3")
-    register_clcmd("SV3", "Cmd_TempServer3")
-    register_clcmd("say /server3", "Cmd_TempServer3")
-    register_clcmd("say_team /server3", "Cmd_TempServer3")
-    register_clcmd("server3", "Cmd_TempServer3")
-    register_clcmd("say /Server3", "Cmd_TempServer3")
-    register_clcmd("say_team /Server3", "Cmd_TempServer3")
-    register_clcmd("Server3", "Cmd_TempServer3")
-    register_clcmd("say /renew", "Cmd_TempServerRenew")
-    register_clcmd("say_team /renew", "Cmd_TempServerRenew")
-    register_clcmd("renew", "Cmd_TempServerRenew")
-    register_clcmd("say /temptime", "Cmd_TempServerStatus")
-    register_clcmd("say_team /temptime", "Cmd_TempServerStatus")
-    register_clcmd("temptime", "Cmd_TempServerStatus")
-    register_clcmd("say /status", "Cmd_TempServerStatus")
-    register_clcmd("say_team /status", "Cmd_TempServerStatus")
-    register_clcmd("status", "Cmd_TempServerStatus")
-
-    // Direct Temp Server Management Shortcuts
-    register_clcmd("say /manage_sv2", "Cmd_ManageTempServer2")
-    register_clcmd("say_team /manage_sv2", "Cmd_ManageTempServer2")
-    register_clcmd("manage_sv2", "Cmd_ManageTempServer2")
-    register_clcmd("say /manage_sv3", "Cmd_ManageTempServer3")
-    register_clcmd("say_team /manage_sv3", "Cmd_ManageTempServer3")
-    register_clcmd("manage_sv3", "Cmd_ManageTempServer3")
-    register_clcmd("say /tempservers", "ShowTempServersSubMenu")
-    register_clcmd("say_team /tempservers", "ShowTempServersSubMenu")
-    register_clcmd("tempservers", "ShowTempServersSubMenu")
-
-    // Universal Main Menu Commands (/menu, /mainmenu, menu)
-    register_clcmd("say /menu", "Cmd_ShowMainMenu")
-    register_clcmd("say_team /menu", "Cmd_ShowMainMenu")
-    register_clcmd("menu", "Cmd_ShowMainMenu")
-    register_clcmd("say /mainmenu", "Cmd_ShowMainMenu")
-    register_clcmd("say_team /mainmenu", "Cmd_ShowMainMenu")
-    register_clcmd("mainmenu", "Cmd_ShowMainMenu")
-    register_clcmd("amx_menu", "Cmd_ShowMainMenu")
-    register_clcmd("say /playermenu", "ShowPlayerMainMenu")
-    register_clcmd("playermenu", "ShowPlayerMainMenu")
-    register_clcmd("say /commands", "Cmd_ShowCommands")
-    register_clcmd("say_team /commands", "Cmd_ShowCommands")
-    register_clcmd("commands", "Cmd_ShowCommands")
-    register_clcmd("say /rules", "Cmd_ShowRulesInfo")
-    register_clcmd("say_team /rules", "Cmd_ShowRulesInfo")
-    register_clcmd("rules", "Cmd_ShowRulesInfo")
-
-    // Team & Dynamic Server Selection Menu ('m' key / chooseteam / jointeam)
-    register_clcmd("chooseteam", "Cmd_ChooseTeam")
-    register_clcmd("jointeam", "Cmd_JoinTeam")
-    register_menucmd(register_menuid("GAMELAND_Team_Select_Menu", 1), 1023, "HandleTeamSelectMenu")
-
-    // Periodic countdown notice for temp servers (every 60s)
-    // set_task(60.0, "Task_TempServerCountdownNotice", _, _, _, "b")
-
-    register_clcmd("say", "Hook_Say")
-    register_clcmd("say_team", "Hook_SayTeam")
-
-    // Clan War Mode notice when in Mix Mode
-    register_clcmd("say /cw", "Cmd_NotifyClanWarMode")
-    register_clcmd("say_team /cw", "Cmd_NotifyClanWarMode")
-    register_clcmd("say /clanwar", "Cmd_NotifyClanWarMode")
-    register_clcmd("say_team /clanwar", "Cmd_NotifyClanWarMode")
-    register_clcmd("cw", "Cmd_NotifyClanWarMode")
-
-    // Start with Warmup if configured
-    if(g_bForceWarmup)
-    {
-        StartWarmup()
-    }
+public task_read_config()
+{
+	ReadConfig()
 }
 
 public plugin_natives()
 {
-    register_library("mix_system")
+	g_aStartCmds = ArrayCreate(32)
+	g_aStopCmds = ArrayCreate(32)
+	g_aWarmCmds = ArrayCreate(32)
+	g_aKnifeCmds = ArrayCreate(32)
+	g_aChatOnCmds = ArrayCreate(32)
+	g_aChatOffCmds = ArrayCreate(32)
+	g_aOvertimeCmds = ArrayCreate(32)
+	g_aPassOnCmds = ArrayCreate(32)
+	g_aPassOffCmds = ArrayCreate(32)
+	g_aSpecAllCmds = ArrayCreate(32)
+	g_aCTCmds = ArrayCreate(32)
+	g_aTCmds = ArrayCreate(32)
+	g_aSpecCmds = ArrayCreate(32)
+	g_aStartDemoCmds = ArrayCreate(32)
+	g_aStopDemoCmds = ArrayCreate(32)
+	g_aPlayerData = ArrayCreate(Pdata)
 
-    register_native("Mix_IsHalf", "native_is_half")
-    register_native("Mix_IsLastRound", "native_is_last_round")
-    register_native("Mix_IsPreLastRound", "native_is_prelast_round")
-    register_native("Mix_CanOvertime", "native_can_overtime")
-    register_native("Mix_IsStarted", "native_is_started")
-    register_native("Mix_IsWarm", "native_is_warm")
-    register_native("Mix_GetPrefix", "native_get_prefix")
-    register_native("Mix_GetUserName", "native_get_username")
+	
+	register_library("mix_system")
 
-    // Dummy backwards-compatible natives (Points & SQL removed)
-    register_native("Mix_UserPoints", "native_user_points")
-    register_native("Mix_HasPointsSys", "native_has_points_sys")
-    register_native("Mix_SearchForUser", "native_search_for_user")
-    register_native("Mix_MultiplyFactor", "native_multiply_factor")
-    register_native("Mix_GetPointsTable", "native_get_points_table")
+	register_native("Mix_IsHalf", "native_is_half")
+	register_native("Mix_IsLastRound", "native_is_last_round")
+	register_native("Mix_IsPreLastRound", "native_is_prelast_round")
+	register_native("Mix_CanOvertime", "native_can_overtime")
+	register_native("Mix_IsStarted", "native_is_started")
+	register_native("Mix_IsWarm", "native_is_warm")
+	register_native("Mix_GetPrefix", "native_get_prefix")
+	register_native("Mix_GetUserName", "native_get_username")
+	register_native("Mix_HasPointsSys", "native_has_points_sys")
 }
 
 public plugin_end()
 {
-    DestroyCommandArrays()
-}
+	ArrayDestroy(g_aStartCmds)
+	ArrayDestroy(g_aStopCmds)
+	ArrayDestroy(g_aWarmCmds)
+	ArrayDestroy(g_aKnifeCmds)
+	ArrayDestroy(g_aChatOnCmds)
+	ArrayDestroy(g_aChatOffCmds)
+	ArrayDestroy(g_aOvertimeCmds)
+	ArrayDestroy(g_aPassOnCmds)
+	ArrayDestroy(g_aPassOffCmds)
+	ArrayDestroy(g_aSpecAllCmds)
+	ArrayDestroy(g_aCTCmds)
+	ArrayDestroy(g_aTCmds)
+	ArrayDestroy(g_aSpecCmds)
+	ArrayDestroy(g_aStartDemoCmds)
+	ArrayDestroy(g_aStopDemoCmds)
+	ArrayDestroy(g_aPlayerData)
+	
+	for(new i; i < MaxFwds; i++)
+	{
+		DestroyForward(g_eForwards[i])
+	}
 
-// -----------------------------------------------------------------------------
-// Command Arrays Management
-// -----------------------------------------------------------------------------
-InitCommandArrays()
+	}
+
+public OnCvarChange(pcvar, const old_value[], const new_value[])
 {
-    g_aStartCmds = ArrayCreate(32)
-    g_aStopCmds = ArrayCreate(32)
-    g_aWarmCmds = ArrayCreate(32)
-    g_aChatOnCmds = ArrayCreate(32)
-    g_aChatOffCmds = ArrayCreate(32)
-    g_aOvertimeCmds = ArrayCreate(32)
-    g_aPassOnCmds = ArrayCreate(32)
-    g_aPassOffCmds = ArrayCreate(32)
-    g_aSpecAllCmds = ArrayCreate(32)
-    g_aRestartCmds = ArrayCreate(32)
-    g_aScoreCmds = ArrayCreate(32)
-    g_aMoveCTCmds = ArrayCreate(32)
-    g_aMoveTCmds = ArrayCreate(32)
-    g_aMoveSpecCmds = ArrayCreate(32)
-    g_aPauseCmds = ArrayCreate(32)
+	if(get_pcvar_num(pcvar) != 1)
+	{
+		set_pcvar_num(pcvar, 1)
+	}
+
+	server_cmd("amx_reloadadmins")
+	server_exec()
 }
 
-DestroyCommandArrays()
+#if defined DEBUG
+public clcmd_say_test_score(id)
 {
-    ArrayDestroy(g_aStartCmds)
-    ArrayDestroy(g_aStopCmds)
-    ArrayDestroy(g_aWarmCmds)
-    ArrayDestroy(g_aChatOnCmds)
-    ArrayDestroy(g_aChatOffCmds)
-    ArrayDestroy(g_aOvertimeCmds)
-    ArrayDestroy(g_aPassOnCmds)
-    ArrayDestroy(g_aPassOffCmds)
-    ArrayDestroy(g_aSpecAllCmds)
-    ArrayDestroy(g_aRestartCmds)
-    ArrayDestroy(g_aScoreCmds)
-    ArrayDestroy(g_aMoveCTCmds)
-    ArrayDestroy(g_aMoveTCmds)
-    ArrayDestroy(g_aMoveSpecCmds)
-    ArrayDestroy(g_aPauseCmds)
+	g_iScore[CT_SCORE] += 1
+	g_iScore[TERO_SCORE] += 12
+
+	g_iRoundNum += 13
 }
 
-// -----------------------------------------------------------------------------
-// Server Hostname State Management
-// -----------------------------------------------------------------------------
-public CvarHook_BaseHostname(pcvar, const old_value[], const new_value[])
+public clcmd_say_test_over(id)
 {
-    new szNew[64]
-    copy(szNew, charsmax(szNew), new_value)
-    trim(szNew)
-    if(szNew[0])
-    {
-        copy(g_szBaseHostname, charsmax(g_szBaseHostname), szNew)
-        UpdateServerHostname()
-    }
+	g_iScore[CT_SCORE] += 0
+	g_iScore[TERO_SCORE] += 14
+	g_iRoundNum += 14
 }
 
-public CvarHook_Hostname(pcvar, const old_value[], const new_value[])
+public clcmd_say_test(id)
 {
-    if(g_bUpdatingHostname)
-        return
+	console_print(id, "Can chat: %s", g_eBooleans[bCanChat] ? "YES" : "NO")
+	console_print(id, "Mix started: %s", g_eBooleans[bIsMixOn] ? "YES" : "NO")
+	console_print(id, "Knife started: %s", g_eBooleans[bIsKnife] ? "YES" : "NO")
+	console_print(id, "Warm started: %s", g_eBooleans[bIsWarm] ? "YES" : "NO")
+	console_print(id, "Team swap: %s", g_eBooleans[bTeamSwap] ? "YES" : "NO")
+	console_print(id, "Overtime: %s", g_eBooleans[bOvertime] ? "YES" : "NO")
+	console_print(id, "First Overtime: %s", g_eOvertime[FirstOvertime] ? "YES" : "NO")
+	console_print(id, "Second Overtime: %s", g_eOvertime[SecondOvertime] ? "YES" : "NO")
+	console_print(id, "Admin Flags: %s", g_ePluginSettings[szAdminAccess])
+	console_print(id, "Score T: %i", g_iScore[TERO_SCORE])
+	console_print(id, "Score CT: %i", g_iScore[CT_SCORE])
+	console_print(id, "Score Over T: %i", g_iOvertimeScore[TERO_OVER_SCORE])
+	console_print(id, "Score Over CT: %i", g_iOvertimeScore[CT_OVER_SCORE])
+	console_print(id, "Warmup Type: %s", g_eWarmSettings[bWarmType] ? "True" : "False")
+	console_print(id, "Weapon Tero: %s", g_eWarmSettings[szWeaponT])
+	console_print(id, "Weapon CT: %s", g_eWarmSettings[szWeaponCT])
+	}
+#endif
 
-    new szExplicit[64]
-    get_cvar_string("mix_base_hostname", szExplicit, charsmax(szExplicit))
-    trim(szExplicit)
-    if(!szExplicit[0])
-    {
-        get_cvar_string("cw_base_hostname", szExplicit, charsmax(szExplicit))
-        trim(szExplicit)
-    }
-
-    if(!szExplicit[0])
-    {
-        InitBaseHostname()
-        UpdateServerHostname()
-    }
-}
-
-stock ReadHostnameFromFile(szOutput[], iMaxLen)
+ReadConfig()
 {
-    new fp = fopen("server.cfg", "rt")
-    if(!fp)
-        fp = fopen("cstrike/server.cfg", "rt")
+	new szConfigsDir[128], szFileDir[64]
+	get_configsdir(szConfigsDir, charsmax(szConfigsDir))
 
-    if(!fp)
-        return 0
+	formatex(szFileDir, charsmax(szFileDir), "%s/MixSettings.ini", szConfigsDir)
 
-    new szLine[128], szKey[32], szVal[64]
-    new szCandidate[64]
-    szCandidate[0] = EOS
+	new iFile = fopen(szFileDir, "rt")
 
-    while(!feof(fp))
-    {
-        fgets(fp, szLine, charsmax(szLine))
-        trim(szLine)
-        if(!szLine[0] || szLine[0] == '/' || szLine[0] == ';')
-            continue
+	if(iFile)
+	{
+		new szData[128], iSection, szString[64], szValue[64]
 
-        szKey[0] = EOS
-        szVal[0] = EOS
-        parse(szLine, szKey, charsmax(szKey), szVal, charsmax(szVal))
-        trim(szKey)
-        trim(szVal)
+		
+		while(!feof(iFile))
+		{
+			fgets(iFile, szData, charsmax(szData))
+			trim(szData)
 
-        if(equali(szKey, "cw_base_hostname") || equali(szKey, "mix_base_hostname"))
-        {
-            if(szVal[0] && !equali(szVal, "GAMELAND"))
-            {
-                copy(szOutput, iMaxLen, szVal)
-                fclose(fp)
-                return 1
-            }
-        }
-        else if(equali(szKey, "hostname") && !szCandidate[0])
-        {
-            if(szVal[0] && !equali(szVal, "GAMELAND") && !equali(szVal, "Counter-Strike 1.6 Server"))
-            {
-                copy(szCandidate, charsmax(szCandidate), szVal)
-            }
-        }
-    }
-    fclose(fp)
+			if(szData[0] == '#' || szData[0] == EOS || szData[0] == ';')
+				continue
 
-    if(szCandidate[0])
-    {
-        copy(szOutput, iMaxLen, szCandidate)
-        return 1
-    }
-    return 0
+			if(szData[0] == '[')
+			{
+				iSection += 1
+			}
+			switch(iSection)
+			{
+				case SETTINGS_SECTION:
+				{
+					if(szData[0] != '[')
+					{
+						strtok2(szData, szString, charsmax(szString), szValue, charsmax(szValue), '=', TRIM_INNER)
+
+						if(szValue[0] == EOS || !szValue[0])
+							continue
+
+						if(equal(szString, CHAT_PREFIX))
+						{
+							copy(g_ePluginSettings[szPrefix], charsmax(g_ePluginSettings[szPrefix]), szValue)
+						}
+						else if(equal(szString, OVERTIME_ROUNDS))
+						{
+							g_ePluginSettings[iRoundOvertime] = str_to_num(szValue)
+						}
+						else if(equal(szString, OVERTIME_SCORE))
+						{
+							g_ePluginSettings[iOvertimeScore] = str_to_num(szValue)
+						}
+						else if(equal(szString, MIX_END_ROUND))
+						{
+							g_ePluginSettings[iMixEndRound] = str_to_num(szValue)
+						}
+						else if(equal(szString, ADMIN_CHAT_FLAGS))
+						{
+							copy(g_ePluginSettings[szAdminFlags], charsmax(g_ePluginSettings[szAdminFlags]), szValue)
+						}
+						else if(equal(szString, ADMIN_ACCESS))
+						{
+							copy(g_ePluginSettings[szAdminAccess], charsmax(g_ePluginSettings[szAdminAccess]), szValue)
+						}
+						else if(equal(szString, FREEZETIME_SWAP))
+						{
+							g_ePluginSettings[iFreezetimeSwap] = str_to_num(szValue)
+						}
+						else if(equal(szString, AUTO_OVERTIME))
+						{
+							g_ePluginSettings[iAutoOvertime] = str_to_num(szValue)
+						}
+						else if(equal(szString, START_CFG))
+						{
+							copy(g_ePluginSettings[szStartCfg], charsmax(g_ePluginSettings[szStartCfg]), szValue)
+						}
+						else if(equal(szString, STOP_CFG))
+						{
+							copy(g_ePluginSettings[szStopCfg], charsmax(g_ePluginSettings[szStopCfg]), szValue)
+						}
+						else if(equal(szString, OVERTIME_CFG))
+						{
+							copy(g_ePluginSettings[szOvertimeCfg], charsmax(g_ePluginSettings[szOvertimeCfg]), szValue)
+						}
+						else if(equal(szString, FREEZETIME))
+						{
+							g_iFreezeTime = str_to_num(szValue)
+						}
+						else if(equal(szString, PAUSE_TIME))
+						{
+							g_ePluginSettings[iPauseTime] = str_to_num(szValue)
+						}
+						else if (equal(szString, TEN_REQUIRED))
+						{
+							g_ePluginSettings[bRequireTen] = bool:clamp(str_to_num(szValue), 0, 1) 
+						}
+						else if (equal(szString, KNIFE_ROUND_DELAY))
+						{
+							g_ePluginSettings[iKnifeStartDelay] = str_to_num(szValue)
+						}
+						else if (equal(szString, DEFAULT_POINTS))
+						{
+							g_ePluginSettings[iStartPoints] = str_to_num(szValue)
+						}
+						else if (equal(szString, FORCE_WARMUP))
+						{
+							g_ePluginSettings[bForceWarmup] = bool:clamp(str_to_num(szValue), 0, 1) 
+						}
+					}
+				}
+				case COMMANDS_SECTION:
+				{
+					if(szData[0] != '[')
+					{
+						strtok2(szData, szString, charsmax(szString), szValue, charsmax(szValue), '=', TRIM_INNER)
+
+						if(szValue[0] == EOS || !szValue[0])
+							continue
+
+						if(equal(szString, SHOW_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_showcmds")
+							}
+						}
+						else if(equal(szString, START_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_startmix")
+								ArrayPushString(g_aStartCmds, szString)
+							}
+						}
+						else if(equal(szString, STOP_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_stopmix")
+								ArrayPushString(g_aStopCmds, szString)
+							}
+						}
+						else if(equal(szString, WARM_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_warm")
+								ArrayPushString(g_aWarmCmds, szString)
+							}
+						}
+						else if(equal(szString, KNIFE_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_knife")
+								ArrayPushString(g_aKnifeCmds, szString)
+							}
+						}
+						else if(equal(szString, CHAT_ON_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_chat_on")
+								ArrayPushString(g_aChatOnCmds, szString)
+							}
+						}
+						else if(equal(szString, CHAT_OFF_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_chat_off")
+								ArrayPushString(g_aChatOffCmds, szString)
+							}
+						}
+						else if(equal(szString, OVERTIME_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_overtime")
+								ArrayPushString(g_aOvertimeCmds, szString)
+							}
+						}
+						else if(equal(szString, PASSON_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_passon")
+								ArrayPushString(g_aPassOnCmds, szString)
+							}
+						}
+						else if(equal(szString, PASSOFF_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_passoff")
+								ArrayPushString(g_aPassOffCmds, szString)
+							}
+						}
+						else if(equal(szString, SPECALL_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_specall")
+								ArrayPushString(g_aSpecAllCmds, szString)
+							}
+						}
+						else if(equal(szString, RESTART_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_restart")
+							}
+						}
+						else if(equal(szString, SCORE_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_score")
+							}
+						}
+						else if(equal(szString, CT_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_ct")
+								ArrayPushString(g_aCTCmds, szString)
+							}
+						}
+						else if(equal(szString, T_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_t")
+								ArrayPushString(g_aTCmds, szString)
+							}
+						}
+						else if(equal(szString, SPEC_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_spec")
+								ArrayPushString(g_aSpecCmds, szString)
+							}
+						}
+						else if(equal(szString, STARTDEMO_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_start_demo")
+								ArrayPushString(g_aStartDemoCmds, szString)
+							}
+						}
+						else if(equal(szString, STOPDEMO_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_stop_demo")
+								ArrayPushString(g_aStopDemoCmds, szString)
+							}
+						}
+												else if(equal(szString, PAUSE_COMMANDS))
+						{
+							while(szValue[0] != EOS && strtok2(szValue, szString, charsmax(szString), szValue, charsmax(szValue), ',', TRIM_INNER))
+							{
+								register_clcmd(szString, "clcmd_say_pause")
+							}
+						}
+					}
+				}
+				case WARM_SETTINGS:
+				{
+					if(szData[0] == '[')
+						continue
+
+					strtok2(szData, szString, charsmax(szString), szValue, charsmax(szValue), '=', TRIM_INNER)
+
+					if(equal(szString, WARM_TYPE))
+					{
+						g_eWarmSettings[bWarmType] = (str_to_num(szValue) == 1 ? true : false)
+					}
+					else if(equal(szString, WARM_SPAWN_MONEY))
+					{
+						g_eWarmSettings[iWarmMoney] = str_to_num(szValue)
+					}
+					else if(equal(szString, WARM_WEAPON_CT))
+					{
+						copy(g_eWarmSettings[szWeaponCT], charsmax(g_eWarmSettings[szWeaponCT]), szValue)
+					}
+					else if(equal(szString, WARM_WEAPON_TERO))
+					{
+						copy(g_eWarmSettings[szWeaponT], charsmax(g_eWarmSettings[szWeaponT]), szValue)
+					}
+					else if(equal(szString, WARM_PISTOL))
+					{
+						copy(g_eWarmSettings[szPistol], charsmax(g_eWarmSettings[szPistol]), szValue)
+					}
+					else if(equal(szString, WARM_BP_AMMO))
+					{
+						g_eWarmSettings[iBpAmmo] = str_to_num(szValue)
+					}
+				}
+				case HUD_SETTINGS:
+				{
+					if(szData[0] == '[')
+						continue
+
+					strtok2(szData, szString, charsmax(szString), szValue, charsmax(szValue), '=', TRIM_INNER)
+
+					if(equal(szString, HUD_COLORS))
+					{
+						new szHudColorR[4], szHudColorG[4], szHudColorB[4]
+
+						parse(szValue, szHudColorR, charsmax(szHudColorR), szHudColorG, charsmax(szHudColorG), szHudColorB, charsmax(szHudColorB))
+
+						g_eHudSettings[iHudColorR] = str_to_num(szHudColorR)
+						g_eHudSettings[iHudColorG] = str_to_num(szHudColorG)
+						g_eHudSettings[iHudColorB] = str_to_num(szHudColorB)
+					}
+					else if(equal(szString, HUD_POSITION))
+					{
+						new szHudPosX[5], szHudPosY[5]
+						parse(szValue, szHudPosX, charsmax(szHudPosX), szHudPosY, charsmax(szHudPosY))
+
+						g_eHudSettings[fHudPosX] = str_to_float(szHudPosX)
+						g_eHudSettings[fHudPosY] = str_to_float(szHudPosY)
+
+						#if defined DEBUG
+						server_print("HudPostX : %f", g_eHudSettings[fHudPosX])
+						server_print("HudPostY : %f", g_eHudSettings[fHudPosY])
+						server_print("szHudX: %s", szHudPosX)
+						server_print("szHudY: %s", szHudPosY)
+						server_print("szValue: %s", szValue)
+						#endif
+					}
+				}
+				case DEMO_SETTINGS:
+				{
+					if(szData[0] == '[')
+						continue
+
+					strtok2(szData, szString, charsmax(szString), szValue, charsmax(szValue), '=', TRIM_INNER)
+
+					if(equal(szString, DEMO_AUTO))
+					{
+						g_eDemoSettings[iDemoAuto] = str_to_num(szValue)
+					}
+					else if(equal(szString, DEMO_TYPE))
+					{
+						g_eDemoSettings[iDemoType] = str_to_num(szValue)
+					}
+					else if(equal(szString, DEMO_NAME))
+					{
+						copy(g_eDemoSettings[szDemoName], charsmax(g_eDemoSettings[szDemoName]), szValue)
+					}
+				}
+							}
+		}
+	}
+
+	
+	g_iTimer = g_ePluginSettings[iPauseTime] - 1
 }
 
-InitBaseHostname()
-{
-    new szExplicitHost[64]
-    get_cvar_string("mix_base_hostname", szExplicitHost, charsmax(szExplicitHost))
-    trim(szExplicitHost)
-    if(!szExplicitHost[0])
-    {
-        get_cvar_string("cw_base_hostname", szExplicitHost, charsmax(szExplicitHost))
-        trim(szExplicitHost)
-    }
-
-    if(szExplicitHost[0] && !equali(szExplicitHost, "GAMELAND"))
-    {
-        copy(g_szBaseHostname, charsmax(g_szBaseHostname), szExplicitHost)
-        return
-    }
-
-    new szCurrentHost[64]
-    get_cvar_string("hostname", szCurrentHost, charsmax(szCurrentHost))
-    trim(szCurrentHost)
-
-    if(!szCurrentHost[0] || equali(szCurrentHost, "GAMELAND") || equali(szCurrentHost, "Counter-Strike 1.6 Server"))
-    {
-        new szFromFile[64]
-        if(ReadHostnameFromFile(szFromFile, charsmax(szFromFile)))
-        {
-            copy(g_szBaseHostname, charsmax(g_szBaseHostname), szFromFile)
-            return
-        }
-        copy(g_szBaseHostname, charsmax(g_szBaseHostname), "GAMELAND")
-        return
-    }
-
-    // Strip dynamic status tags
-    new const szTagsToStrip[][] = {
-        " [CW Ready 30s]",
-        " [CW Vote Captain]",
-        " [CW Pick Teams]",
-        " [CW WarmUp]",
-        " [CW Knife]",
-        " [CW]",
-        " [WarmUp]",
-        " [Warmup]",
-        " [Pick]",
-        " [Knife]",
-        " | CT [",
-        " CT ["
-    }
-
-    for(new i = 0; i < sizeof(szTagsToStrip); i++)
-    {
-        new iPos = containi(szCurrentHost, szTagsToStrip[i])
-        if(iPos != -1)
-            szCurrentHost[iPos] = EOS
-    }
-
-    trim(szCurrentHost)
-    if(szCurrentHost[0] && !equali(szCurrentHost, "GAMELAND"))
-    {
-        copy(g_szBaseHostname, charsmax(g_szBaseHostname), szCurrentHost)
-    }
-    else
-    {
-        new szFromFile[64]
-        if(ReadHostnameFromFile(szFromFile, charsmax(szFromFile)))
-        {
-            copy(g_szBaseHostname, charsmax(g_szBaseHostname), szFromFile)
-        }
-        else
-        {
-            copy(g_szBaseHostname, charsmax(g_szBaseHostname), "GAMELAND")
-        }
-    }
-}
-
-UpdateServerHostname()
-{
-    if(!g_szBaseHostname[0])
-    {
-        InitBaseHostname()
-    }
-
-    new szNewHostname[128]
-
-    if(g_bPickMode)
-    {
-        // Captain Pick Mode active (/spec triggered)
-        formatex(szNewHostname, charsmax(szNewHostname), "%s [Pick]", g_szBaseHostname)
-    }
-    else if(g_iMatchState == STATE_WARMUP)
-    {
-        // WarmUp Mode active
-        formatex(szNewHostname, charsmax(szNewHostname), "%s [WarmUp]", g_szBaseHostname)
-    }
-    else if(g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_OVERTIME_HALFTIME)
-    {
-        // Halftime Intermission
-        formatex(szNewHostname, charsmax(szNewHostname), "%s | CT [%d] TR [%d] [Halftime]", 
-            g_szBaseHostname, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-    }
-    else // Match live (STATE_FIRST_HALF, STATE_SECOND_HALF, OVERTIME_FIRST_HALF, OVERTIME_SECOND_HALF)
-    {
-        // Exact live score format: GAMELAND CT [5] TR [7]
-        formatex(szNewHostname, charsmax(szNewHostname), "%s | CT [%d] TR [%d]", 
-            g_szBaseHostname, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-    }
-
-    g_bUpdatingHostname = true
-    set_cvar_string("hostname", szNewHostname)
-    g_bUpdatingHostname = false
-}
-
-public Task_InitHostname()
-{
-    InitBaseHostname()
-    UpdateServerHostname()
-}
-
-// -----------------------------------------------------------------------------
-// Configuration Parser
-// -----------------------------------------------------------------------------
-LoadConfiguration()
-{
-    new szConfigPath[128]
-    get_configsdir(szConfigPath, charsmax(szConfigPath))
-    add(szConfigPath, charsmax(szConfigPath), "/MixSettings.ini")
-
-    if(!file_exists(szConfigPath))
-    {
-        server_print("[%s] Config file '%s' not found! Using defaults.", PLUGIN_NAME, szConfigPath)
-        RegisterDefaultCommands()
-        return
-    }
-
-    new iFile = fopen(szConfigPath, "rt")
-    if(!iFile)
-    {
-        RegisterDefaultCommands()
-        return
-    }
-
-    new szLine[256], szKey[64], szValue[192]
-    new iSection = 0 // 1: General, 2: Commands, 3: Warm
-
-    while(!feof(iFile))
-    {
-        fgets(iFile, szLine, charsmax(szLine))
-        trim(szLine)
-
-        if(!szLine[0] || szLine[0] == ';' || szLine[0] == '#')
-            continue
-
-        if(szLine[0] == '[')
-        {
-            if(containi(szLine, "General") != -1)
-                iSection = 1
-            else if(containi(szLine, "Commands") != -1)
-                iSection = 2
-            else if(containi(szLine, "Warm") != -1)
-                iSection = 3
-            else
-                iSection = 0
-            continue
-        }
-
-        strtok(szLine, szKey, charsmax(szKey), szValue, charsmax(szValue), '=')
-        trim(szKey)
-        trim(szValue)
-
-        switch(iSection)
-        {
-            case 1: // General Settings
-            {
-                if(equal(szKey, "CHAT_PREFIX"))
-                    copy(g_szChatPrefix, charsmax(g_szChatPrefix), szValue)
-                else if(equal(szKey, "OVERTIME_ROUNDS"))
-                    g_iOvertimeRounds = str_to_num(szValue)
-                else if(equal(szKey, "OVERTIME_SCORE"))
-                    g_iOvertimeTriggerScore = str_to_num(szValue)
-                else if(equal(szKey, "MIX_END_ROUND"))
-                    g_iMixEndRound = str_to_num(szValue)
-                else if(equal(szKey, "ADMIN_CHAT_FLAGS"))
-                    copy(g_szAdminFlags, charsmax(g_szAdminFlags), szValue)
-                else if(equal(szKey, "ADMIN_LEVEL_ACCESS"))
-                    copy(g_szAdminAccess, charsmax(g_szAdminAccess), szValue)
-                else if(equal(szKey, "FREEZE_TIME_SWAP"))
-                    g_iFreezeTimeSwap = str_to_num(szValue)
-                else if(equal(szKey, "AUTOMATIC_OVERTIME"))
-                    g_bAutoOvertime = bool:str_to_num(szValue)
-                else if(equal(szKey, "START_CONFIG"))
-                    copy(g_szStartConfig, charsmax(g_szStartConfig), szValue)
-                else if(equal(szKey, "STOP_CONFIG"))
-                    copy(g_szStopConfig, charsmax(g_szStopConfig), szValue)
-                else if(equal(szKey, "FORCE_WARMUP"))
-                    g_bForceWarmup = bool:str_to_num(szValue)
-                else if(equal(szKey, "PAUSE_DURATION"))
-                    g_iPauseDuration = str_to_num(szValue)
-            }
-            case 2: // Commands
-            {
-                if(equal(szKey, "START_MIX_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_StartMix", g_aStartCmds)
-                else if(equal(szKey, "STOP_MIX_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_StopMix", g_aStopCmds)
-                else if(equal(szKey, "WARM_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_Warmup", g_aWarmCmds)
-                else if(equal(szKey, "KNIFE_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_KnifeRound", g_aStartCmds)
-                else if(equal(szKey, "CHAT_ON_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_ChatOn", g_aChatOnCmds)
-                else if(equal(szKey, "CHAT_OFF_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_ChatOff", g_aChatOffCmds)
-                else if(equal(szKey, "OVERTIME_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_Overtime", g_aOvertimeCmds)
-                else if(equal(szKey, "PASSWORD_ON_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_PassOn", g_aPassOnCmds)
-                else if(equal(szKey, "PASSWORD_OFF_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_PassOff", g_aPassOffCmds)
-                else if(equal(szKey, "SPECALL_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_SpecAll", g_aSpecAllCmds)
-                else if(equal(szKey, "RESTART_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_Restart", g_aRestartCmds)
-                else if(equal(szKey, "SCORE_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_Score", g_aScoreCmds)
-                else if(equal(szKey, "MOVE_CT_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_MoveCT", g_aMoveCTCmds)
-                else if(equal(szKey, "MOVE_TERO_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_MoveT", g_aMoveTCmds)
-                else if(equal(szKey, "MOVE_SPEC_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_MoveSpec", g_aMoveSpecCmds)
-                else if(equal(szKey, "PAUSE_COMMANDS"))
-                    RegisterCommandsFromCSV(szValue, "Cmd_Pause", g_aPauseCmds)
-            }
-            case 3: // Warm Settings
-            {
-                if(equal(szKey, "WARMUP_SPAWN_MONEY"))
-                    g_iWarmMoney = str_to_num(szValue)
-            }
-        }
-    }
-    fclose(iFile)
-
-    // Make sure /warm is always explicitly registered for Warmup
-    RegisterSingleCmd("say /warm", "Cmd_Warmup", g_aWarmCmds)
-    RegisterSingleCmd("say_team /warm", "Cmd_Warmup", g_aWarmCmds)
-}
-
-RegisterCommandsFromCSV(const szCSV[], const szFunction[], Array:aHolder)
-{
-    new szBuffer[192], szToken[64]
-    copy(szBuffer, charsmax(szBuffer), szCSV)
-
-    while(szBuffer[0] != EOS && strtok2(szBuffer, szToken, charsmax(szToken), szBuffer, charsmax(szBuffer), ',', TRIM_INNER))
-    {
-        trim(szToken)
-        if(!szToken[0])
-            continue
-
-        register_clcmd(szToken, szFunction)
-        ArrayPushString(aHolder, szToken)
-    }
-}
-
-RegisterSingleCmd(const szCmd[], const szFunction[], Array:aHolder)
-{
-    register_clcmd(szCmd, szFunction)
-    ArrayPushString(aHolder, szCmd)
-}
-
-RegisterDefaultCommands()
-{
-    RegisterSingleCmd("say /warm", "Cmd_Warmup", g_aWarmCmds)
-    RegisterSingleCmd("say_team /warm", "Cmd_Warmup", g_aWarmCmds)
-    RegisterSingleCmd("say /mix", "Cmd_StartMix", g_aStartCmds)
-    RegisterSingleCmd("say_team /mix", "Cmd_StartMix", g_aStartCmds)
-    RegisterSingleCmd("say /start", "Cmd_StartMix", g_aStartCmds)
-    RegisterSingleCmd("say_team /start", "Cmd_StartMix", g_aStartCmds)
-    RegisterSingleCmd("say /stop", "Cmd_StopMix", g_aStopCmds)
-    RegisterSingleCmd("say_team /stop", "Cmd_StopMix", g_aStopCmds)
-    RegisterSingleCmd("say /knife", "Cmd_KnifeRound", g_aStartCmds)
-    RegisterSingleCmd("say_team /knife", "Cmd_KnifeRound", g_aStartCmds)
-    RegisterSingleCmd("say /score", "Cmd_Score", g_aScoreCmds)
-    RegisterSingleCmd("say_team /score", "Cmd_Score", g_aScoreCmds)
-    RegisterSingleCmd("say /rr", "Cmd_Restart", g_aRestartCmds)
-    RegisterSingleCmd("say /restart", "Cmd_Restart", g_aRestartCmds)
-}
-
-// -----------------------------------------------------------------------------
-// Client Connection & Info
-// -----------------------------------------------------------------------------
-stock bool:CheckJoinLockDrop(id)
-{
-    new bool:bLocked = (g_bJoinLocked || (g_pCvarJoinLock && get_pcvar_num(g_pCvarJoinLock) == 1))
-    new pJoinMode = get_cvar_pointer("gameland_join_mode")
-    if(pJoinMode && get_pcvar_num(pJoinMode) == 3)
-        bLocked = true
-
-    if(!bLocked)
-        return false
-
-    if(is_user_hltv(id) || is_user_bot(id))
-        return false
-
-    if(get_user_flags(id) & (ADMIN_KICK | ADMIN_CVAR | ADMIN_BAN | ADMIN_RCON | ADMIN_ADMIN | ADMIN_IMMUNITY))
-    {
-        client_print_color(id, print_team_default, "^4%s ^1Notice: Server join is currently ^3LOCKED ^1by Admin [/j3]. Admin bypass granted.", g_szChatPrefix)
-        return false
-    }
-
-    rh_drop_client(id, "Server is currently locked by Admin [/j3]")
-    server_cmd("kick #%d ^"Server is currently locked by Admin [/j3]^"", get_user_userid(id))
-    server_exec()
-    return true
-}
-
-public client_authorized(id, const authid[])
-{
-    if(CheckJoinLockDrop(id))
-        return
-}
 
 public client_putinserver(id)
 {
-    if(CheckJoinLockDrop(id))
-        return
+	get_user_authid(id, g_szAuthID[id], charsmax(g_szAuthID[]))
+	get_user_name(id, g_szName[id], charsmax(g_szName[]))
 
-    get_user_name(id, g_szUserName[id], charsmax(g_szUserName[]))
-    g_iSavedFrags[id] = 0
-    g_iSavedDeaths[id] = 0
-    g_iRoundKills[id] = 0
-    g_iMatchKills[id] = 0
-    g_iMatchDeaths[id] = 0
-    g_iMatchHS[id] = 0
-    g_iMatchKnifeKills[id] = 0
-    g_iMatchPlants[id] = 0
-    g_iMatchDefuses[id] = 0
+	g_iPlayerKills[id] = 0
 
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-    {
-        set_task(1.0, "Task_LateJoinScoreSync", id)
-    }
-}
+	g_eBooleans[bCanChat][id] = true
 
-public Task_LateJoinScoreSync(id)
-{
-    if(is_user_connected(id))
-    {
-        SyncPlayerScore(id)
-    }
+	if(g_eBooleans[bIsMixOn])
+	{
+		if(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminFlags]))
+		{
+			g_eBooleans[bCanChat][id] = true
+		}
+		else 
+		{
+			g_eBooleans[bCanChat][id] = false
+		}
+	}
 }
 
 public client_disconnected(id)
 {
-    new szAuthID[36]
-    get_user_authid(id, szAuthID, charsmax(szAuthID))
-
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF)
-    {
-        ExecuteForward(g_hFwdSysLeaver, g_iRet, szAuthID)
-    }
-
-    ExecuteForward(g_hFwdUserSave, g_iRet, id)
-
-    g_szUserName[id][0] = EOS
-    g_iRoundKills[id] = 0
-    g_iSavedFrags[id] = 0
-    g_iSavedDeaths[id] = 0
-    g_iMatchKills[id] = 0
-    g_iMatchDeaths[id] = 0
-    g_iMatchHS[id] = 0
-    g_iMatchKnifeKills[id] = 0
-    g_iMatchPlants[id] = 0
-    g_iMatchDefuses[id] = 0
-    g_bInternalTeamCmd[id] = false
-}
-
-// -----------------------------------------------------------------------------
-// ReAPI Hooks: Player Spawn, Killed, Round End, Restart
-// -----------------------------------------------------------------------------
-public RG_CBasePlayer_Spawn_Post(id)
-{
-    if(!is_user_alive(id))
-        return
-
-    // Anti-Stuck & Safe Spawn Overlap Resolver:
-    // Prevents telefragging, collision traps, and players spawning inside each other (crucial for 18-22+ slot servers)
-    if(g_bReviveMode)
-    {
-        rg_add_account(id, 16000, AS_SET)
-        set_member(id, m_iAccount, 16000)
-        rg_set_user_armor(id, 100, ARMOR_VESTHELM)
-        rg_remove_item(id, "weapon_c4")
-        set_entvar(id, var_takedamage, DAMAGE_NO)
-        set_task(2.0, "Task_RemoveSpawnProtection", id)
-        return
-    }
-
-    switch(g_iMatchState)
-    {
-        case STATE_WARMUP:
-        {
-            // Give $16,000 spawn money and scatter player across map
-            rg_add_account(id, g_iWarmMoney, AS_SET)
-            set_member(id, m_iAccount, g_iWarmMoney)
-            rg_set_user_armor(id, 100, ARMOR_VESTHELM)
-            rg_remove_item(id, "weapon_c4")
-            set_entvar(id, var_takedamage, DAMAGE_NO)
-            set_task(2.0, "Task_RemoveSpawnProtection", id)
-        }
-        case STATE_HALFTIME, STATE_OVERTIME_HALFTIME:
-        {
-            SyncPlayerScore(id)
-            rg_add_account(id, 800, AS_SET, true)
-            rg_remove_all_items(id)
-            rg_give_item(id, "weapon_knife")
-        }
-        case STATE_FIRST_HALF, STATE_SECOND_HALF, STATE_OVERTIME_FIRST_HALF, STATE_OVERTIME_SECOND_HALF:
-        {
-            SyncPlayerScore(id)
-            if(g_bHalftimePendingSync && (g_iMatchState == STATE_SECOND_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF))
-            {
-                rg_add_account(id, 800, AS_SET, true)
-            }
-        }
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Win Condition & Round End Interceptors (Infinite Revive Protection)
-// -----------------------------------------------------------------------------
-public RG_CSGameRules_CheckWinConditions_Pre()
-{
-    // Supercede win condition checks completely during /rev1 mode (prevents 1v1 duel round ends!)
-    if(g_bReviveMode)
-    {
-        SetHookChainReturn(ATYPE_BOOL, false)
-        return HC_SUPERCEDE
-    }
-    return HC_CONTINUE
-}
-
-public RG_RoundEnd_Pre(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
-{
-    // Block any round ending during /rev1 mode unless an explicit server/game restart occurs
-    if(g_bReviveMode)
-    {
-        if(event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
-            return HC_CONTINUE
-
-        SetHookChainReturn(ATYPE_BOOL, false)
-        return HC_SUPERCEDE
-    }
-
-    return HC_CONTINUE
+	if(is_bot(id))
+		return
+
+	if(g_eBooleans[bIsMixOn] && !is_nullent(id))
+	{
+		new iData[Pdata]
+		iData[STEAMID] = g_szAuthID[id]
+		iData[DEATHS] = get_user_deaths(id)
+		iData[KILLS] = get_user_frags(id)
+		iData[MONEY] = get_member(id, m_iAccount)
+		ArrayPushArray(g_aPlayerData, iData)
+
+		g_ePlayerScore[id][iKILLS] = 0
+		g_ePlayerScore[id][iDEATHS] = 0
+	}
+
+	}
+
+#if defined PUNCH_ANGLE
+public RG_KickBack_Pre(const index, Float:up_base, Float:lateral_base, Float:up_modifier, Float:lateral_modifier, Float:up_max, Float:lateral_max, direction_change)
+{
+	/* De modificat doar daca stiti ce se intampla aici*/
+	SetHookChainArg(4, ATYPE_FLOAT, up_modifier * 0.90)
+	SetHookChainArg(5, ATYPE_FLOAT, lateral_modifier * 0.90)
+}
+#endif
+
+public RG_Weapon_Remove(iEnt, const szModelName[])
+{
+	if(g_eBooleans[bIsWarm] || g_eBooleans[bIsKnife])
+	{
+		static szClass[32]
+		get_entvar(iEnt, var_classname, szClass, charsmax(szClass))
+
+		if(!equal(szClass, "weaponbox"))
+			return HC_CONTINUE
+
+		set_entvar(iEnt, var_nextthink, get_gametime() + 1)
+	}
+
+	return HC_CONTINUE
+}
+
+public RG_CSGameRules_CanHavePlayerItem_Pre(id, item)
+{
+	// Shooting maps receive their loadout through rg_give_item.  Do not let
+	// knife-round/buy-lock restrictions reject those weapons.
+	if(!(g_eBooleans[bIsShooting] || (g_eBooleans[bIsWarm] && IsShootingMap())) && (g_eBooleans[bIsKnife] || get_member_game(m_bCTCantBuy) || get_member_game(m_bTCantBuy)))
+	{
+		if(get_member(item, m_iId) == WEAPON_KNIFE)
+			return
+
+		SetHookChainReturn(ATYPE_INTEGER, 0)
+	}
+
+	if(g_eBooleans[bIsWarm])
+	{
+		if(get_member(item, m_iId) == WEAPON_C4)
+			SetHookChainReturn(ATYPE_INTEGER, 0)
+	}
+}
+
+public ShootingAppearance_Pre(id, slot)
+{
+	if(g_eBooleans[bIsShooting] && g_eBooleans[bIsMixOn])
+		SetHookChainArg(2, ATYPE_INTEGER, 1)
+	return HC_CONTINUE
+}
+
+public ShootingSpawn_Post(id)
+{
+	if(!is_user_alive(id) || !g_eBooleans[bIsShooting] || !g_eBooleans[bIsMixOn])
+		return
+	new CsTeams:team = cs_get_user_team(id)
+	if(team == CS_TEAM_CT)
+		cs_set_user_model(id, "urban")
+	else if(team == CS_TEAM_T)
+		cs_set_user_model(id, "terror")
+}
+
+public ShootingFreezeEnd_Post()
+{
+	if(g_eBooleans[bIsShooting] && g_eBooleans[bIsMixOn])
+	{
+		if(g_bShootingOpening)
+		{
+			g_bShootingOpening = false
+			ShowShootingLive()
+			client_print_color(0, print_team_default, "^4[GAMELAND] ^1LIVE!")
+		}
+		set_pcvar_num(g_cFreezeTime, 0)
+	}
+}
+
+public ShootingRestart_Pre()
+{
+	if(g_eBooleans[bIsShooting] && g_eBooleans[bIsMixOn])
+		set_pcvar_num(g_cFreezeTime, g_bShootingOpening ? 5 : 0)
+}
+
+public ShootingRestart_Post()
+{
+	if(g_eBooleans[bIsShooting] && g_eBooleans[bIsMixOn] && g_bShootingOpening)
+		ShowShootingLive()
+}
+
+stock ShowShootingLive()
+{
+	set_hudmessage(0, 255, 0, -1.0, 0.25, 0, 0.0, 5.0, 0.0, 0.2, -1)
+	show_hudmessage(0, "=== LIVE LIVE LIVE ===")
+}
+
+public RG_ChooseTeam_Pre(id, MenuChooseTeam:slot)
+{
+	if(g_eBooleans[bIsMixOn])
+	{
+		new iCT = get_playersnum_ex(GetPlayers_MatchTeam, "CT")
+		new iTero = get_playersnum_ex(GetPlayers_MatchTeam, "TERRORIST")
+
+		if(slot == MenuChoose_T && iTero == 5)
+		{
+			SetHookChainReturn(ATYPE_INTEGER, 0)
+			return HC_SUPERCEDE
+		}
+		else if(slot == MenuChoose_CT && iCT == 5)
+		{
+			SetHookChainReturn(ATYPE_INTEGER, 0)
+			return HC_SUPERCEDE
+		}
+		else if(slot == MenuChoose_AutoSelect)
+		{
+			SetHookChainReturn(ATYPE_INTEGER, 0)
+			return HC_SUPERCEDE
+		}
+	}
+	return HC_CONTINUE
+}
+
+public RG_ChooseTeam_Post(id, MenuChooseTeam:slot)
+{
+	if(g_eBooleans[bIsWarm])
+	{
+		set_task(1.0, "task_revive", id + TASK_REVIVE)
+	}
+
+	if(g_eBooleans[bIsMixOn])
+	{
+		new iData[Pdata]
+		new pID = ArrayFindString(g_aPlayerData, g_szAuthID[id])
+
+		if(pID != -1)
+		{
+			ArrayGetArray(g_aPlayerData, pID, iData)
+			set_user_frags(id, iData[KILLS])
+			cs_set_user_deaths(id, iData[DEATHS], true)
+			set_member(id, m_iAccount, iData[MONEY])
+
+			ArrayDeleteItem(g_aPlayerData, pID)
+		}
+	}
+}
+
+public clcmd_fullupdate(id)
+{
+	return PLUGIN_HANDLED_MAIN
+}
+
+public StartCount()
+{
+	g_iDuration += 1
+}
+
+public ev_DeathMsg()
+{
+	new killer = read_data(1)
+	if(!is_user_connected(killer))
+	{
+		return PLUGIN_HANDLED
+	}
+	read_data(4, g_szWeapon[killer], charsmax(g_szWeapon[]))
+
+	return PLUGIN_HANDLED
 }
 
-public RG_CBasePlayer_Killed_Post(iVictim, iKiller, iGib)
+public RG_PlayerTakeDamage_Pre(iVictim, pevInflictor, iAttacker, Float:flDamage, bitsDamageType)
 {
-    if(!is_user_connected(iVictim))
-        return
+	if(!g_eBooleans[bIsMixOn])
+		return
 
-    new szKillerName[MAX_NAME_LENGTH], szKillerAuth[36]
-    if(is_user_connected(iKiller))
-    {
-        get_user_name(iKiller, szKillerName, charsmax(szKillerName))
-        get_user_authid(iKiller, szKillerAuth, charsmax(szKillerAuth))
-    }
-
-    new bool:bHeadshot = bool:get_member(iVictim, m_bHeadshotKilled)
-
-    // 1. Infinite Revive Mode (/rev1): Instant respawn, round NEVER ends (even 1v1 duels)
-    if(g_bReviveMode)
-    {
-        set_task(1.0, "Task_RevivePlayer", iVictim)
-        return
-    }
+	g_ePlayerStats[iAttacker][iVictim][PlayerHealth] = get_user_health(iVictim)
+}
+
+public RG_PlayerTakeDamage_Post(iVictim, pevInflictor, iAttacker, Float:flDamage, bitsDamageType)
+{
+	if(!g_eBooleans[bIsMixOn])
+		return
 
-    // 2. Standard Warmup Mode (/warm)
-    if(g_iMatchState == STATE_WARMUP)
-    {
-        set_task(1.2, "Task_WarmupRespawn", iVictim)
-        return
-    }
+	new iAfter = g_ePlayerStats[iAttacker][iVictim][PlayerHealth] - get_user_health( iVictim )
 
-    // In competitive modes (Knife & Match Live):
-    // Allow natural ~3.0s Counter-Strike deathcam / killer tracking to play completely unhindered!
-    // Never abruptly rip the camera away; let the natural death animation and killer follow finish.
-    set_task(1.0, "Task_EnforceTeammateObserver", iVictim)
+	new iCalculation = (iAfter) < 0 ? g_ePlayerStats[iAttacker][iVictim][PlayerHealth] : iAfter
 
+	g_ePlayerStats[iAttacker][iVictim][DamageGiven] += iCalculation;
+	g_ePlayerStats[iAttacker][iVictim][HitsGiven] += 1
+}
 
+public RG_Player_Killed_Post(iVictim, iKiller, iInflictor)
+{
+	if(IsPlayer(iVictim) && g_eBooleans[bIsWarm])
+	{
+		remove_task(iVictim + TASK_REVIVE)
+		set_task(0.1, "task_revive", iVictim + TASK_REVIVE)
+	}
 
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-    {
-        g_iMatchDeaths[iVictim]++
+	if(g_eBooleans[bIsMixOn] && !g_eBooleans[bIsWarm])
+	{
+		if(!IsPlayer(iKiller) || !IsPlayer(iVictim))
+		{
+			return HC_CONTINUE
+		}
 
-        if(is_user_connected(iKiller) && iKiller != iVictim)
-        {
-            g_iMatchKills[iKiller]++
-            g_iRoundKills[iKiller]++
+		if(iKiller == iVictim)
+		{
+			goto _return
+		}
 
-            if(bHeadshot)
-            {
-                g_iMatchHS[iKiller]++
-            }
+		new bool:bHeadshot = get_member(iVictim, m_bHeadshotKilled)
 
-            new iClip, iAmmo
-            if(get_user_weapon(iKiller, iClip, iAmmo) == 29 /* CSW_KNIFE */)
-            {
-                g_iMatchKnifeKills[iKiller]++
-            }
-        }
+		g_iPlayerKills[iKiller] += 1
 
-        ExecuteForward(g_hFwdPlayerKilled, g_iRet, iKiller, iVictim, bHeadshot, szKillerName, szKillerAuth)
-    }
+		ExecuteForward(g_eForwards[Kill], g_iRet, iVictim, iKiller, bHeadshot ? 1 : 0, g_szName[iKiller], g_szAuthID[iKiller])
+	}
+	_return:
+	return HC_CONTINUE
 }
+
+public task_revive(iPlayer)
+{
+	iPlayer -= TASK_REVIVE
+
+	if(IsPlayer(iPlayer))
+	{
+		new CsTeams:iTeam = cs_get_user_team(iPlayer)
+		if(iTeam == CS_TEAM_SPECTATOR || iTeam == CS_TEAM_UNASSIGNED)
+		{
+			return HC_CONTINUE
+		}
+
+		set_entvar(iPlayer, var_health, 100)
 
-bool:HasAdminAccess(id)
-{
-    if(!id)
-        return true
-    return bool:(get_user_flags(id) & read_flags(g_szAdminAccess))
-}
-
-ApplySpectatorCameraSettings()
-{
-    // AFK Guard, AutoKick, and Auto Team Balance strictly disabled
-    set_cvar_num("gameland_afk_guard", 0)
-    set_cvar_num("mp_autokick", 0)
-    set_cvar_num("mp_autoteambalance", 0)
-    set_cvar_num("mp_limitteams", 0)
-
-    if(g_iMatchState == STATE_WARMUP)
-    {
-        // Warmup: Allow players to spectate freely, any team, any mode
-        set_cvar_num("mp_forcecamera", 0)
-        set_cvar_num("mp_forcechasecam", 0)
-        set_cvar_num("mp_fadetoblack", 0)
-    }
-    else
-    {
-        // Competitive Match / Knife Round: Teammates ONLY, STRICTLY FIRST PERSON ONLY (OBS_IN_EYE)
-        set_cvar_num("mp_forcecamera", 2)
-        set_cvar_num("mp_forcechasecam", 2)
-        set_cvar_num("mp_fadetoblack", 0)
-    }
-}
-
-public RG_Observer_SetMode_Pre(const id, iMode)
-{
-    // If player is disconnected, alive, in warmup, or leaving spectator mode (OBS_NONE = 0), never interfere!
-    if(!is_user_connected(id) || is_user_alive(id) || iMode == 0 || g_iMatchState == STATE_WARMUP)
-        return HC_CONTINUE
-
-    new TeamName:team = get_member(id, m_iTeam)
-
-    // Spectators outside the match (TEAM_SPECTATOR) and Admins can use ANY camera mode freely:
-    // (Free Look, First Person, Third Person, Roaming, Map Overview)
-    if(team == TEAM_SPECTATOR || HasAdminAccess(id))
-        return HC_CONTINUE
-
-    // For dead players on CT or Terrorist during competitive match:
-    // Enforce First Person Only (OBS_IN_EYE = 4) without cancelling the engine hook
-    if(team == TEAM_CT || team == TEAM_TERRORIST)
-    {
-        if(iMode != 4)
-        {
-            SetHookChainArg(2, ATYPE_INTEGER, 4)
-        }
-    }
-
-    return HC_CONTINUE
-}
-
-public RG_Observer_FindNextPlayer_Pre(const id, bool:bReverse, const szName[])
-{
-    if(!is_user_connected(id) || is_user_alive(id))
-        return HC_CONTINUE
-
-    // Allow ReGameDLL's native player finding to run smoothly without artificial blocks or delays
-    return HC_CONTINUE
-}
-
-public RG_Observer_IsValidTarget_Pre(const id, iTargetIndex, bool:bSameTeam)
-{
-    if(!is_user_connected(id) || is_user_alive(id))
-        return HC_CONTINUE
-
-    // Basic validity checks on target index
-    if(iTargetIndex <= 0 || iTargetIndex > MaxClients || iTargetIndex == id)
-    {
-        SetHookChainReturn(ATYPE_INTEGER, 0)
-        return HC_SUPERCEDE
-    }
-
-    // Target must be connected and alive
-    if(!is_user_connected(iTargetIndex) || !is_user_alive(iTargetIndex))
-    {
-        SetHookChainReturn(ATYPE_INTEGER, 0)
-        return HC_SUPERCEDE
-    }
-
-    new TeamName:iTargetTeam = get_member(iTargetIndex, m_iTeam)
-    // Target must be an active player on CT or Terrorist
-    if(iTargetTeam != TEAM_CT && iTargetTeam != TEAM_TERRORIST)
-    {
-        SetHookChainReturn(ATYPE_INTEGER, 0)
-        return HC_SUPERCEDE
-    }
-
-    new TeamName:iMyTeam = get_member(id, m_iTeam)
-
-    // CASE 1: Outside Spectators (TEAM_SPECTATOR), Admins, or Warmup:
-    // Authorized to spectate ANY alive player in the match!
-    if(iMyTeam == TEAM_SPECTATOR || HasAdminAccess(id) || g_iMatchState == STATE_WARMUP)
-    {
-        SetHookChainReturn(ATYPE_INTEGER, iTargetIndex)
-        return HC_SUPERCEDE
-    }
-
-    // CASE 2: Competitive Match - Dead player on CT or Terrorist
-    new iTeammateCount = 0
-    for(new p = 1; p <= MaxClients; p++)
-    {
-        if(p != id && is_user_connected(p) && is_user_alive(p) && get_member(p, m_iTeam) == iMyTeam)
-        {
-            iTeammateCount++
-        }
-    }
-
-    if(iTeammateCount > 0)
-    {
-        // Teammates exist: ONLY accept alive teammates!
-        if(iTargetTeam == iMyTeam)
-        {
-            SetHookChainReturn(ATYPE_INTEGER, iTargetIndex)
-            return HC_SUPERCEDE
-        }
-        else
-        {
-            SetHookChainReturn(ATYPE_INTEGER, 0)
-            return HC_SUPERCEDE
-        }
-    }
-    else
-    {
-        // All teammates are dead (team wiped out / round ending):
-        // Allow spectating remaining alive players so camera NEVER detaches into the void (0, 0, 0)!
-        SetHookChainReturn(ATYPE_INTEGER, iTargetIndex)
-        return HC_SUPERCEDE
-    }
-}
-
-
-
-public RG_CBasePlayer_SwitchTeam_Pre(const id)
-{
-    // Auto-teambalance by engine is strictly prohibited in competitive matches
-    if(g_iMatchState != STATE_WARMUP)
-    {
-        return HC_SUPERCEDE
-    }
-    return HC_CONTINUE
-}
-
-public RG_ShowVGUIMenu_Pre(id, VGUIMenu:menuType, const bitsSlots, szOldMenu[])
-{
-    if(menuType == VGUI_Menu_Team)
-    {
-        ShowTeamSelectMenu(id)
-        return HC_SUPERCEDE
-    }
-    return HC_CONTINUE
-}
-
-public RG_HandleMenu_ChooseTeam_Pre(const id, const MenuChooseTeam:slot)
-{
-    if(!is_user_connected(id))
-        return HC_CONTINUE
-
-    switch(slot)
-    {
-        case MenuChoose_T:
-        {
-            HandlePlayerTeamSelection(id, 1)
-            return HC_SUPERCEDE
-        }
-        case MenuChoose_CT:
-        {
-            HandlePlayerTeamSelection(id, 2)
-            return HC_SUPERCEDE
-        }
-        case MenuChoose_AutoSelect:
-        {
-            new iTs = GetTeamPlayerCount(TEAM_TERRORIST)
-            new iCTs = GetTeamPlayerCount(TEAM_CT)
-            new iChoice = (iTs > iCTs) ? 2 : 1
-            HandlePlayerTeamSelection(id, iChoice)
-            return HC_SUPERCEDE
-        }
-        case MenuChoose_Spec:
-        {
-            HandlePlayerTeamSelection(id, 6)
-            return HC_SUPERCEDE
-        }
-    }
-    return HC_CONTINUE
-}
-
-stock bool:SwitchToTeammate(id, bool:bReverse)
-{
-    if(!is_user_connected(id) || is_user_alive(id))
-        return false
-
-    new TeamName:iMyTeam = get_member(id, m_iTeam)
-    if(iMyTeam != TEAM_TERRORIST && iMyTeam != TEAM_CT)
-        return false
-
-    new iTeammates[MAX_PLAYERS], iCount = 0
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ae", (iMyTeam == TEAM_CT) ? "CT" : "TERRORIST")
-
-    for(new i = 0; i < iNum; i++)
-    {
-        new p = iPlayers[i]
-        if(p != id && is_user_alive(p))
-        {
-            iTeammates[iCount++] = p
-        }
-    }
-
-    if(iCount == 0)
-        return false
-
-    new iCurrentTarget = get_member(id, m_hObserverTarget)
-    new iCurIndex = -1
-    for(new i = 0; i < iCount; i++)
-    {
-        if(iTeammates[i] == iCurrentTarget)
-        {
-            iCurIndex = i
-            break
-        }
-    }
-
-    new iNextIndex = 0
-    if(iCurIndex != -1)
-    {
-        if(bReverse)
-            iNextIndex = (iCurIndex - 1 + iCount) % iCount
-        else
-            iNextIndex = (iCurIndex + 1) % iCount
-    }
-
-    new iNewTarget = iTeammates[iNextIndex]
-    if(iNewTarget && is_user_connected(iNewTarget) && is_user_alive(iNewTarget))
-    {
-        rg_set_observer_mode(id, 4) // Strictly OBS_IN_EYE (First person in-eye)
-        set_entvar(id, var_iuser1, 4)
-        set_entvar(id, var_iuser2, iNewTarget)
-        set_member(id, m_hObserverTarget, iNewTarget)
-        return true
-    }
-
-    return false
-}
-
-
-
-public Task_FixSpectatorClientCmd(id)
-{
-    if(is_user_connected(id) && !is_user_alive(id))
-    {
-        client_cmd(id, "spec_menu 0")
-    }
-}public Task_InitSpectatorTarget(id)
-{
-    if(!is_user_connected(id) || is_user_alive(id))
-        return
-
-    rg_observer_find_next_player(id, false)
-    rg_set_observer_mode(id, 4)
-}
-
-public Task_EnforceTeammateObserver(id)
-{
-    if(!is_user_connected(id) || is_user_alive(id))
-        return
-
-    if(g_iMatchState == STATE_WARMUP)
-        return
-
-    new TeamName:iMyTeam = get_member(id, m_iTeam)
-    if(iMyTeam != TEAM_TERRORIST && iMyTeam != TEAM_CT)
-        return
-
-    new iTeammateCount = 0
-    for(new p = 1; p <= MaxClients; p++)
-    {
-        if(p != id && is_user_connected(p) && is_user_alive(p) && get_member(p, m_iTeam) == iMyTeam)
-        {
-            iTeammateCount++
-        }
-    }
-
-    if(iTeammateCount > 0)
-    {
-        new iCurTarget = get_member(id, m_hObserverTarget)
-        if(!iCurTarget || !is_user_connected(iCurTarget) || !is_user_alive(iCurTarget) || get_member(iCurTarget, m_iTeam) != iMyTeam)
-        {
-            rg_observer_find_next_player(id, false)
-        }
-        rg_set_observer_mode(id, 4) // Strictly OBS_IN_EYE
-    }
-}
-
-
-public RG_CSGameRules_CanPlayerHearPlayer_Pre(const iListener, const iSender)
-{
-    if(!is_user_connected(iListener) || !is_user_connected(iSender))
-        return HC_CONTINUE
-
-    // Warmup or AllTalk 1: Everyone hears everyone
-    if(g_iMatchState == STATE_WARMUP || get_cvar_num("sv_alltalk") == 1)
-    {
-        SetHookChainReturn(ATYPE_BOOL, true)
-        return HC_SUPERCEDE
-    }
-
-    new TeamName:teamListener = get_member(iListener, m_iTeam)
-    new TeamName:teamSender = get_member(iSender, m_iTeam)
-
-    // Competitive Match (Live, Knife, Halftime, Overtime):
-    // Teammates on the SAME TEAM can ALWAYS hear each other (Dead <-> Alive):
-    if((teamListener == TEAM_CT && teamSender == TEAM_CT) ||
-       (teamListener == TEAM_TERRORIST && teamSender == TEAM_TERRORIST))
-    {
-        SetHookChainReturn(ATYPE_BOOL, true)
-        return HC_SUPERCEDE
-    }
-
-    // Spectators can hear all players
-    if(teamListener == TEAM_SPECTATOR)
-    {
-        SetHookChainReturn(ATYPE_BOOL, true)
-        return HC_SUPERCEDE
-    }
-
-    // Enemy teams: NEVER hear each other
-    SetHookChainReturn(ATYPE_BOOL, false)
-    return HC_SUPERCEDE
-}
-
-public RG_PlantBomb_Post(const index, Float:vecStart[3], Float:vecVelocity[3])
-{
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-    {
-        if(is_user_connected(index))
-        {
-            g_iMatchPlants[index]++
-        }
-    }
-}
-
-public RG_CGrenade_DefuseBombEnd_Post(const this, const player, bool:bDefused)
-{
-    if(!bDefused)
-        return
-
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-    {
-        if(is_user_connected(player))
-        {
-            g_iMatchDefuses[player]++
-        }
-    }
-}
-
-public RG_CBasePlayer_MakeBomber_Pre(const this)
-{
-    // Never give C4 during Warmup or Infinite Revive!
-    if(g_iMatchState == STATE_WARMUP || g_bReviveMode)
-    {
-        SetHookChainReturn(ATYPE_BOOL, false)
-        return HC_SUPERCEDE
-    }
-    return HC_CONTINUE
+		rg_round_respawn(iPlayer)
+		rg_set_user_armor(iPlayer, 100, ARMOR_VESTHELM)
+
+		switch(g_eWarmSettings[bWarmType])
+		{
+			case false:
+			{
+				set_task(1.0, "task_set_money", iPlayer + TASK_SET_MONEY)
+			}
+			case true:
+			{
+				set_task(1.0, "task_give_weapon", iPlayer + TASK_GIVE_WEAPON)
+			}
+		}
+	}
+
+	return PLUGIN_HANDLED
 }
 
-// -----------------------------------------------------------------------------
-// Halftime Intermission: Block weapon buying
-// -----------------------------------------------------------------------------
-public Cmd_BlockBuyDuringHalftime(id)
+
+// Fix #3: Helper to print all elements of a command array
+stock PrintCmdArray(id, Array:array, ML[])
 {
-    if(g_bHalftimeActive)
-    {
-        client_print_color(id, print_team_default, "^4%s ^1خرید اسلحه در زمان استراحت نیمه اول (Halftime) غیرمجاز است!", g_szChatPrefix)
-        return PLUGIN_HANDLED
-    }
-    return PLUGIN_CONTINUE
+	new iSize = ArraySize(array)
+	if(iSize <= 0)
+		return
+
+	static szCmd[64]
+	for(new i = 0; i < iSize; i++)
+	{
+		ArrayGetString(array, i, szCmd, charsmax(szCmd))
+		console_print(id, "  [%L] %s", LANG_SERVER, ML, szCmd)
+	}
 }
 
-public RG_CBasePlayer_HasRestrictItem_Pre(const id, ItemID:item, ItemRestType:type)
+public clcmd_showcmds(id)
 {
-    // Completely block buying weapons & equipment during Halftime intermission
-    if(g_bHalftimeActive)
-    {
-        SetHookChainReturn(ATYPE_BOOL, true)
-        return HC_SUPERCEDE
-    }
-    return HC_CONTINUE
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	// Fix #3: was using sizeof(g_aStartCmds) which always returns 1 (handle size)
+	// Rewritten to iterate each array fully, one by one
+	console_print(id, "=-=-==-=-=---=-=-==-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-")
+
+	PrintCmdArray(id, g_aStartCmds,    "MIX_START_COMMANDS_ARE")
+	PrintCmdArray(id, g_aStopCmds,     "MIX_STOP_COMMANDS_ARE")
+	PrintCmdArray(id, g_aWarmCmds,     "MIX_WARM_COMMANDS_ARE")
+	PrintCmdArray(id, g_aKnifeCmds,    "MIX_KNIFE_COMMANDS_ARE")
+	PrintCmdArray(id, g_aChatOnCmds,   "MIX_CHAT_ON_COMMANDS_ARE")
+	PrintCmdArray(id, g_aChatOffCmds,  "MIX_CHAT_OFF_COMMANDS_ARE")
+	PrintCmdArray(id, g_aOvertimeCmds, "MIX_OVERTIME_COMMANDS_ARE")
+	PrintCmdArray(id, g_aPassOnCmds,   "MIX_PASSON_COMMANDS_ARE")
+	PrintCmdArray(id, g_aPassOffCmds,  "MIX_PASSOFF_COMMANDS_ARE")
+	PrintCmdArray(id, g_aSpecAllCmds,  "MIX_SPEC_ALL_COMMANDS_ARE")
+	PrintCmdArray(id, g_aCTCmds,       "MIX_CT_MOVE_COMMANDS_ARE")
+	PrintCmdArray(id, g_aTCmds,        "MIX_T_MOVE_COMMANDS_ARE")
+	PrintCmdArray(id, g_aSpecCmds,     "MIX_SPEC_MOVE_COMMANDS_ARE")
+	PrintCmdArray(id, g_aStartDemoCmds,"MIX_START_DEMO_COMMANDS_ARE")
+	PrintCmdArray(id, g_aStopDemoCmds, "MIX_STOP_DEMO_COMMANDS_ARE")
+	
+	console_print(id, "=-=-==-=-=---=-=-==-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-")
+
+	client_print_color(id, id, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_SERVER, "OPEN_CONSOLE_FOR_CMDS")
+	client_cmd(id, "toggleconsole")
+
+	return PLUGIN_HANDLED
 }
-
-stock CleanGroundWeapons()
-{
-    new ent = MaxClients + 1
-    while((ent = rg_find_ent_by_class(ent, "weaponbox")) > 0)
-    {
-        set_entvar(ent, var_flags, FL_KILLME)
-    }
-    ent = MaxClients + 1
-    while((ent = rg_find_ent_by_class(ent, "armoury_entity")) > 0)
-    {
-        set_entvar(ent, var_flags, FL_KILLME)
-    }
-    ent = MaxClients + 1
-    while((ent = rg_find_ent_by_class(ent, "weapon_shield")) > 0)
-    {
-        set_entvar(ent, var_flags, FL_KILLME)
-    }
-}
-
-public Task_RevivePlayer(id)
-{
-    if(!g_bReviveMode)
-        return
-
-    if(!is_user_connected(id) || is_user_alive(id))
-        return
+
+stock GetArrayCmd(id, Array:array, item, ML[])
+{
+	static temp[32]
+	static szTemp[64]
+	temp[0] = 0
+	szTemp[0] = 0
+	
+	ArrayGetString(array, item, temp, charsmax(temp))
+	formatex(szTemp, charsmax(szTemp), "%L: %s", LANG_SERVER, ML, temp)
+	console_print(id, szTemp)
+}
+
+stock HLTV_StartRecording(const szDemoPrefix[])
+{
+	new szMapName[32], iDate[3], iTime[3]
+	enum { iYear = 0, iMonth, iDay }
+	enum { iHour = 0, iMin, iSec }
+	get_mapname(szMapName, charsmax(szMapName))
+	date(iDate[iYear], iDate[iMonth], iDate[iDay])
+	time(iTime[iHour], iTime[iMin], iTime[iSec])
+
+	formatex(g_szHltvDemoName, charsmax(g_szHltvDemoName), "%s_%04d-%02d-%02d_%02d-%02d", szDemoPrefix, iDate[iYear], iDate[iMonth], iDate[iDay], iTime[iHour], iTime[iMin])
+
+	new fp = fopen("hltv_cmd.txt", "wt")
+	if(fp)
+	{
+		fprintf(fp, "record %s^n", g_szHltvDemoName)
+		fclose(fp)
+	}
+
+	new fp_rec = fopen("hltv_recording.txt", "wt")
+	if(fp_rec)
+	{
+		fprintf(fp_rec, "%s^n", g_szHltvDemoName)
+		fclose(fp_rec)
+	}
+
+	client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Demo recording ^3STARTED^1: ^4%s", g_szHltvDemoName)
+	server_print("[GAMELAND HLTV] Demo recording STARTED: %s", g_szHltvDemoName)
+}
+
+stock HLTV_StopRecording()
+{
+	new fp = fopen("hltv_cmd.txt", "wt")
+	if(fp)
+	{
+		fprintf(fp, "stoprecording^n")
+		fclose(fp)
+	}
 
-    new TeamName:iTeam = get_member(id, m_iTeam)
-    if(iTeam != TEAM_TERRORIST && iTeam != TEAM_CT)
-        return
+	if(file_exists("hltv_recording.txt"))
+	{
+		delete_file("hltv_recording.txt")
+	}
 
-    rg_round_respawn(id)
-    set_member(id, m_iAccount, 16000)
-    rg_give_item(id, "item_kevlar")
-    rg_give_item(id, "item_assaultsuit")
-}
-
-
-
-public Task_WarmupRespawn(id)
-{
-    if(!is_user_connected(id) || is_user_alive(id) || g_iMatchState != STATE_WARMUP)
-        return
-
-    new TeamName:iTeam = get_member(id, m_iTeam)
-    if(iTeam != TEAM_TERRORIST && iTeam != TEAM_CT)
-        return
-
-    rg_round_respawn(id)
-}
-
-public Task_RemoveSpawnProtection(id)
-{
-    if(is_user_connected(id) && is_user_alive(id) && g_iMatchState == STATE_WARMUP)
-    {
-        set_entvar(id, var_takedamage, DAMAGE_AIM)
-    }
-}
-
-stock LoadMapSpawns()
-{
-    // Default native ReGameDLL spawn handling (FASTCUP / Faceit competitive standard)
-}
-
-stock TeleportToRandomSpawn(id)
-{
-    // Deprecated: Spawns are handled 100% natively by ReGameDLL
-}
-
-stock CheckAndResolveSpawnOverlap(id)
-{
-    // Deprecated: Spawns are handled 100% natively by ReGameDLL
-}
-
-public RG_CSGameRules_RestartRound_Post()
-{
-    // Reset round score lock and round kills when new round starts!
-    g_bRoundScored = false
-    remove_task(TASK_END_ROUND)
-
-    // Enable ReGameDLL semiclip during freezetime and warmup so players never block or get stuck on each other
-    set_cvar_num("mp_semiclip", 1)
-    if(get_cvar_pointer("mp_semiclip_actions"))
-        set_cvar_num("mp_semiclip_actions", 0)
-
-    for(new i = 1; i <= MAX_PLAYERS; i++)
-    {
-        g_iRoundKills[i] = 0
-    }
-
-    ApplySpectatorCameraSettings()
-
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-    {
-        SyncTeamScores()
-        if(g_bHalftimePendingSync)
-        {
-            g_bHalftimePendingSync = false
-            RestoreHalftimePlayerStats()
-        }
-    }
-}
-
-public RG_CSGameRules_OnRoundFreezeEnd_Post()
-{
-    // When freezetime ends in competitive match, turn off semiclip for authentic competitive play
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-    {
-        set_cvar_num("mp_semiclip", 0)
-    }
-    else
-    {
-        // Keep semiclip enabled in WarmUp / Practice mode
-        set_cvar_num("mp_semiclip", 1)
-    }
-}
-
-public RG_RoundEnd_Post(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
-{
-    if(event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
-        return
-
-    // 1. Warmup Mode: Natural round elimination reset (normal gameplay)
-    if(g_iMatchState == STATE_WARMUP)
-    {
-        return
-    }
-
-    // 2. Competitive Match Round Scoring
-    if(g_iMatchState != STATE_FIRST_HALF && g_iMatchState != STATE_SECOND_HALF &&
-       g_iMatchState != STATE_OVERTIME_FIRST_HALF && g_iMatchState != STATE_OVERTIME_SECOND_HALF)
-    {
-        return
-    }
-
-    // BUGFIX: Prevent double counting bug!
-    if(g_bRoundScored)
-    {
-        return
-    }
-    g_bRoundScored = true
-
-    new TeamScore:iWinner = TeamScore:-1
-    if(status == WINSTATUS_CTS)
-    {
-        g_iScore[CT_SCORE]++
-        iWinner = CT_SCORE
-    }
-    else if(status == WINSTATUS_TERRORISTS)
-    {
-        g_iScore[TERO_SCORE]++
-        iWinner = TERO_SCORE
-    }
-
-    if(iWinner == TeamScore:-1)
-        return
-
-    // Track overtime rounds
-    if(g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-    {
-        g_iOvertimeScore[iWinner]++
-    }
-
-    // Keep scoreboard and engine synchronized
-    SyncTeamScores()
-
-    // Announcement of current score
-    client_print_color(0, print_team_default, "^4%s ^1Round Ended! Score: ^4CT %d ^3- ^4TR %d", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-
-    if(g_iMatchState == STATE_SECOND_HALF && (g_iFirstHalfScore[CT_SCORE] > 0 || g_iFirstHalfScore[TERO_SCORE] > 0))
-    {
-        client_print_color(0, print_team_default, "^4%s ^11st Half: ^4CT %d ^3- ^4TR %d", g_szChatPrefix, g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE])
-    }
-
-    // Execute Forward
-    new iDuration = get_systime() - g_iMatchStartTime
-    ExecuteForward(g_hFwdNewRound, g_iRet, g_iScore[CT_SCORE], g_iScore[TERO_SCORE], iDuration)
-
-    // Schedule round state check
-    set_task(1.0, "Task_CheckMatchProgress", TASK_END_ROUND)
-}
-
-// -----------------------------------------------------------------------------
-// Match Progression & Halftime Logic
-// -----------------------------------------------------------------------------
-public Task_CheckMatchProgress()
-{
-    new iTotalRounds = g_iScore[CT_SCORE] + g_iScore[TERO_SCORE]
-
-    // 1. Check First Half Halftime
-    if(g_iMatchState == STATE_FIRST_HALF)
-    {
-        if(iTotalRounds >= 15)
-        {
-            TriggerHalftime()
-            return
-        }
-
-        if(iTotalRounds == 14)
-        {
-            client_print_color(0, print_team_default, "^4%s ^1Last round of the ^4First Half^1!", g_szChatPrefix)
-        }
-    }
-    // 2. Check Second Half Win or Tie
-    else if(g_iMatchState == STATE_SECOND_HALF)
-    {
-        // Check if CT or TR reached win target (16 rounds)
-        if(g_iScore[CT_SCORE] >= g_iMixEndRound)
-        {
-            EndMatch(TEAM_CT)
-            return
-        }
-        else if(g_iScore[TERO_SCORE] >= g_iMixEndRound)
-        {
-            EndMatch(TEAM_TERRORIST)
-            return
-        }
-
-        // Check for 15-15 Tie
-        if(g_iScore[CT_SCORE] == g_iOvertimeTriggerScore && g_iScore[TERO_SCORE] == g_iOvertimeTriggerScore)
-        {
-            if(g_bAutoOvertime)
-            {
-                client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "OVERTIME_AUTOMATIC_WILL_START")
-                set_task(5.0, "StartOvertime")
-            }
-            else
-            {
-                EndMatch(TEAM_UNASSIGNED) // Draw
-            }
-            return
-        }
-
-        // Pre-last or last round notices
-        if(g_iScore[CT_SCORE] == g_iMixEndRound - 1)
-        {
-            client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_LAST_ROUND_FOR_X_TEAM", "CT")
-        }
-        else if(g_iScore[TERO_SCORE] == g_iMixEndRound - 1)
-        {
-            client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_LAST_ROUND_FOR_X_TEAM", "TERRORIST")
-        }
-    }
-    // 3. Overtime Check
-    else if(g_iMatchState == STATE_OVERTIME_FIRST_HALF)
-    {
-        new iOTRounds = g_iOvertimeScore[CT_SCORE] + g_iOvertimeScore[TERO_SCORE]
-        if(iOTRounds >= g_iOvertimeRounds)
-        {
-            TriggerOvertimeHalftime()
-        }
-    }
-    else if(g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-    {
-        new iTarget = g_iOvertimeTriggerScore + g_iOvertimeRounds + 1
-        if(g_iScore[CT_SCORE] >= iTarget)
-            EndMatch(TEAM_CT)
-        else if(g_iScore[TERO_SCORE] >= iTarget)
-            EndMatch(TEAM_TERRORIST)
-        else if(g_iScore[CT_SCORE] == iTarget - 1 && g_iScore[TERO_SCORE] == iTarget - 1)
-            EndMatch(TEAM_UNASSIGNED) // Tie in OT
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Halftime Execution (Tournament Standard Single Intermission Break)
-// -----------------------------------------------------------------------------
-TriggerHalftime()
-{
-    g_iMatchState = STATE_HALFTIME
-    g_bHalftimeActive = true
-
-    // Record exact 1st half score
-    g_iFirstHalfScore[CT_SCORE] = g_iScore[CT_SCORE]
-    g_iFirstHalfScore[TERO_SCORE] = g_iScore[TERO_SCORE]
-
-    // Carry rounds forward to swapped sides
-    new iTemp = g_iScore[CT_SCORE]
-    g_iScore[CT_SCORE] = g_iScore[TERO_SCORE]
-    g_iScore[TERO_SCORE] = iTemp
-
-    // Save player frags and deaths across the halftime restart
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-    for(new i = 0; i < iNum; i++)
-    {
-        new id = iPlayers[i]
-        g_iSavedFrags[id] = floatround(Float:get_entvar(id, var_frags))
-        g_iSavedDeaths[id] = get_member(id, m_iDeaths)
-    }
-
-    // Atomically swap all players using ReAPI rg_set_user_team (synchronizes model and TeamInfo network message)
-    for(new i = 0; i < iNum; i++)
-    {
-        new id = iPlayers[i]
-        new TeamName:iTeam = get_member(id, m_iTeam)
-        if(iTeam == TEAM_CT)
-        {
-            rg_set_user_team(id, TEAM_TERRORIST, MODEL_AUTO, true, false)
-        }
-        else if(iTeam == TEAM_TERRORIST)
-        {
-            rg_set_user_team(id, TEAM_CT, MODEL_AUTO, true, false)
-        }
-        // Reset money to $800 and strip weapons so leftover 1st half items cannot be used
-        rg_add_account(id, 800, AS_SET, true)
-        rg_remove_all_items(id)
-        rg_give_item(id, "weapon_knife")
-    }
-    g_bHalftimePendingSync = true
-
-    CleanGroundWeapons()
-    SyncTeamScores()
-
-    new iIntermission = (g_iFreezeTimeSwap > 0) ? g_iFreezeTimeSwap : 10
-
-    // Announce Halftime in chat
-    client_print_color(0, print_team_default, "^4%s ^1=== ^4HALF TIME ^1=== Teams Swapped!", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^11st Half Result: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE])
-    client_print_color(0, print_team_default, "^4%s ^1Second Half Starting Score: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-    client_print_color(0, print_team_default, "^4%s ^3Intermission: ^1Second half begins in ^4%d seconds^1...", g_szChatPrefix, iIntermission)
-
-    // Prominent DHUD Halftime Banner
-    set_dhudmessage(0, 200, 255, -1.0, 0.35, 2, 0.1, 5.0, 0.1, 1.0)
-    show_dhudmessage(0, "=== HALF TIME ===\nTeams Swapped!\n1st Half: CT %d - %d TR\n2nd Half starts in %d seconds...",
-        g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE], iIntermission)
-
-    // Halftime intermission settings:
-    set_cvar_num("mp_freezetime", iIntermission)
-    set_cvar_num("sv_alltalk", 1) // Allow all players to chat and talk during halftime
-    set_cvar_num("mp_semiclip", 1)
-
-    // Clean round restart to move players to their new spawn bases
-    rg_restart_round()
-    RestoreHalftimePlayerStats()
-
-    // Schedule 3-second warning and final LIVE transition
-    remove_task(TASK_HALFTIME_LIVE)
-    if(iIntermission > 3)
-    {
-        set_task(float(iIntermission - 3), "Task_HalftimeLiveCountdown", TASK_HALFTIME_LIVE)
-    }
-    else
-    {
-        set_task(float(iIntermission), "Task_StartSecondHalfLive", TASK_HALFTIME_LIVE)
-    }
-}
-
-public Task_HalftimeLiveCountdown()
-{
-    client_print_color(0, print_team_default, "^4%s ^3Second half live in ^43 seconds^1! Get ready!", g_szChatPrefix)
-    set_dhudmessage(255, 200, 0, -1.0, 0.35, 0, 0.0, 2.5, 0.05, 0.2)
-    show_dhudmessage(0, "Second half live in 3 seconds!\nGet ready!")
-    client_cmd(0, "spk buttons/bell1")
-
-    remove_task(TASK_HALFTIME_LIVE)
-    set_task(3.0, "Task_StartSecondHalfLive", TASK_HALFTIME_LIVE)
-}
-
-public Task_StartSecondHalfLive()
-{
-    // Halftime complete: Unlock buying and set match to second half LIVE
-    g_iMatchState = STATE_SECOND_HALF
-    g_bHalftimeActive = false
-    g_bHalftimePendingSync = false
-
-    set_cvar_num("mp_freezetime", 15) // Standard competitive freezetime
-    set_cvar_num("sv_alltalk", 3)      // Competitive voice: teammates hear teammates, spec hears all
-    if(get_cvar_pointer("allow_spectators"))
-        set_cvar_num("allow_spectators", 1)
-
-    // Competitive camera: apply unified spectator camera settings
-    ApplySpectatorCameraSettings()
-    CleanGroundWeapons()
-
-    // Single decisive round restart directly into Second Half LIVE
-    rg_restart_round()
-    SyncTeamScores()
-    RestoreHalftimePlayerStats()
-
-    // Reinforce $800 starting pistol round cash and knife
-    for(new i = 1; i <= MAX_PLAYERS; i++)
-    {
-        if(is_user_connected(i))
-        {
-            rg_add_account(i, 800, AS_SET, true)
-            rg_remove_all_items(i)
-            rg_give_item(i, "weapon_knife")
-            new TeamName:team = get_member(i, m_iTeam)
-            if(team == TEAM_CT)
-            {
-                rg_give_item(i, "weapon_usp")
-                rg_set_user_bpammo(i, WEAPON_USP, 24)
-            }
-            else if(team == TEAM_TERRORIST)
-            {
-                rg_give_item(i, "weapon_glock18")
-                rg_set_user_bpammo(i, WEAPON_GLOCK18, 40)
-            }
-        }
-    }
-
-    // Dynamic DHUD banner for Second Half LIVE
-    set_dhudmessage(0, 255, 50, -1.0, 0.35, 2, 0.1, 3.5, 0.05, 0.1)
-    show_dhudmessage(0, "=== SECOND HALF IS LIVE! ===\n* * * LIVE! LIVE! LIVE! * * *\nTarget: %d Wins", g_iMixEndRound)
-
-    // Green ScreenFade Heartbeat & Prominent LIVE notice
-    StartLiveGreenPulse()
-
-    client_print_color(0, print_team_default, "^4%s ^4* * * SECOND HALF IS LIVE! * * * ^1Good Luck & Have Fun!", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^1Voice mode set to ^3Team Talk (Dead+Alive) + Spec All ^4[/t3 /s1]^1.", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^1Current Score: ^4CT %d ^1- ^4%d TR ^1(Target: %d)", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iMixEndRound)
-}
-
-public Task_PostHalftimeSync()
-{
-    SyncTeamScores()
-    RestoreHalftimePlayerStats()
-}
-
-// -----------------------------------------------------------------------------
-// Score Synchronization & Stat Restoration
-// -----------------------------------------------------------------------------
-stock SyncTeamScores()
-{
-    if(g_iMatchState != STATE_FIRST_HALF && g_iMatchState != STATE_HALFTIME && g_iMatchState != STATE_SECOND_HALF &&
-       g_iMatchState != STATE_OVERTIME_FIRST_HALF && g_iMatchState != STATE_OVERTIME_HALFTIME && g_iMatchState != STATE_OVERTIME_SECOND_HALF)
-    {
-        return
-    }
-
-    // Synchronize ReGameDLL game rules internal round counters
-    set_member_game(m_iNumCTWins, g_iScore[CT_SCORE])
-    set_member_game(m_iNumTerroristWins, g_iScore[TERO_SCORE])
-
-    // Update ReGameDLL engine scores (bAdd = false -> direct assignment)
-    rg_update_teamscores(g_iScore[CT_SCORE], g_iScore[TERO_SCORE], false)
-
-    // Broadcast TeamScore network message to synchronize in-game TAB scoreboard
-    static iMsgTeamScore
-    if(!iMsgTeamScore)
-        iMsgTeamScore = get_user_msgid("TeamScore")
-
-    if(iMsgTeamScore > 0)
-    {
-        message_begin(MSG_ALL, iMsgTeamScore)
-        write_string("CT")
-        write_short(g_iScore[CT_SCORE])
-        message_end()
-
-        message_begin(MSG_ALL, iMsgTeamScore)
-        write_string("TERRORIST")
-        write_short(g_iScore[TERO_SCORE])
-        message_end()
-    }
-
-    UpdateServerHostname()
-}
-
-stock SyncPlayerScore(id)
-{
-    if(!is_user_connected(id))
-        return
-
-    if(g_iMatchState != STATE_FIRST_HALF && g_iMatchState != STATE_HALFTIME && g_iMatchState != STATE_SECOND_HALF &&
-       g_iMatchState != STATE_OVERTIME_FIRST_HALF && g_iMatchState != STATE_OVERTIME_HALFTIME && g_iMatchState != STATE_OVERTIME_SECOND_HALF)
-    {
-        return
-    }
-
-    static iMsgTeamScore
-    if(!iMsgTeamScore)
-        iMsgTeamScore = get_user_msgid("TeamScore")
-
-    if(iMsgTeamScore > 0)
-    {
-        message_begin(MSG_ONE, iMsgTeamScore, _, id)
-        write_string("CT")
-        write_short(g_iScore[CT_SCORE])
-        message_end()
-
-        message_begin(MSG_ONE, iMsgTeamScore, _, id)
-        write_string("TERRORIST")
-        write_short(g_iScore[TERO_SCORE])
-        message_end()
-    }
-}
-
-stock RestoreHalftimePlayerStats()
-{
-    SyncTeamScores()
-
-    static iMsgScoreInfo
-    if(!iMsgScoreInfo)
-        iMsgScoreInfo = get_user_msgid("ScoreInfo")
-
-    new iStartMoney = (g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF) ? 10000 : 800
-
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-    for(new i = 0; i < iNum; i++)
-    {
-        new id = iPlayers[i]
-        if(!is_user_connected(id))
-            continue
-
-        // Restore saved player frags and deaths from before restart if saved
-        if(g_iSavedFrags[id] > 0 || g_iSavedDeaths[id] > 0)
-        {
-            set_entvar(id, var_frags, float(g_iSavedFrags[id]))
-            set_member(id, m_iDeaths, g_iSavedDeaths[id])
-        }
-
-        // Set starting money
-        rg_add_account(id, iStartMoney, AS_SET, true)
-
-        // Broadcast updated ScoreInfo so TAB scoreboard updates immediately
-        if(iMsgScoreInfo > 0)
-        {
-            message_begin(MSG_ALL, iMsgScoreInfo)
-            write_byte(id)
-            write_short(g_iSavedFrags[id])
-            write_short(g_iSavedDeaths[id])
-            write_short(0)
-            write_short(_:get_member(id, m_iTeam))
-            message_end()
-        }
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Overtime Execution
-// -----------------------------------------------------------------------------
-public StartOvertime()
-{
-    g_iMatchState = STATE_OVERTIME_FIRST_HALF
-    g_iOvertimeScore[CT_SCORE] = 0
-    g_iOvertimeScore[TERO_SCORE] = 0
-
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-    for(new i = 0; i < iNum; i++)
-    {
-        new id = iPlayers[i]
-        g_iSavedFrags[id] = floatround(Float:get_entvar(id, var_frags))
-        g_iSavedDeaths[id] = get_member(id, m_iDeaths)
-    }
-    g_bHalftimePendingSync = true
-
-    rg_restart_round()
-    SyncTeamScores()
-    set_task(1.0, "Task_PostHalftimeSync")
-    client_print_color(0, print_team_default, "^4%s ^1Overtime First Half is ^4LIVE! ^1MR%d (Score: CT %d - %d TR)", g_szChatPrefix, g_iOvertimeRounds, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-}
-
-TriggerOvertimeHalftime()
-{
-    g_iMatchState = STATE_OVERTIME_HALFTIME
-    g_bHalftimeActive = true
-
-    new iTemp = g_iScore[CT_SCORE]
-    g_iScore[CT_SCORE] = g_iScore[TERO_SCORE]
-    g_iScore[TERO_SCORE] = iTemp
-
-    new iTempOT = g_iOvertimeScore[CT_SCORE]
-    g_iOvertimeScore[CT_SCORE] = g_iOvertimeScore[TERO_SCORE]
-    g_iOvertimeScore[TERO_SCORE] = iTempOT
-
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-    for(new i = 0; i < iNum; i++)
-    {
-        new id = iPlayers[i]
-        g_iSavedFrags[id] = floatround(Float:get_entvar(id, var_frags))
-        g_iSavedDeaths[id] = get_member(id, m_iDeaths)
-    }
-
-    for(new i = 0; i < iNum; i++)
-    {
-        new id = iPlayers[i]
-        new TeamName:iTeam = get_member(id, m_iTeam)
-        if(iTeam == TEAM_CT)
-        {
-            rg_set_user_team(id, TEAM_TERRORIST, MODEL_AUTO, true, false)
-        }
-        else if(iTeam == TEAM_TERRORIST)
-        {
-            rg_set_user_team(id, TEAM_CT, MODEL_AUTO, true, false)
-        }
-        rg_add_account(id, 10000, AS_SET, true)
-        rg_remove_all_items(id)
-        rg_give_item(id, "weapon_knife")
-    }
-    g_bHalftimePendingSync = true
-
-    CleanGroundWeapons()
-    SyncTeamScores()
-
-    new iIntermission = (g_iFreezeTimeSwap > 0) ? g_iFreezeTimeSwap : 10
-    set_cvar_num("mp_freezetime", iIntermission)
-    set_cvar_num("sv_alltalk", 1)
-    set_cvar_num("mp_semiclip", 1)
-
-    rg_restart_round()
-    RestoreHalftimePlayerStats()
-
-    client_print_color(0, print_team_default, "^4%s ^1=== ^4OVERTIME HALF TIME ^1=== Teams Swapped!", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^3Intermission: ^1Overtime 2nd half begins in ^4%d seconds^1...", g_szChatPrefix, iIntermission)
-
-    set_dhudmessage(255, 150, 0, -1.0, 0.35, 2, 0.1, 5.0, 0.1, 1.0)
-    show_dhudmessage(0, "=== OVERTIME HALF TIME ===\nTeams Swapped!\nScore: CT %d - %d TR\nStarts in %d seconds...",
-        g_iScore[CT_SCORE], g_iScore[TERO_SCORE], iIntermission)
-
-    remove_task(TASK_HALFTIME_LIVE)
-    if(iIntermission > 3)
-    {
-        set_task(float(iIntermission - 3), "Task_OvertimeHalftimeLiveCountdown", TASK_HALFTIME_LIVE)
-    }
-    else
-    {
-        set_task(float(iIntermission), "Task_StartOvertimeSecondHalfLive", TASK_HALFTIME_LIVE)
-    }
-}
-
-public Task_OvertimeHalftimeLiveCountdown()
-{
-    client_print_color(0, print_team_default, "^4%s ^3Overtime 2nd half live in ^43 seconds^1! Get ready!", g_szChatPrefix)
-    set_dhudmessage(255, 200, 0, -1.0, 0.35, 0, 0.0, 2.5, 0.05, 0.2)
-    show_dhudmessage(0, "Overtime 2nd half live in 3 seconds!\nGet ready!")
-    client_cmd(0, "spk buttons/bell1")
-
-    remove_task(TASK_HALFTIME_LIVE)
-    set_task(3.0, "Task_StartOvertimeSecondHalfLive", TASK_HALFTIME_LIVE)
-}
-
-public Task_StartOvertimeSecondHalfLive()
-{
-    g_iMatchState = STATE_OVERTIME_SECOND_HALF
-    g_bHalftimeActive = false
-    g_bHalftimePendingSync = false
-
-    set_cvar_num("mp_freezetime", 15)
-    set_cvar_num("sv_alltalk", 3)
-    if(get_cvar_pointer("allow_spectators"))
-        set_cvar_num("allow_spectators", 1)
-
-    ApplySpectatorCameraSettings()
-    CleanGroundWeapons()
-
-    rg_restart_round()
-    SyncTeamScores()
-    RestoreHalftimePlayerStats()
-
-    for(new i = 1; i <= MAX_PLAYERS; i++)
-    {
-        if(is_user_connected(i))
-        {
-            rg_add_account(i, 10000, AS_SET, true)
-        }
-    }
-
-    set_dhudmessage(255, 150, 0, -1.0, 0.35, 2, 0.1, 3.5, 0.05, 0.1)
-    show_dhudmessage(0, "=== OVERTIME 2nd HALF IS LIVE! ===\n* * * LIVE! LIVE! LIVE! * * *")
-
-    StartLiveGreenPulse()
-
-    client_print_color(0, print_team_default, "^4%s ^4* * * OVERTIME 2nd HALF IS LIVE! * * * ^1Good Luck & Have Fun!", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^1Current Score: ^4CT %d ^1- ^4%d TR", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-}
-
-// -----------------------------------------------------------------------------
-// Match End
-// -----------------------------------------------------------------------------
-EndMatch(TeamName:iWinnerTeam)
-{
-    new iDuration = get_systime() - g_iMatchStartTime
-
-    if(iWinnerTeam == TEAM_CT)
-    {
-        client_print_color(0, print_team_default, "^4%s ^3* * * ^4CONGRATULATIONS TO COUNTER-TERRORISTS! ^3* * *", g_szChatPrefix)
-        client_print_color(0, print_team_default, "^4%s ^1Counter-Terrorists won the match with score ^4%d ^1- ^3%d^1! GG WP!", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-    }
-    else if(iWinnerTeam == TEAM_TERRORIST)
-    {
-        client_print_color(0, print_team_default, "^4%s ^3* * * ^4CONGRATULATIONS TO TERRORISTS! ^3* * *", g_szChatPrefix)
-        client_print_color(0, print_team_default, "^4%s ^1Terrorists won the match with score ^4%d ^1- ^3%d^1! GG WP!", g_szChatPrefix, g_iScore[TERO_SCORE], g_iScore[CT_SCORE])
-    }
-    else
-    {
-        client_print_color(0, print_team_default, "^4%s ^1Match ended in a ^3DRAW ^1(%d - %d)!", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-    }
-
-    client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_END_SCORE",
-        LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE],
-        LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
-
-    // Forward winners to other plugins
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-    for(new i = 0; i < iNum; i++)
-    {
-        new id = iPlayers[i]
-        if(get_member(id, m_iTeam) == iWinnerTeam)
-        {
-            ExecuteForward(g_hFwdMatchWinner, g_iRet, id)
-        }
-    }
-
-    ExecuteForward(g_hFwdGameOver, g_iRet, 0, iDuration, iWinnerTeam == TEAM_CT ? 'C' : 'T', 0)
-
-    // Start Victory Heartbeat / Pulsing ScreenFade Celebration ("Heartbeat Pulse")
-    g_iVictoryWinnerTeam = iWinnerTeam
-    g_iVictoryPulseCount = 0
-
-    remove_task(TASK_VICTORY_PULSE)
-    remove_task(TASK_SHOW_LEADERBOARD)
-    remove_task(TASK_MATCH_END)
-
-    Task_VictoryPulse()
-
-    // Automatically transition to Warmup after 14 seconds
-    set_task(14.0, "StartWarmup", TASK_MATCH_END)
-}
-
-public Task_VictoryPulse()
-{
-    g_iVictoryPulseCount++
-
-    new r, g, b
-    if(g_iVictoryWinnerTeam == TEAM_TERRORIST)
-    {
-        // Pulsing Crimson Red for Terrorists
-        r = 230
-        g = 25
-        b = 25
-    }
-    else if(g_iVictoryWinnerTeam == TEAM_CT)
-    {
-        // Pulsing Vibrant Blue for Counter-Terrorists
-        r = 25
-        g = 120
-        b = 245
-    }
-    else
-    {
-        // Draw: Golden Yellow
-        r = 240
-        g = 190
-        b = 20
-    }
-
-    // ScreenFade message (0.5s fade-in, 0.25s hold, FFADE_IN fade out to clear screen)
-    if(g_iMsgScreenFade > 0)
-    {
-        message_begin(MSG_ALL, g_iMsgScreenFade)
-        write_short((1<<12) / 2) // Duration: 0.5s
-        write_short((1<<12) / 4) // Hold: 0.25s
-        write_short(0x0000)      // FFADE_IN (fade back to normal screen)
-        write_byte(r)
-        write_byte(g)
-        write_byte(b)
-        write_byte(130)          // Alpha intensity
-        message_end()
-    }
-
-    // Play official victory sound on first pulse, and audio bells on remaining pulses
-    if(g_iVictoryPulseCount == 1)
-    {
-        if(g_iVictoryWinnerTeam == TEAM_TERRORIST)
-        {
-            rg_send_audio(0, "radio/terwin.wav")
-        }
-        else if(g_iVictoryWinnerTeam == TEAM_CT)
-        {
-            rg_send_audio(0, "radio/ctwin.wav")
-        }
-    }
-    else
-    {
-        client_cmd(0, "spk buttons/bell1")
-    }
-
-    // Dynamic congratulatory DHUD banner
-    if(g_iVictoryWinnerTeam == TEAM_TERRORIST)
-    {
-        set_dhudmessage(255, 40, 40, -1.0, 0.28, 2, 0.05, 0.7, 0.05, 0.1)
-        show_dhudmessage(0, "* * * TERRORISTS VICTORY! * * *\nScore: %d - %d\nCongratulations to Terrorists!", g_iScore[TERO_SCORE], g_iScore[CT_SCORE])
-    }
-    else if(g_iVictoryWinnerTeam == TEAM_CT)
-    {
-        set_dhudmessage(40, 140, 255, -1.0, 0.28, 2, 0.05, 0.7, 0.05, 0.1)
-        show_dhudmessage(0, "* * * COUNTER-TERRORISTS VICTORY! * * *\nScore: %d - %d\nCongratulations to Counter-Terrorists!", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-    }
-    else
-    {
-        set_dhudmessage(255, 215, 0, -1.0, 0.28, 2, 0.05, 0.7, 0.05, 0.1)
-        show_dhudmessage(0, "* * * MATCH DRAW! * * *\nScore: %d - %d\nWell Played Everyone!", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-    }
-
-    // Pulse 5 times (every 0.75 seconds = ~3.75s)
-    if(g_iVictoryPulseCount < 5)
-    {
-        set_task(0.75, "Task_VictoryPulse", TASK_VICTORY_PULSE)
-    }
-    else
-    {
-        // After pulsing completes, show leaderboard MOTD and print chat stats
-        set_task(0.5, "Task_ShowMatchLeaderboard", TASK_SHOW_LEADERBOARD)
-    }
-}
-
-public Task_ShowMatchLeaderboard()
-{
-    // Collect all participating human players
-    new iPlayerList[MAX_PLAYERS]
-    new iPlayerScores[MAX_PLAYERS]
-    new iTotalCount = 0
-
-    for(new id = 1; id <= MAX_PLAYERS; id++)
-    {
-        if(!is_user_connected(id) || is_user_bot(id))
-            continue
-
-        new TeamName:iTeam = get_member(id, m_iTeam)
-        if(iTeam != TEAM_TERRORIST && iTeam != TEAM_CT)
-            continue
-
-        iPlayerList[iTotalCount] = id
-        // Weighted Score: Kills*3 + HS*2 + Knife*5 + Plants*3 + Defuses*3 - Deaths
-        iPlayerScores[iTotalCount] = (g_iMatchKills[id] * 3) + (g_iMatchHS[id] * 2) + (g_iMatchKnifeKills[id] * 5) + (g_iMatchPlants[id] * 3) + (g_iMatchDefuses[id] * 3) - g_iMatchDeaths[id]
-        iTotalCount++
-    }
-
-    if(iTotalCount == 0)
-        return
-
-    // Sort descending by score
-    for(new i = 0; i < iTotalCount - 1; i++)
-    {
-        for(new j = i + 1; j < iTotalCount; j++)
-        {
-            if(iPlayerScores[j] > iPlayerScores[i] || (iPlayerScores[j] == iPlayerScores[i] && g_iMatchKills[iPlayerList[j]] > g_iMatchKills[iPlayerList[i]]))
-            {
-                new iTempScore = iPlayerScores[i]
-                iPlayerScores[i] = iPlayerScores[j]
-                iPlayerScores[j] = iTempScore
-
-                new iTempId = iPlayerList[i]
-                iPlayerList[i] = iPlayerList[j]
-                iPlayerList[j] = iTempId
-            }
-        }
-    }
-
-    // Winner details
-    new szWinnerTitle[32], szWinnerColor[16]
-    if(g_iVictoryWinnerTeam == TEAM_CT)
-    {
-        copy(szWinnerTitle, charsmax(szWinnerTitle), "Counter-Terrorists")
-        copy(szWinnerColor, charsmax(szWinnerColor), "#58a6ff")
-    }
-    else if(g_iVictoryWinnerTeam == TEAM_TERRORIST)
-    {
-        copy(szWinnerTitle, charsmax(szWinnerTitle), "Terrorists")
-        copy(szWinnerColor, charsmax(szWinnerColor), "#ff7b72")
-    }
-    else
-    {
-        copy(szWinnerTitle, charsmax(szWinnerTitle), "DRAW")
-        copy(szWinnerColor, charsmax(szWinnerColor), "#ffd700")
-    }
-
-    // Build ultra-compact, professional HTML table (under 1100 bytes for GoldSrc safety)
-    static szHtml[1500]
-    new iLen = 0
-
-    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
-        "<body bgcolor='#0e1117' text='#c9d1d9' style='font-family:Tahoma,sans-serif;font-size:11px;margin:8px;text-align:center'>")
-    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
-        "<h3 style='color:#f5a623;margin:2px'>* GAMELAND 5v5 MATCH MVP & STATS *</h3>")
-    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
-        "<font color='#8b949e'>Winner: <b style='color:%s'>%s</b> | Score: <b>CT %d : %d TR</b></font><br><br>",
-        szWinnerColor, szWinnerTitle, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-
-    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
-        "<table width='100%%' border='1' bordercolor='#30363d' cellpadding='3' cellspacing='0' style='font-size:10px;text-align:center'>")
-    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
-        "<tr bgcolor='#161b22' style='color:#58a6ff'><th>#</th><th align='left'>Player</th><th>K</th><th>D</th><th>K/D</th><th>HS</th><th>Knf</th><th>Plt</th><th>Def</th><th>Pts</th></tr>")
-
-    new iMaxRows = min(10, iTotalCount)
-    for(new i = 0; i < iMaxRows; i++)
-    {
-        new id = iPlayerList[i]
-        new Float:flKD = (g_iMatchDeaths[id] > 0) ? (float(g_iMatchKills[id]) / float(g_iMatchDeaths[id])) : float(g_iMatchKills[id])
-
-        new szCleanName[20]
-        copy(szCleanName, charsmax(szCleanName), g_szUserName[id])
-        replace_all(szCleanName, charsmax(szCleanName), "<", "")
-        replace_all(szCleanName, charsmax(szCleanName), ">", "")
-        replace_all(szCleanName, charsmax(szCleanName), "'", "")
-
-        if(i == 0)
-        {
-            // MVP row highlighted in Gold!
-            iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
-                "<tr bgcolor='#2e2305' style='color:#ffd700;font-weight:bold'><td>[MVP]</td><td align='left'>%s</td><td>%d</td><td>%d</td><td>%.2f</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td></tr>",
-                szCleanName, g_iMatchKills[id], g_iMatchDeaths[id], flKD, g_iMatchHS[id], g_iMatchKnifeKills[id], g_iMatchPlants[id], g_iMatchDefuses[id], iPlayerScores[i])
-        }
-        else
-        {
-            iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
-                "<tr><td>%d</td><td align='left'>%s</td><td>%d</td><td>%d</td><td>%.2f</td><td>%d</td><td>%d</td><td>%d</td><td>%d</td><td><b>%d</b></td></tr>",
-                i + 1, szCleanName, g_iMatchKills[id], g_iMatchDeaths[id], flKD, g_iMatchHS[id], g_iMatchKnifeKills[id], g_iMatchPlants[id], g_iMatchDefuses[id], iPlayerScores[i])
-        }
-    }
-
-    iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen, "</table></body>")
-
-    // Show MOTD to each connected player
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-    for(new i = 0; i < iNum; i++)
-    {
-        show_motd(iPlayers[i], szHtml, "GAMELAND Match Summary")
-    }
-
-    // Broadcast colored chat summary with top players and MVP
-    new iMvpId = iPlayerList[0]
-    new Float:flMvpKD = (g_iMatchDeaths[iMvpId] > 0) ? (float(g_iMatchKills[iMvpId]) / float(g_iMatchDeaths[iMvpId])) : float(g_iMatchKills[iMvpId])
-
-    client_print_color(0, print_team_default, "^4%s ^3========================================", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^3* MATCH MVP: ^4%s ^3(Score: %d | K/D: %d/%d [%.2f])",
-        g_szChatPrefix, g_szUserName[iMvpId], iPlayerScores[0], g_iMatchKills[iMvpId], g_iMatchDeaths[iMvpId], flMvpKD)
-
-    new iChatLimit = min(3, iTotalCount)
-    for(new i = 0; i < iChatLimit; i++)
-    {
-        new id = iPlayerList[i]
-        client_print_color(0, print_team_default, "^4%s ^3#%d ^4%s ^1- ^4%d K ^1/ ^3%d D ^1(HS: ^4%d^1, Knife: ^4%d^1, Plant: ^4%d^1, Defuse: ^4%d^1)",
-            g_szChatPrefix, i + 1, g_szUserName[id], g_iMatchKills[id], g_iMatchDeaths[id], g_iMatchHS[id], g_iMatchKnifeKills[id], g_iMatchPlants[id], g_iMatchDefuses[id])
-    }
-    client_print_color(0, print_team_default, "^4%s ^3========================================", g_szChatPrefix)
-}
-
-// -----------------------------------------------------------------------------
-// Warmup / DM1 Mode Implementation
-// -----------------------------------------------------------------------------
-public StartWarmup()
-{
-    remove_task(TASK_HALFTIME_LIVE)
-    remove_task(TASK_LIVE_COUNTDOWN)
-    remove_task(TASK_END_ROUND)
-    remove_task(TASK_TIMEOUT_EXPIRE)
-
-    for(new i = 1; i <= MAX_PLAYERS; i++)
-    {
-        if(is_user_connected(i))
-        {
-            show_menu(i, 0, "^n", 1)
-        }
-    }
-    remove_task(TASK_VICTORY_PULSE)
-    remove_task(TASK_SHOW_LEADERBOARD)
-    remove_task(TASK_MATCH_END)
-
-    g_iMatchState = STATE_WARMUP
-    g_bPickMode = false
-    UpdateServerHostname()
-    g_bRoundScored = false
-    g_bHalftimePendingSync = false
-    g_iScore[CT_SCORE] = 0
-    g_iScore[TERO_SCORE] = 0
-    g_iFirstHalfScore[CT_SCORE] = 0
-    g_iFirstHalfScore[TERO_SCORE] = 0
-    g_bTeamTimeoutUsed[CT_SCORE] = false
-    g_bTeamTimeoutUsed[TERO_SCORE] = false
-
-    for(new i = 1; i <= MAX_PLAYERS; i++)
-    {
-        g_iSavedFrags[i] = 0
-        g_iSavedDeaths[i] = 0
-        g_iMatchKills[i] = 0
-        g_iMatchDeaths[i] = 0
-        g_iMatchHS[i] = 0
-        g_iMatchKnifeKills[i] = 0
-        g_iMatchPlants[i] = 0
-        g_iMatchDefuses[i] = 0
-    }
-
-    set_member_game(m_iNumCTWins, 0)
-    set_member_game(m_iNumTerroristWins, 0)
-    rg_update_teamscores(0, 0, false)
-
-    // Execute stop config if present
-    if(g_szStopConfig[0])
-    {
-        server_cmd("exec %s", g_szStopConfig)
-    }
-
-    // Cache map spawns for Deathmatch random respawning
-
-    // Warmup gameplay rules: Deathmatch, continuous play, $16,000, buy anywhere, no friendly fire
-    set_cvar_num("mp_freezetime", 0)
-    set_cvar_num("mp_buytime", 999)
-    set_cvar_num("mp_startmoney", g_iWarmMoney)
-    set_cvar_float("mp_roundtime", 9.0)
-    set_cvar_num("mp_friendlyfire", 0)
-
-    // Warmup camera: Free spectating permitted
-    set_cvar_num("mp_forcecamera", 0)
-    set_cvar_num("mp_forcechasecam", 0)
-    set_cvar_num("mp_fadetoblack", 0)
-
-    // Voice mode: Warmup is always /t1 (Alltalk 1 - everyone hears everyone)
-    set_cvar_num("sv_alltalk", 1)
-
-    if(get_cvar_pointer("mp_buy_anywhere"))
-        set_cvar_num("mp_buy_anywhere", 1)
-
-    if(get_cvar_pointer("mp_round_infinite"))
-        set_cvar_string("mp_round_infinite", "f")
-
-    if(get_cvar_pointer("mp_auto_reload_weapons"))
-        set_cvar_num("mp_auto_reload_weapons", 1)
-
-    server_cmd("sv_restart 1")
-
-    client_print_color(0, print_team_default, "^4%s ^1WarmUp mode is now ^4ACTIVE^1! Voice set to ^4AllTalk ON ^3[/t1]^1.", g_szChatPrefix)
-    client_print_color(0, print_team_default, "^4%s ^1Practice with ^4$16,000^1! For infinite instant respawns type ^3/rev1^1.", g_szChatPrefix)
-}
-
-
-
-
-
-
-
-// -----------------------------------------------------------------------------
-// Live Match Countdown & Professional Start Flow (3-Restart Tournament Sequence)
-// -----------------------------------------------------------------------------
-public StartLiveCountdown()
-{
-    g_bPickMode = false
-    g_bReviveMode = false
-    remove_task(TASK_LIVE_COUNTDOWN)
-    remove_task(TASK_LIVE_PULSE)
-
-    // Close any open menus on all players
-    for(new i = 1; i <= MAX_PLAYERS; i++)
-    {
-        if(is_user_connected(i))
-        {
-            show_menu(i, 0, "^n", 1)
-        }
-    }
-
-    UpdateServerHostname()
-    CleanGroundWeapons()
-
-    // Tournament intermediate cvars
-    set_cvar_num("mp_freezetime", 0)
-
-    // Competitive camera: apply unified spectator camera settings
-    ApplySpectatorCameraSettings()
-
-    // Restart 1: sv_restart 3
-    server_cmd("sv_restart 3")
-    set_dhudmessage(255, 140, 0, -1.0, 0.35, 1, 0.1, 2.8, 0.05, 0.1)
-    show_dhudmessage(0, "=== [ RESTART 1/3 ] ===^n5v5 Competitive Match starting soon...")
-    client_cmd(0, "spk buttons/bell1")
-    client_print_color(0, print_team_default, "^4%s ^1Match sequence initiated! ^3Restart 1/3 ^1(3 seconds)...", g_szChatPrefix)
-
-    set_task(3.0, "Task_LiveRestart2", TASK_LIVE_COUNTDOWN)
-}
-
-public Task_LiveRestart2()
-{
-    // Restart 2: sv_restart 3
-    server_cmd("sv_restart 3")
-    set_dhudmessage(255, 200, 0, -1.0, 0.35, 1, 0.1, 2.8, 0.05, 0.1)
-    show_dhudmessage(0, "=== [ RESTART 2/3 ] ===^nFinal restart incoming...")
-    client_cmd(0, "spk buttons/bell1")
-    client_print_color(0, print_team_default, "^4%s ^1Getting ready... ^3Restart 2/3 ^1(3 seconds)...", g_szChatPrefix)
-
-    set_task(3.0, "Task_LiveRestart3", TASK_LIVE_COUNTDOWN)
-}
-
-public Task_LiveRestart3()
-{
-    // Final Restart 3/3: Directly transition to Live match with competitive setup!
-    StartMatchLive()
-}
-
-// -----------------------------------------------------------------------------
-// Live Pulsing Green ScreenFade & Announcement ("Green Heartbeat Pulse")
-// -----------------------------------------------------------------------------
-stock StartLiveGreenPulse()
-{
-    g_iLivePulseCount = 0
-    remove_task(TASK_LIVE_PULSE)
-    Task_LiveGreenPulse()
-}
-
-public Task_LiveGreenPulse()
-{
-    g_iLivePulseCount++
-
-    // Neon Green pulsing ScreenFade
-    if(g_iMsgScreenFade > 0)
-    {
-        message_begin(MSG_ALL, g_iMsgScreenFade)
-        write_short((1<<12) / 2) // Duration: 0.5s fade
-        write_short((1<<12) / 4) // Hold: 0.25s
-        write_short(0x0000)      // FFADE_IN (fade back to normal)
-        write_byte(20)           // R
-        write_byte(235)          // G
-        write_byte(40)           // B
-        write_byte(125)          // Alpha intensity
-        message_end()
-    }
-
-    client_cmd(0, "spk buttons/bell1")
-
-    set_dhudmessage(0, 255, 50, -1.0, 0.35, 2, 0.1, 0.7, 0.05, 0.1)
-    show_dhudmessage(0, "* * * LIVE! LIVE! LIVE! * * *^nGood Luck & Have Fun!")
-
-    if(g_iLivePulseCount < 4)
-    {
-        set_task(0.75, "Task_LiveGreenPulse", TASK_LIVE_PULSE)
-    }
-}
-
-StartMatchLive()
-{
-    g_iMatchState = STATE_FIRST_HALF
-    g_bPickMode = false
-    UpdateServerHostname()
-    g_iScore[CT_SCORE] = 0
-    g_iScore[TERO_SCORE] = 0
-    g_iFirstHalfScore[CT_SCORE] = 0
-    g_iFirstHalfScore[TERO_SCORE] = 0
-    g_bHalftimePendingSync = false
-    g_bRoundScored = false
-    g_bTeamTimeoutUsed[CT_SCORE] = false
-    g_bTeamTimeoutUsed[TERO_SCORE] = false
-    g_iMatchStartTime = get_systime()
-
-    for(new i = 1; i <= MAX_PLAYERS; i++)
-    {
-        g_iSavedFrags[i] = 0
-        g_iSavedDeaths[i] = 0
-        g_iMatchKills[i] = 0
-        g_iMatchDeaths[i] = 0
-        g_iMatchHS[i] = 0
-        g_iMatchKnifeKills[i] = 0
-        g_iMatchPlants[i] = 0
-        g_iMatchDefuses[i] = 0
-    }
-
-    set_member_game(m_iNumCTWins, 0)
-    set_member_game(m_iNumTerroristWins, 0)
-    rg_update_teamscores(0, 0, false)
-
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-    for(new i = 0; i < iNum; i++)
-    {
-        new id = iPlayers[i]
-        rg_add_account(id, 800, AS_SET)
-    }
-
-    SyncTeamScores()
-
-    if(g_szStartConfig[0])
-    {
-        server_cmd("exec %s", g_szStartConfig)
-    }
-
-    set_cvar_num("mp_freezetime", 15)
-    set_cvar_num("mp_buytime", 15)
-    set_cvar_num("mp_startmoney", 800)
-    set_cvar_float("mp_roundtime", 1.75)
-    set_cvar_num("mp_friendlyfire", 0)
-
-    // Competitive camera: apply unified spectator camera settings
-    ApplySpectatorCameraSettings()
-
-    if(get_cvar_pointer("mp_buy_anywhere"))
-        set_cvar_num("mp_buy_anywhere", 0)
-
-    if(get_cvar_pointer("mp_round_infinite"))
-        set_cvar_string("mp_round_infinite", "0")
-
-    if(get_cvar_pointer("mp_auto_reload_weapons"))
-        set_cvar_num("mp_auto_reload_weapons", 0)
-
-    // Voice mode: Competitive match is always /t3 (sv_alltalk 3: teammates hear each other, spec hears all)
-    set_cvar_num("sv_alltalk", 3)
-    if(get_cvar_pointer("allow_spectators"))
-        set_cvar_num("allow_spectators", 1)
-
-    CleanGroundWeapons()
-    g_bReviveMode = false
-    server_cmd("sv_restart 1")
-
-    // Dynamic DHUD for Restart 3/3 (LIVE)
-    set_dhudmessage(0, 255, 50, -1.0, 0.35, 2, 0.1, 2.8, 0.05, 0.1)
-    show_dhudmessage(0, "=== [ RESTART 3/3 - LIVE! ] ===^n* * * LIVE! LIVE! LIVE! * * *")
-
-    // Green ScreenFade Heartbeat & Prominent LIVE notice timed right as round begins
-    set_task(1.0, "StartLiveGreenPulse", TASK_LIVE_PULSE)
-
-    client_print_color(0, print_team_default, "^4%s ^4* * * LIVE! LIVE! LIVE! * * * ^1Good Luck & Have Fun!", g_szChatPrefix)
-
-    ExecuteForward(g_hFwdGameBeginPre, g_iRet)
-
-    // Notify post forward for all connected players
-    get_players(iPlayers, iNum, "ch")
-    for(new i = 0; i < iNum; i++)
-    {
-        new id = iPlayers[i]
-        new szAuth[36]
-        get_user_authid(id, szAuth, charsmax(szAuth))
-        ExecuteForward(g_hFwdGameBeginPost, g_iRet, id, (i == iNum - 1) ? 1 : 0, szAuth, g_szUserName[id], 0)
-    }
-}
-
-// -----------------------------------------------------------------------------
-// HUD Display & Status Banner
-// -----------------------------------------------------------------------------
-public Task_HudDisplay()
-{
-    static szMsg[256]
-
-    if(g_bPickMode)
-    {
-        formatex(szMsg, charsmax(szMsg), "== [ CAPTAIN PICK ] ==^nPick Teams (/a, /st, /spec)")
-        set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-        ShowSyncHudMsg(0, g_iHudSync, szMsg)
-        return
-    }
-
-    switch(g_iMatchState)
-    {
-        case STATE_WARMUP:
-        {
-            if(g_bReviveMode)
-            {
-                formatex(szMsg, charsmax(szMsg), "== [ WARMUP - REVIVE ON ] ==")
-                set_hudmessage(0, 255, 120, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-            }
-            else
-            {
-                formatex(szMsg, charsmax(szMsg), "== [ WARMUP ] ==")
-                set_hudmessage(0, 220, 255, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-            }
-            ShowSyncHudMsg(0, g_iHudSync, szMsg)
-        }
-        case STATE_FIRST_HALF, STATE_SECOND_HALF, STATE_OVERTIME_FIRST_HALF, STATE_OVERTIME_SECOND_HALF:
-        {
-            new iPlayers[MAX_PLAYERS], iNum
-            get_players(iPlayers, iNum, "ch")
-
-            for(new p = 0; p < iNum; p++)
-            {
-                new id = iPlayers[p]
-                new iTarget = id
-
-                if(!is_user_alive(id))
-                {
-                    new iSpec = get_entvar(id, var_iuser2)
-                    if(1 <= iSpec <= MAX_PLAYERS && is_user_alive(iSpec))
-                    {
-                        iTarget = iSpec
-                    }
-                }
-
-                new szCards[64] = ""
-                new iKills = (1 <= iTarget <= MAX_PLAYERS && is_user_alive(iTarget)) ? g_iRoundKills[iTarget] : 0
-
-                // Single dynamic kill badge replacing itself in place: 1 -> 2 -> 3 -> 4 -> ACE
-                if(iKills == 1)
-                    copy(szCards, charsmax(szCards), "^n[ 1 ]")
-                else if(iKills == 2)
-                    copy(szCards, charsmax(szCards), "^n[ 2 ]")
-                else if(iKills == 3)
-                    copy(szCards, charsmax(szCards), "^n[ 3 ]")
-                else if(iKills == 4)
-                    copy(szCards, charsmax(szCards), "^n[ 4 ]")
-                else if(iKills >= 5)
-                    copy(szCards, charsmax(szCards), "^n[ * ACE * ]")
-
-                if(g_iMatchState == STATE_FIRST_HALF)
-                {
-                    formatex(szMsg, charsmax(szMsg), "== [ 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
-                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
-                    set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-                }
-                else if(g_iMatchState == STATE_HALFTIME)
-                {
-                    formatex(szMsg, charsmax(szMsg), "== [ HALF TIME - BREAK ] ==^nCT [ %d ]  :  [ %d ] TR^nTeams Swapped",
-                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-                    set_hudmessage(0, 200, 255, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-                }
-                else if(g_iMatchState == STATE_SECOND_HALF)
-                {
-                    formatex(szMsg, charsmax(szMsg), "== [ 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
-                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
-                    set_hudmessage(0, 255, 150, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-                }
-                else if(g_iMatchState == STATE_OVERTIME_FIRST_HALF)
-                {
-                    formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 1st HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
-                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
-                    set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-                }
-                else if(g_iMatchState == STATE_OVERTIME_HALFTIME)
-                {
-                    formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - HALF TIME ] ==^nCT [ %d ]  :  [ %d ] TR^nTeams Swapped",
-                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-                    set_hudmessage(255, 150, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-                }
-                else if(g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-                {
-                    formatex(szMsg, charsmax(szMsg), "== [ OVERTIME - 2nd HALF ] ==^nCT [ %d ]  :  [ %d ] TR%s",
-                        g_iScore[CT_SCORE], g_iScore[TERO_SCORE], szCards)
-                    set_hudmessage(255, 200, 0, -1.0, 0.015, 0, 0.0, 1.1, 0.0, 0.0)
-                }
-
-                ShowSyncHudMsg(id, g_iHudSync, szMsg)
-            }
-        }
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Admin & Client Commands Handlers
-// -----------------------------------------------------------------------------
-// bool:HasAdminAccess defined above before spectator handlers
-
-bool:HasRconOrBanAccess(id)
-{
-    if(!id)
-        return true
-    new iFlags = get_user_flags(id)
-    return bool:(iFlags & ADMIN_RCON || iFlags & ADMIN_BAN || iFlags & ADMIN_IMMUNITY)
-}
-
-public Cmd_ReviveAll(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    new iPlayers[MAX_PLAYERS], iNum, iRevived = 0
-    get_players(iPlayers, iNum, "ch")
-
-    for(new i = 0; i < iNum; i++)
-    {
-        new p = iPlayers[i]
-        if(!is_user_alive(p))
-        {
-            new TeamName:team = get_member(p, m_iTeam)
-            if(team == TEAM_TERRORIST || team == TEAM_CT)
-            {
-                rg_round_respawn(p)
-                if(g_iMatchState == STATE_WARMUP)
-                {
-                    set_member(p, m_iAccount, 16000)
-                    rg_give_item(p, "item_kevlar")
-                    rg_give_item(p, "item_assaultsuit")
-                }
-                iRevived++
-            }
-        }
-    }
-
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Server")
-
-    if(iRevived > 0)
-    {
-        client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1revived all dead players (^4%d revived^1) [/rev].", g_szChatPrefix, szAdmin, iRevived)
-    }
-    else
-    {
-        client_print_color(id, print_team_default, "^4%s ^1No dead players found to revive.", g_szChatPrefix)
-    }
-
-    return PLUGIN_HANDLED
-}
-
-public Cmd_ReviveOn(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    g_bReviveMode = true
-
-    if(get_cvar_pointer("mp_round_infinite"))
-        set_cvar_string("mp_round_infinite", "abcdef")
-
-    if(get_cvar_pointer("mp_buy_anywhere"))
-        set_cvar_num("mp_buy_anywhere", 1)
-
-    if(get_cvar_pointer("mp_auto_reload_weapons"))
-        set_cvar_num("mp_auto_reload_weapons", 1)
-
-    set_cvar_num("mp_freezetime", 0)
-    set_cvar_num("mp_buytime", 999)
-    set_cvar_num("mp_startmoney", 16000)
-    set_cvar_float("mp_roundtime", 99.0)
-
-    // Respawn all dead players immediately
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-    for(new i = 0; i < iNum; i++)
-    {
-        new p = iPlayers[i]
-        if(!is_user_alive(p))
-        {
-            new TeamName:team = get_member(p, m_iTeam)
-            if(team == TEAM_TERRORIST || team == TEAM_CT)
-            {
-                rg_round_respawn(p)
-                set_member(p, m_iAccount, 16000)
-                rg_give_item(p, "item_kevlar")
-                rg_give_item(p, "item_assaultsuit")
-            }
-        }
-    }
-
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Server")
-
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1enabled ^4Infinite Revive Mode ^3[/rev1]^1!", g_szChatPrefix, szAdmin)
-    client_print_color(0, print_team_default, "^4%s ^1Instant Respawn ON | 1v1 Round End Blocked | $16,000 & Buy Anywhere!", g_szChatPrefix)
-
-    return PLUGIN_HANDLED
-}
-
-public Cmd_ReviveOff(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    if(!g_bReviveMode)
-    {
-        if(id)
-            client_print_color(id, print_team_default, "^4%s ^1Infinite Revive mode is already ^3inactive^1.", g_szChatPrefix)
-        return PLUGIN_HANDLED
-    }
-
-    g_bReviveMode = false
-
-    if(get_cvar_pointer("mp_round_infinite"))
-        set_cvar_string("mp_round_infinite", "0")
-
-    if(get_cvar_pointer("mp_buy_anywhere"))
-        set_cvar_num("mp_buy_anywhere", 0)
-
-    if(get_cvar_pointer("mp_auto_reload_weapons"))
-        set_cvar_num("mp_auto_reload_weapons", 0)
-
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Server")
-
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1disabled ^3Infinite Revive Mode ^1[/rev0]. Normal rules restored.", g_szChatPrefix, szAdmin)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_LegacyDm(id)
-{
-    client_print_color(id, print_team_default, "^4%s ^1Note: ^3/dm1 ^1was replaced! Use ^4/rev1 ^1(Infinite Revive) or ^4/rev0 ^1(Turn Off).", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^1For standard competitive warmup, use ^3/warm^1.", g_szChatPrefix)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_StartMix(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_ALREADY_STARTED")
-        return PLUGIN_HANDLED
-    }
-
-    g_bPickMode = false
-    UpdateServerHostname()
-
-    // Automatically deactivate Revive mode if active
-    if(g_bReviveMode)
-    {
-        Cmd_ReviveOff(0)
-    }
-
-    remove_task(TASK_LIVE_COUNTDOWN)
-
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Server")
-
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1started the 5v5 Mix Match!", g_szChatPrefix, szAdmin)
-    StartLiveCountdown()
-    return PLUGIN_HANDLED
-}
-
-public Cmd_DirectLive(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    if(g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_SECOND_HALF ||
-       g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_ALREADY_STARTED")
-        return PLUGIN_HANDLED
-    }
-
-    g_bPickMode = false
-    UpdateServerHostname()
-
-    if(g_bReviveMode)
-    {
-        Cmd_ReviveOff(0)
-    }
-
-    remove_task(TASK_LIVE_COUNTDOWN)
-
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Server")
-
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1triggered ^4LIVE^1! Starting match sequence...", g_szChatPrefix, szAdmin)
-    StartLiveCountdown()
-    return PLUGIN_HANDLED
-}
-
-public Cmd_Alltalk1(id)
-{
-    if(!HasAdminAccess(id)) return PLUGIN_HANDLED
-    set_cvar_num("sv_alltalk", 1)
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Server")
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1set Voice Chat to ^4AllTalk ON ^3[/t1]^1.", g_szChatPrefix, szAdmin)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_Alltalk2(id)
-{
-    if(!HasAdminAccess(id)) return PLUGIN_HANDLED
-    set_cvar_num("sv_alltalk", 2)
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Server")
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1set Voice Chat to ^4Team Only ^3[/t2]^1.", g_szChatPrefix, szAdmin)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_Alltalk3(id)
-{
-    if(!HasAdminAccess(id)) return PLUGIN_HANDLED
-    set_cvar_num("sv_alltalk", 3)
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Server")
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1set Voice Chat to ^4Team Talk (Dead+Alive) + Spec All ^3[/t3]^1.", g_szChatPrefix, szAdmin)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_Spec1(id)
-{
-    if(!HasAdminAccess(id)) return PLUGIN_HANDLED
-    if(get_cvar_pointer("allow_spectators")) set_cvar_num("allow_spectators", 1)
-    set_cvar_num("sv_alltalk", 3)
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Server")
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1enabled Spectators & Spec Voice ^4[/s1 /t3]^1.", g_szChatPrefix, szAdmin)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_Spec0(id)
-{
-    if(!HasAdminAccess(id)) return PLUGIN_HANDLED
-    if(get_cvar_pointer("allow_spectators")) set_cvar_num("allow_spectators", 0)
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Server")
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1disabled Spectators ^3[/s0]^1.", g_szChatPrefix, szAdmin)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_HookJoinOpen(id)
-{
-    if(HasAdminAccess(id))
-    {
-        if(g_bJoinLocked || (g_pCvarJoinLock && get_pcvar_num(g_pCvarJoinLock) == 1))
-        {
-            g_bJoinLocked = false
-            if(g_pCvarJoinLock) set_pcvar_num(g_pCvarJoinLock, 0)
-            new pJoinMode = get_cvar_pointer("gameland_join_mode")
-            if(pJoinMode) set_pcvar_num(pJoinMode, 1)
-            client_print_color(0, print_team_default, "^4%s ^1Join Lock ^2DISABLED^1. Server is now ^3OPEN ^1for all players.", g_szChatPrefix)
-        }
-    }
-    return PLUGIN_CONTINUE
-}
-
-public Cmd_HookJoinOther(id)
-{
-    if(HasAdminAccess(id))
-    {
-        if(g_bJoinLocked || (g_pCvarJoinLock && get_pcvar_num(g_pCvarJoinLock) == 1))
-        {
-            g_bJoinLocked = false
-            if(g_pCvarJoinLock) set_pcvar_num(g_pCvarJoinLock, 0)
-        }
-    }
-    return PLUGIN_CONTINUE
-}
-
-public Cmd_ToggleJoinLock(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    g_bJoinLocked = !g_bJoinLocked
-    if(g_pCvarJoinLock) set_pcvar_num(g_pCvarJoinLock, g_bJoinLocked ? 1 : 0)
-    new pJoinMode = get_cvar_pointer("gameland_join_mode")
-    if(pJoinMode) set_pcvar_num(pJoinMode, g_bJoinLocked ? 3 : 1)
-
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Console")
-
-    if(g_bJoinLocked)
-    {
-        client_print_color(0, print_team_default, "^4%s ^1Join Lock ^4ENABLED ^1by ^3%s^1! Incoming connections are now ^3BLOCKED ^1[/j3].", g_szChatPrefix, szAdmin)
-        log_amx("Cmd: ^"%s^" enabled join lock (/j3)", szAdmin)
-    }
-    else
-    {
-        client_print_color(0, print_team_default, "^4%s ^1Join Lock ^2DISABLED ^1by ^3%s^1. New players can now join the server.", g_szChatPrefix, szAdmin)
-        log_amx("Cmd: ^"%s^" disabled join lock (/j3)", szAdmin)
-    }
-    return PLUGIN_HANDLED
-}
-
-public Cmd_StopMix(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_STOPPED_BY_X", g_szUserName[id])
-    
-    new iDuration = get_systime() - g_iMatchStartTime
-    ExecuteForward(g_hFwdGameStopped, g_iRet, id, iDuration, 0)
-
-    StartWarmup()
-    return PLUGIN_HANDLED
-}
-
-public Cmd_Warmup(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    StartWarmup()
-    return PLUGIN_HANDLED
-}
-
-public Cmd_KnifeRound(id)
-{
-    client_print_color(id, print_team_default, "^4%s ^3Knife Round has been removed^1. Use ^4/mix ^1or ^4/live ^1to start the match directly!", g_szChatPrefix)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_Halftime(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1triggered ^3Halftime Team Swap^1!", g_szChatPrefix, g_szUserName[id])
-    TriggerHalftime()
-    return PLUGIN_HANDLED
-}
-
-public Cmd_Score(id)
-{
-    if(g_iMatchState == STATE_WARMUP)
-    {
-        client_print_color(id, print_team_default, "^4%s ^1Server is currently in ^4Warmup / DM1^1 mode.", g_szChatPrefix)
-        return PLUGIN_HANDLED
-    }
-
-    client_print_color(id, print_team_default, "^4%s ^1Current Match Score: ^4CT %d ^1- ^4TR %d", g_szChatPrefix, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
-    if(g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_OVERTIME_HALFTIME)
-    {
-        client_print_color(id, print_team_default, "^4%s ^1Match is currently in ^3Halftime Intermission^1. 1st Half: ^4CT %d ^3- ^4TR %d",
-            g_szChatPrefix, g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE])
-    }
-    else if(g_iMatchState == STATE_SECOND_HALF)
-    {
-        client_print_color(id, print_team_default, "^4%s ^1First Half Result: ^4CT %d ^3- ^4TR %d ^1| Target: ^4%d rounds",
-            g_szChatPrefix, g_iFirstHalfScore[CT_SCORE], g_iFirstHalfScore[TERO_SCORE], g_iMixEndRound)
-    }
-    else if(g_iMatchState == STATE_FIRST_HALF)
-    {
-        new iRemaining = 15 - (g_iScore[CT_SCORE] + g_iScore[TERO_SCORE])
-        client_print_color(id, print_team_default, "^4%s ^1First Half: ^4%d ^1rounds until Halftime swap.", g_szChatPrefix, iRemaining)
-    }
-    else if(g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-    {
-        client_print_color(id, print_team_default, "^4%s ^1Overtime Round Score: ^4CT %d ^1- ^4TR %d",
-            g_szChatPrefix, g_iOvertimeScore[CT_SCORE], g_iOvertimeScore[TERO_SCORE])
-    }
-    return PLUGIN_HANDLED
-}
-
-public Cmd_Restart(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    server_cmd("sv_restart 1")
-    client_print_color(0, print_team_default, "^4%s ^1Round restarted by ^4%s^1.", g_szChatPrefix, g_szUserName[id])
-    return PLUGIN_HANDLED
-}
-
-public Cmd_ChatOn(id)
-{
-    if(!HasAdminAccess(id))
-        return PLUGIN_HANDLED
-
-    g_bChatMuted = false
-    client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "CHAT_OPENED_BY_X", g_szUserName[id])
-    return PLUGIN_HANDLED
-}
-
-public Cmd_ChatOff(id)
-{
-    if(!HasAdminAccess(id))
-        return PLUGIN_HANDLED
-
-    g_bChatMuted = true
-    client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "CHAT_CLOSED_BY_X", g_szUserName[id])
-    return PLUGIN_HANDLED
-}
-
-public Cmd_PassOn(id)
-{
-    if(!HasAdminAccess(id))
-        return PLUGIN_HANDLED
-
-    new szPass[32]
-    read_argv(1, szPass, charsmax(szPass))
-    if(!szPass[0])
-        copy(szPass, charsmax(szPass), "mix")
-
-    server_cmd("sv_password ^"%s^"", szPass)
-    client_print_color(id, print_team_default, "^4%s ^1Server password set to: ^4%s", g_szChatPrefix, szPass)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_PassOff(id)
-{
-    if(!HasAdminAccess(id))
-        return PLUGIN_HANDLED
-
-    server_cmd("sv_password ^"^"")
-    client_print_color(id, print_team_default, "^4%s ^1Server password has been ^4removed^1.", g_szChatPrefix)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_SpecAll(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-
-    for(new i = 0; i < iNum; i++)
-    {
-        new p = iPlayers[i]
-        if(is_user_alive(p))
-        {
-            user_silentkill(p)
-        }
-        rg_set_user_team(p, TEAM_SPECTATOR)
-        set_task(0.1, "Task_InitSpectatorTarget", p)
-    }
-
-    g_bPickMode = true
-    UpdateServerHostname()
-
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Server")
-
-    client_print_color(0, print_team_default, "^4%s ^1Admin ^4%s ^1moved all players to Spectator.", g_szChatPrefix, szAdmin)
-    client_print_color(0, print_team_default, "^4%s ^1Server is now in ^3Captain Pick Mode ^1[[Pick]]. Pick your teams and start ^4/mix^1!", g_szChatPrefix)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_MoveCT(id)
-{
-    if(!HasAdminAccess(id))
-        return PLUGIN_HANDLED
-
-    new szTarget[32]
-    read_argv(1, szTarget, charsmax(szTarget))
-    new iTarget = cmd_target(id, szTarget, CMDTARGET_NO_BOTS)
-    if(!iTarget)
-        return PLUGIN_HANDLED
-
-    set_member(iTarget, m_iJoiningState, JOINED)
-    set_entvar(iTarget, var_deadflag, DEAD_NO)
-    rg_set_user_team(iTarget, TEAM_CT)
-    if(g_iMatchState == STATE_WARMUP)
-    {
-        rg_round_respawn(iTarget)
-    }
-    client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^4CT^1 by ^4%s^1.", g_szChatPrefix, g_szUserName[iTarget], g_szUserName[id])
-    return PLUGIN_HANDLED
-}
-
-public Cmd_MoveT(id)
-{
-    if(!HasAdminAccess(id))
-        return PLUGIN_HANDLED
-
-    new szTarget[32]
-    read_argv(1, szTarget, charsmax(szTarget))
-    new iTarget = cmd_target(id, szTarget, CMDTARGET_NO_BOTS)
-    if(!iTarget)
-        return PLUGIN_HANDLED
-
-    set_member(iTarget, m_iJoiningState, JOINED)
-    set_entvar(iTarget, var_deadflag, DEAD_NO)
-    rg_set_user_team(iTarget, TEAM_TERRORIST)
-    if(g_iMatchState == STATE_WARMUP)
-    {
-        rg_round_respawn(iTarget)
-    }
-    client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^4TERRORIST^1 by ^4%s^1.", g_szChatPrefix, g_szUserName[iTarget], g_szUserName[id])
-    return PLUGIN_HANDLED
-}
-
-public Cmd_MoveSpec(id)
-{
-    if(!HasAdminAccess(id))
-        return PLUGIN_HANDLED
-
-    new szTarget[32]
-    read_argv(1, szTarget, charsmax(szTarget))
-    new iTarget = cmd_target(id, szTarget, CMDTARGET_NO_BOTS)
-    if(!iTarget)
-        return PLUGIN_HANDLED
-
-    rg_set_user_team(iTarget, TEAM_SPECTATOR)
-    set_task(0.1, "Task_InitSpectatorTarget", iTarget)
-    client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^4SPECTATOR^1 by ^4%s^1.", g_szChatPrefix, g_szUserName[iTarget], g_szUserName[id])
-    return PLUGIN_HANDLED
-}
-
-public Cmd_Pause(id)
-{
-    // If admin calls pause, direct toggle
-    if(HasAdminAccess(id))
-    {
-        if(!g_bPaused)
-        {
-            g_bPaused = true
-            server_cmd("pausable 1; pause")
-            client_print_color(0, print_team_default, "^4%s ^1Match has been ^4PAUSED^1 by Admin ^4%s^1.", g_szChatPrefix, g_szUserName[id])
-        }
-        else
-        {
-            g_bPaused = false
-            server_cmd("pause; pausable 0")
-            client_print_color(0, print_team_default, "^4%s ^1Match has been ^4UNPAUSED^1 by Admin ^4%s^1.", g_szChatPrefix, g_szUserName[id])
-        }
-        return PLUGIN_HANDLED
-    }
-
-    // Player tactical timeout request
-    if(g_iMatchState != STATE_FIRST_HALF && g_iMatchState != STATE_SECOND_HALF)
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "MIX_NOT_STARTED_YET")
-        return PLUGIN_HANDLED
-    }
-
-    new TeamName:team = get_member(id, m_iTeam)
-    new TeamScore:tScore = (team == TEAM_CT) ? CT_SCORE : TERO_SCORE
-
-    if(g_bTeamTimeoutUsed[tScore])
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOUR_TEAM_ALREADY_TIMEOUT")
-        return PLUGIN_HANDLED
-    }
-
-    g_bTeamTimeoutUsed[tScore] = true
-    g_iPauseTimer = g_iPauseDuration > 0 ? g_iPauseDuration : 60
-    g_bPaused = true
-
-    server_cmd("pausable 1; pause")
-    client_print_color(0, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "PLAYER_X_REQUESTED_TIMEOUT", g_szUserName[id])
-
-    set_task(1.0, "Task_TimeoutCountdown", TASK_TIMEOUT_EXPIRE, .flags = "b")
-    return PLUGIN_HANDLED
-}
-
-public Task_TimeoutCountdown()
-{
-    g_iPauseTimer--
-
-    if(g_iPauseTimer <= 0)
-    {
-        remove_task(TASK_TIMEOUT_EXPIRE)
-        g_bPaused = false
-        server_cmd("pause; pausable 0")
-        client_print_color(0, print_team_default, "^4%s ^1Timeout expired! Match resumed.", g_szChatPrefix)
-        return
-    }
-
-    set_hudmessage(255, 200, 0, -1.0, 0.40, 0, 0.0, 0.9, 0.0, 0.1)
-    show_hudmessage(0, "Tactical Timeout: %d seconds remaining", g_iPauseTimer)
-}
-
-public Cmd_Overtime(id)
-{
-    if(!HasAdminAccess(id))
-        return PLUGIN_HANDLED
-
-    StartOvertime()
-    return PLUGIN_HANDLED
-}
-
-public Cmd_ShowCommands(id)
-{
-    client_print_color(id, print_team_default, "^4%s ^1=== Available Mix Commands ===", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/menu ^1: Universal Server & Navigation Menu", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/a ^1: Master Admin Control Panel", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/sv1 ^1/ ^3/main ^1: Connect to Main Server", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/sv2 ^1/ ^3/sv3 ^1: Connect to Temp Server 2 / 3", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/warm ^1: Warmup Mode ($16,000 practice)", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/rev1 ^1/ ^3/rev0 ^1: Infinite Revive", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/mix ^1or ^3/live ^1: Professional 5v5 Live match start", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/stop ^1: Stop match and return to warmup", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/score ^1: Show current round scores", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/pause ^1: Request tactical timeout or pause", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3/status ^1: View server status & expiration", g_szChatPrefix)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_ShowRulesInfo(id)
-{
-    client_print_color(id, print_team_default, "^4%s ^1=== 5v5 Match Server Rules ===", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3Match: ^15 Terrorist vs 5 CT (First to 16 rounds wins)", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3Halftime: ^1Teams switch sides automatically at round 15", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3Overtime: ^1MR3 (Max Rounds 3) if score ties at 15-15", g_szChatPrefix)
-    client_print_color(id, print_team_default, "^4%s ^3Spectators: ^1Coach/Spectator slot allowed if /s1 is enabled by Admin", g_szChatPrefix)
-    return PLUGIN_HANDLED
-}
-
-// -----------------------------------------------------------------------------
-// MASTER /a ADMIN CONTROL PANEL & ADMIN MANAGER
-// -----------------------------------------------------------------------------
-public Cmd_AdminDashboard(id)
-{
-    if(!HasAdminAccess(id))
-    {
-        return ShowPlayerMainMenu(id)
-    }
-
-    new iCurrentTemp = 0, szParentId[32]
-    new bool:bIsTemp = IsCurrentServerTemp(iCurrentTemp, szParentId, charsmax(szParentId))
-
-    new szTitle[128]
-    if(bIsTemp)
-        formatex(szTitle, charsmax(szTitle), "\y[GAMELAND] Temp Server #%d Master Panel (/a)\w", iCurrentTemp)
-    else
-        formatex(szTitle, charsmax(szTitle), "\y[GAMELAND] Master Admin Panel (/a)\w")
-
-    new iMenu = menu_create(szTitle, "Menu_DashboardHandler")
-
-    menu_additem(iMenu, "\rAdmin Manager \y(Add Admins to users.ini)\w", "1")
-    menu_additem(iMenu, "\yMatch & Mix Controls \d(/mix, /live, /rev1)\w", "2")
-    menu_additem(iMenu, "\wTeam Management \y(/st, /spec, /kspec)\w", "3")
-    menu_additem(iMenu, "\wVoice & Server Rules \y(/t1-/t3, /ff, /j0-/j3)\w", "4")
-    menu_additem(iMenu, "\wMap Browser & Vote \y(/map, /vm)\w", "5")
-    menu_additem(iMenu, "\wPlayer Moderation & Fast Tools \y(/k, /b, /r, /pass)\w", "6")
-
-    if(!bIsTemp)
-    {
-        // On permanent / parent server
-        new szTemp2Id[32], bool:bTemp2Online = false, iExp2, iRem2, iSlots2
-        GetTempServerId(2, szTemp2Id, charsmax(szTemp2Id))
-        ReadTempServerStatus(szTemp2Id, bTemp2Online, iExp2, iRem2, iSlots2)
-
-        new szTemp3Id[32], bool:bTemp3Online = false, iExp3, iRem3, iSlots3
-        GetTempServerId(3, szTemp3Id, charsmax(szTemp3Id))
-        ReadTempServerStatus(szTemp3Id, bTemp3Online, iExp3, iRem3, iSlots3)
-
-        new szItem7[128], szItem8[128]
-        if(bTemp2Online)
-            formatex(szItem7, charsmax(szItem7), "\wConnect to \yTemp Server 2\w")
-        else
-            formatex(szItem7, charsmax(szItem7), "\dTemp Server 2 [Offline - Manage / Start]\w")
-
-        if(bTemp3Online)
-            formatex(szItem8, charsmax(szItem8), "\wConnect to \yTemp Server 3\w")
-        else
-            formatex(szItem8, charsmax(szItem8), "\dTemp Server 3 [Offline - Manage / Start]\w")
-
-        menu_additem(iMenu, szItem7, "7")
-        menu_additem(iMenu, szItem8, "8")
-    }
-    else
-    {
-        // Inside a temp server (sv2 or sv3)
-        new iOtherTemp = (iCurrentTemp == 2) ? 3 : 2
-
-        new szOtherId[32], bool:bOtherOnline = false, iExpO, iRemO, iSlotsO
-        GetTempServerId(iOtherTemp, szOtherId, charsmax(szOtherId))
-        ReadTempServerStatus(szOtherId, bOtherOnline, iExpO, iRemO, iSlotsO)
-
-        new szItem7[128], szItem8[128]
-        formatex(szItem7, charsmax(szItem7), "\wConnect to \yMain Server\w")
-
-        if(bOtherOnline)
-            formatex(szItem8, charsmax(szItem8), "\wConnect to \yTemp Server %d\w", iOtherTemp)
-        else
-            formatex(szItem8, charsmax(szItem8), "\dTemp Server %d [Offline - Manage / Start]\w", iOtherTemp)
-
-        menu_additem(iMenu, szItem7, "7")
-        menu_additem(iMenu, szItem8, "8")
-    }
-
-    menu_setprop(iMenu, MPROP_PERPAGE, 0)
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_FORCE)
-    menu_display(id, iMenu, 0)
-    return PLUGIN_HANDLED
-}
-
-public Menu_DashboardHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    switch(str_to_num(szData))
-    {
-        case 1: ShowAdminManagerMenu(id)
-        case 2: ShowMatchControlMenu(id)
-        case 3: ShowTeamControlMenu(id)
-        case 4: ShowVoiceAndRulesMenu(id)
-        case 5: ShowMapControlMenu(id)
-        case 6: ShowModerationMenu(id)
-        case 7: HandleServerTransferAction(id, 7)
-        case 8: HandleServerTransferAction(id, 8)
-    }
-    return PLUGIN_HANDLED
-}
-
-// --- 1. ADMIN MANAGER WIZARD ---
-ShowAdminManagerMenu(id)
-{
-    if(!HasRconOrBanAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s ^1You need ^4RCON / High Admin^1 privilege to access Admin Manager!", g_szChatPrefix)
-        Cmd_AdminDashboard(id)
-        return
-    }
-
-    new iMenu = menu_create("\y[GAMELAND] Admin Manager:\w", "Menu_AdminManagerHandler")
-
-    menu_additem(iMenu, "\wAdd Admin from \yConnected Players\w", "1")
-    menu_additem(iMenu, "\rRemove Admin \y(Revoke rights & remove from users.ini)\w", "2")
-    menu_additem(iMenu, "\wReload Admins from \yusers.ini\w", "3")
-    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_AdminManagerHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    switch(str_to_num(szData))
-    {
-        case 1: ShowSelectPlayerForAdmin(id)
-        case 2: ShowRemoveAdminMenu(id)
-        case 3:
-        {
-            server_cmd("amx_reloadadmins")
-            client_print_color(id, print_team_default, "^4%s ^1Admins reloaded successfully from ^4users.ini^1!", g_szChatPrefix)
-            ShowAdminManagerMenu(id)
-        }
-        case 9: Cmd_AdminDashboard(id)
-    }
-    return PLUGIN_HANDLED
-}
-
-ShowRemoveAdminMenu(id)
-{
-    new szConfigDir[128], szUsersFile[128]
-    get_configsdir(szConfigDir, charsmax(szConfigDir))
-    formatex(szUsersFile, charsmax(szUsersFile), "%s/users.ini", szConfigDir)
-
-    new iFile = fopen(szUsersFile, "rt")
-    if(!iFile)
-    {
-        client_print_color(id, print_team_default, "^4%s ^1Could not open ^4users.ini^1!", g_szChatPrefix)
-        ShowAdminManagerMenu(id)
-        return
-    }
-
-    new iMenu = menu_create("\r[GAMELAND] Select Admin to Remove:\w", "Menu_RemoveAdminHandler")
-    new szLine[256], szAuth[64], szPass[32], szFlags[36], szAccFlags[16]
-    new iCount = 0
-
-    while(!feof(iFile))
-    {
-        fgets(iFile, szLine, charsmax(szLine))
-        trim(szLine)
-
-        if(!szLine[0] || szLine[0] == ';' || szLine[0] == '#')
-            continue
-
-        szAuth[0] = EOS
-        szPass[0] = EOS
-        szFlags[0] = EOS
-        szAccFlags[0] = EOS
-
-        parse(szLine, szAuth, charsmax(szAuth), szPass, charsmax(szPass), szFlags, charsmax(szFlags), szAccFlags, charsmax(szAccFlags))
-
-        if(!szAuth[0])
-            continue
-
-        if(equal(szAuth, "loopback"))
-            continue
-
-        new szItemText[96]
-        formatex(szItemText, charsmax(szItemText), "\w%s \d[flags: %s]", szAuth, szFlags)
-        menu_additem(iMenu, szItemText, szAuth)
-        iCount++
-    }
-    fclose(iFile)
-
-    if(iCount == 0)
-    {
-        menu_destroy(iMenu)
-        client_print_color(id, print_team_default, "^4%s ^1No removable admins found in ^4users.ini^1!", g_szChatPrefix)
-        ShowAdminManagerMenu(id)
-        return
-    }
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_RemoveAdminHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        ShowAdminManagerMenu(id)
-        return PLUGIN_HANDLED
-    }
-
-    new szAuthToRemove[64], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szAuthToRemove, charsmax(szAuthToRemove), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    RemoveAdminFromFile(id, szAuthToRemove)
-    return PLUGIN_HANDLED
-}
-
-stock CopyFile(const szSource[], const szDest[])
-{
-    new iIn = fopen(szSource, "rt")
-    if(!iIn) return 0
-
-    new iOut = fopen(szDest, "wt")
-    if(!iOut)
-    {
-        fclose(iIn)
-        return 0
-    }
-
-    new szLine[256]
-    while(!feof(iIn))
-    {
-        szLine[0] = EOS
-        fgets(iIn, szLine, charsmax(szLine))
-        if(szLine[0])
-        {
-            fputs(iOut, szLine)
-        }
-    }
-
-    fclose(iIn)
-    fclose(iOut)
-    return 1
-}
-
-stock RemoveAdminFromFile(id, const szTargetAuth[])
-{
-    new szConfigDir[128], szUsersFile[128], szTempFile[128]
-    get_configsdir(szConfigDir, charsmax(szConfigDir))
-    formatex(szUsersFile, charsmax(szUsersFile), "%s/users.ini", szConfigDir)
-    formatex(szTempFile, charsmax(szTempFile), "%s/users_temp.ini", szConfigDir)
-
-    new iIn = fopen(szUsersFile, "rt")
-    if(!iIn)
-        return
-
-    new iOut = fopen(szTempFile, "wt")
-    if(!iOut)
-    {
-        fclose(iIn)
-        return
-    }
-
-    new szLine[256], szAuth[64], szPass[32], szFlags[36], szAccFlags[16]
-    new bool:bFound = false
-
-    while(!feof(iIn))
-    {
-        fgets(iIn, szLine, charsmax(szLine))
-        new szTrimmed[256]
-        copy(szTrimmed, charsmax(szTrimmed), szLine)
-        trim(szTrimmed)
-
-        if(szTrimmed[0] && szTrimmed[0] != ';' && szTrimmed[0] != '#')
-        {
-            parse(szTrimmed, szAuth, charsmax(szAuth), szPass, charsmax(szPass), szFlags, charsmax(szFlags), szAccFlags, charsmax(szAccFlags))
-            if(equal(szAuth, szTargetAuth))
-            {
-                bFound = true
-                fprintf(iOut, "; [REMOVED by %s] %s^n", g_szUserName[id], szTrimmed)
-                continue
-            }
-        }
-        fputs(iOut, szLine)
-    }
-
-    fclose(iIn)
-    fclose(iOut)
-
-    if(bFound)
-    {
-        delete_file(szUsersFile)
-        while(!rename_file(szTempFile, szUsersFile, 1) && file_exists(szTempFile))
-        {
-            break
-        }
-
-        // Reload admins
-        server_cmd("amx_reloadadmins")
-
-        // Persist admin backup to /opt/gameland/persistent/users.ini
-        if(dir_exists("/opt/gameland/persistent"))
-        {
-            new szPersistPath[128] = "/opt/gameland/persistent/users.ini"
-            CopyFile(szUsersFile, szPersistPath)
-        }
-
-        // If target is connected, strip their in-memory admin flags
-        new iPlayers[MAX_PLAYERS], iNum
-        get_players(iPlayers, iNum, "ch")
-        for(new i = 0; i < iNum; i++)
-        {
-            new p = iPlayers[i]
-            new szPAuth[36], szPName[MAX_NAME_LENGTH]
-            get_user_authid(p, szPAuth, charsmax(szPAuth))
-            get_user_name(p, szPName, charsmax(szPName))
-
-            if(equal(szPAuth, szTargetAuth) || equal(szPName, szTargetAuth))
-            {
-                remove_user_flags(p, read_flags("abcdefghijklmnopqrstuv"))
-                client_print_color(p, print_team_default, "^4[GAMELAND] ^1Your Admin rights were ^3revoked^1 by ^4%s^1.", g_szUserName[id])
-            }
-        }
-
-        client_print_color(id, print_team_default, "^4%s ^1Successfully removed admin ^4%s^1 from ^3users.ini^1!", g_szChatPrefix, szTargetAuth)
-    }
-    else
-    {
-        delete_file(szTempFile)
-        client_print_color(id, print_team_default, "^4%s ^1Admin ^3%s ^1was not found in users.ini.", g_szChatPrefix, szTargetAuth)
-    }
-
-    ShowAdminManagerMenu(id)
-}
-
-ShowSelectPlayerForAdmin(id)
-{
-    new iMenu = menu_create("\ySelect Player to Make Admin:\w", "Menu_SelectPlayerAdminHandler")
-
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-
-    for(new i = 0; i < iNum; i++)
-    {
-        new player = iPlayers[i]
-        new szInfo[6], szDisplay[96], szAuth[36]
-        num_to_str(player, szInfo, charsmax(szInfo))
-        get_user_authid(player, szAuth, charsmax(szAuth))
-
-        formatex(szDisplay, charsmax(szDisplay), "\w%s \d[%s]", g_szUserName[player], szAuth)
-        menu_additem(iMenu, szDisplay, szInfo)
-    }
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_SelectPlayerAdminHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        ShowAdminManagerMenu(id)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    new iTarget = str_to_num(szData)
-    if(!is_user_connected(iTarget))
-    {
-        client_print_color(id, print_team_default, "^4%s ^1Selected player is no longer connected.", g_szChatPrefix)
-        ShowAdminManagerMenu(id)
-        return PLUGIN_HANDLED
-    }
-
-    g_eAdminSession[id][SessionTargetId] = iTarget
-    copy(g_eAdminSession[id][SessionName], charsmax(g_eAdminSession[][SessionName]), g_szUserName[iTarget])
-    get_user_authid(iTarget, g_eAdminSession[id][SessionAuth], charsmax(g_eAdminSession[][SessionAuth]))
-
-    ShowAdminPresetMenu(id)
-    return PLUGIN_HANDLED
-}
-
-ShowAdminPresetMenu(id)
-{
-    new szTitle[96]
-    formatex(szTitle, charsmax(szTitle), "\yAssign Permissions for: \w%s", g_eAdminSession[id][SessionName])
-    new iMenu = menu_create(szTitle, "Menu_AdminPresetHandler")
-
-    menu_additem(iMenu, "\rFull Owner \d[abcdefghijklmnopqrstu]", "1")
-    menu_additem(iMenu, "\yHead Admin \d[abcdefghijklmnopqrst]", "2")
-    menu_additem(iMenu, "\wMatch Admin \d[bcdefij]", "3")
-    menu_additem(iMenu, "\wBasic Admin \d[cdeij]", "4")
-    menu_additem(iMenu, "\wVIP Member \d[bit]", "5")
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_AdminPresetHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        ShowAdminManagerMenu(id)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    switch(str_to_num(szData))
-    {
-        case 1: copy(g_eAdminSession[id][SessionFlags], charsmax(g_eAdminSession[][SessionFlags]), "abcdefghijklmnopqrstu")
-        case 2: copy(g_eAdminSession[id][SessionFlags], charsmax(g_eAdminSession[][SessionFlags]), "abcdefghijklmnopqrst")
-        case 3: copy(g_eAdminSession[id][SessionFlags], charsmax(g_eAdminSession[][SessionFlags]), "bcdefij")
-        case 4: copy(g_eAdminSession[id][SessionFlags], charsmax(g_eAdminSession[][SessionFlags]), "cdeij")
-        case 5: copy(g_eAdminSession[id][SessionFlags], charsmax(g_eAdminSession[][SessionFlags]), "bit")
-    }
-
-    ShowAdminAuthTypeMenu(id)
-    return PLUGIN_HANDLED
-}
-
-ShowAdminAuthTypeMenu(id)
-{
-    new iMenu = menu_create("\ySelect Authentication Method:\w", "Menu_AdminAuthTypeHandler")
-
-    new szItem1[96]
-    formatex(szItem1, charsmax(szItem1), "\wSteamID Auth \y[%s] \d(flag 'ce')", g_eAdminSession[id][SessionAuth])
-    menu_additem(iMenu, szItem1, "1")
-
-    new szItem2[96]
-    formatex(szItem2, charsmax(szItem2), "\wNickname Auth \y[%s] \d(pass: 123456, flag 'a')", g_eAdminSession[id][SessionName])
-    menu_additem(iMenu, szItem2, "2")
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_AdminAuthTypeHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        ShowAdminManagerMenu(id)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    if(str_to_num(szData) == 1)
-    {
-        // SteamID Auth
-        copy(g_eAdminSession[id][SessionAccountFlags], charsmax(g_eAdminSession[][SessionAccountFlags]), "ce")
-        copy(g_eAdminSession[id][SessionPassword], charsmax(g_eAdminSession[][SessionPassword]), "")
-        CommitAdminToFile(id, false)
-    }
-    else
-    {
-        // Nickname Auth
-        copy(g_eAdminSession[id][SessionAccountFlags], charsmax(g_eAdminSession[][SessionAccountFlags]), "a")
-        copy(g_eAdminSession[id][SessionPassword], charsmax(g_eAdminSession[][SessionPassword]), "123456")
-        CommitAdminToFile(id, true)
-    }
-    return PLUGIN_HANDLED
-}
-
-CommitAdminToFile(id, bool:bUseNick)
-{
-    new szConfigDir[128], szUsersFile[128]
-    get_configsdir(szConfigDir, charsmax(szConfigDir))
-    formatex(szUsersFile, charsmax(szUsersFile), "%s/users.ini", szConfigDir)
-
-    new iFile = fopen(szUsersFile, "at")
-    if(!iFile)
-    {
-        client_print_color(id, print_team_default, "^4%s ^1Failed to open ^4users.ini^1 for writing!", g_szChatPrefix)
-        return
-    }
-
-    new szAuthIdentifier[64]
-    if(bUseNick)
-    {
-        copy(szAuthIdentifier, charsmax(szAuthIdentifier), g_eAdminSession[id][SessionName])
-    }
-    else
-    {
-        copy(szAuthIdentifier, charsmax(szAuthIdentifier), g_eAdminSession[id][SessionAuth])
-    }
-
-    fprintf(iFile, "^n^"%s^" ^"%s^" ^"%s^" ^"%s^" ; Added by %s via /a menu^n",
-        szAuthIdentifier,
-        g_eAdminSession[id][SessionPassword],
-        g_eAdminSession[id][SessionFlags],
-        g_eAdminSession[id][SessionAccountFlags],
-        g_szUserName[id])
-
-    fclose(iFile)
-
-    // Reload admins into memory
-    server_cmd("amx_reloadadmins")
-
-    // Persist admin backup to /opt/gameland/persistent/users.ini
-    if(dir_exists("/opt/gameland/persistent"))
-    {
-        new szPersistPath[128] = "/opt/gameland/persistent/users.ini"
-        CopyFile(szUsersFile, szPersistPath)
-    }
-
-    client_print_color(id, print_team_default, "^4%s ^1Successfully added ^4%s ^1as Admin!", g_szChatPrefix, g_eAdminSession[id][SessionName])
-    client_print_color(id, print_team_default, "^4%s ^1Flags: ^3%s ^1| Auth: ^3%s ^1| Type: ^3%s",
-        g_szChatPrefix,
-        g_eAdminSession[id][SessionFlags],
-        szAuthIdentifier,
-        bUseNick ? "Name (pass: 123456)" : "SteamID (ce)")
-
-    // Notify player if connected
-    new iTarget = g_eAdminSession[id][SessionTargetId]
-    if(is_user_connected(iTarget))
-    {
-        client_print_color(iTarget, print_team_default, "^4[GAMELAND] ^1You have been granted Admin rights by ^3%s^1! Reconnect to apply.", g_szUserName[id])
-    }
-}
-
-// --- 2. MATCH & MIX CONTROLS ---
-ShowMatchControlMenu(id)
-{
-    new iMenu = menu_create("\y[GAMELAND] Match & Mix Control:\w", "Menu_MatchControlHandler")
-
-    menu_additem(iMenu, "\rStart 5v5 Match \y(/mix - 3 Restarts to Live)\w", "1")
-    menu_additem(iMenu, "\wWarmup Mode \y($16,000 practice)\w", "2")
-    menu_additem(iMenu, "\wStop Match \y(Return to Warmup)\w", "3")
-    menu_additem(iMenu, "\wPause / Unpause Match\w", "4")
-    menu_additem(iMenu, "\yTrigger Halftime Swap \d(Score & Side Swap)\w", "5")
-    menu_additem(iMenu, g_bReviveMode ? "\rInfinite Revive: \y[ ACTIVE - Turn OFF ]\w" : "\yInfinite Revive: \d[ INACTIVE - Turn ON ]\w", "6")
-    menu_additem(iMenu, "\wRevive All Dead Players \y(/rev)\w", "7")
-    menu_additem(iMenu, "\d<- Back to Main Menu\w", "0")
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_MatchControlHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    switch(str_to_num(szData))
-    {
-        case 1: Cmd_StartMix(id)
-        case 2: Cmd_Warmup(id)
-        case 3: Cmd_StopMix(id)
-        case 4: Cmd_Pause(id)
-        case 5: Cmd_Halftime(id)
-        case 6:
-        {
-            if(g_bReviveMode) Cmd_ReviveOff(id)
-            else Cmd_ReviveOn(id)
-            ShowMatchControlMenu(id)
-        }
-        case 7:
-        {
-            Cmd_ReviveAll(id)
-            ShowMatchControlMenu(id)
-        }
-        case 0: Cmd_AdminDashboard(id)
-    }
-    return PLUGIN_HANDLED
-}
-
-// --- 3. TEAM CONTROLS ---
-ShowTeamControlMenu(id)
-{
-    new iMenu = menu_create("\y[GAMELAND] Team Management:\w", "Menu_TeamControlHandler")
-
-    menu_additem(iMenu, "\ySwap All Teams \d(/st)\w", "1")
-    menu_additem(iMenu, "\wMove All Players to \ySpectator \d(/spec)\w", "2")
-    menu_additem(iMenu, "\wRevive All Dead Players \y(/rev)\w", "3")
-    menu_additem(iMenu, "\wKick Spectators \d(/kspec)\w", "4")
-    menu_additem(iMenu, "\wMove Single Player to \yCT\w", "5")
-    menu_additem(iMenu, "\wMove Single Player to \yTERRORIST\w", "6")
-    menu_additem(iMenu, "\wMove Single Player to \ySPECTATOR\w", "7")
-    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_TeamControlHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    switch(str_to_num(szData))
-    {
-        case 1:
-        {
-            amxclient_cmd(id, "say", "/st")
-            ShowTeamControlMenu(id)
-        }
-        case 2:
-        {
-            Cmd_SpecAll(id)
-            ShowTeamControlMenu(id)
-        }
-        case 3:
-        {
-            Cmd_ReviveAll(id)
-            ShowTeamControlMenu(id)
-        }
-        case 4:
-        {
-            amxclient_cmd(id, "say", "/kspec")
-            ShowTeamControlMenu(id)
-        }
-        case 5: ShowMovePlayerMenu(id, TEAM_CT)
-        case 6: ShowMovePlayerMenu(id, TEAM_TERRORIST)
-        case 7: ShowMovePlayerMenu(id, TEAM_SPECTATOR)
-        case 9: Cmd_AdminDashboard(id)
-    }
-    return PLUGIN_HANDLED
-}
-
-ShowMovePlayerMenu(id, TeamName:targetTeam)
-{
-    new szTitle[64]
-    formatex(szTitle, charsmax(szTitle), "\yMove Player to %s:\w", targetTeam == TEAM_CT ? "CT" : (targetTeam == TEAM_TERRORIST ? "TERRORIST" : "SPECTATOR"))
-    new iMenu = menu_create(szTitle, "Menu_MovePlayerTargetHandler")
-
-    new iPlayers[MAX_PLAYERS], iNum
-    get_players(iPlayers, iNum, "ch")
-
-    for(new i = 0; i < iNum; i++)
-    {
-        new player = iPlayers[i]
-        new szInfo[12], szDisplay[64]
-        formatex(szInfo, charsmax(szInfo), "%d %d", player, _:targetTeam)
-        formatex(szDisplay, charsmax(szDisplay), "\w%s", g_szUserName[player])
-        menu_additem(iMenu, szDisplay, szInfo)
-    }
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_MovePlayerTargetHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        ShowTeamControlMenu(id)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[12], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    new szPlayer[6], szTeam[6]
-    strtok(szData, szPlayer, charsmax(szPlayer), szTeam, charsmax(szTeam), ' ')
-
-    new iTarget = str_to_num(szPlayer)
-    new TeamName:team = TeamName:str_to_num(szTeam)
-
-    if(is_user_connected(iTarget))
-    {
-        if(team == TEAM_CT || team == TEAM_TERRORIST)
-        {
-            set_member(iTarget, m_iJoiningState, JOINED)
-            set_entvar(iTarget, var_deadflag, DEAD_NO)
-            rg_set_user_team(iTarget, team)
-            if(g_iMatchState == STATE_WARMUP)
-            {
-                rg_round_respawn(iTarget)
-            }
-        }
-        else
-        {
-            rg_set_user_team(iTarget, team)
-            if(team == TEAM_SPECTATOR)
-            {
-                set_task(0.1, "Task_InitSpectatorTarget", iTarget)
-            }
-        }
-        client_print_color(0, print_team_default, "^4%s ^1Player ^4%s ^1moved to ^3%s ^1by ^4%s^1.",
-            g_szChatPrefix, g_szUserName[iTarget],
-            team == TEAM_CT ? "CT" : (team == TEAM_TERRORIST ? "TERRORIST" : "SPECTATOR"),
-            g_szUserName[id])
-    }
-    ShowTeamControlMenu(id)
-    return PLUGIN_HANDLED
-}
-
-// --- 4. VOICE & SERVER RULES CONTROLS ---
-ShowVoiceAndRulesMenu(id)
-{
-    new iMenu = menu_create("\y[GAMELAND] Voice & Server Rules:\w", "Menu_VoiceRulesHandler")
-
-    menu_additem(iMenu, "\wAlltalk \yON \d(sv_alltalk 1 / /t1)\w", "1")
-    menu_additem(iMenu, "\wAlltalk \yTeam-Only \d(sv_alltalk 2 / /t2)\w", "2")
-    menu_additem(iMenu, "\wAlltalk \yReHLDS Advanced \d(sv_alltalk 3 / /t3)\w", "3")
-    menu_additem(iMenu, "\wFriendly Fire \yON \d(/ff1)\w", "4")
-    menu_additem(iMenu, "\wFriendly Fire \yOFF \d(/ff0)\w", "5")
-    menu_additem(iMenu, "\wJoin Mode: \yOpen \d(/j1)\w", "6")
-    menu_additem(iMenu, "\wJoin Mode: \yLocked \d(/j0)\w", "7")
-    menu_additem(iMenu, "\wJoin Mode: \yBlack Screen \d(/j2)\w", "8")
-    menu_additem(iMenu, g_bJoinLocked ? "\rJoin Lock: \y[LOCKED /j3 - Active]\w" : "\wJoin Lock: \d[Open /j3]\w", "10")
-    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_VoiceRulesHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    switch(str_to_num(szData))
-    {
-        case 1: { amxclient_cmd(id, "say", "/t1"); ShowVoiceAndRulesMenu(id); }
-        case 2: { amxclient_cmd(id, "say", "/t2"); ShowVoiceAndRulesMenu(id); }
-        case 3: { amxclient_cmd(id, "say", "/t3"); ShowVoiceAndRulesMenu(id); }
-        case 4: { amxclient_cmd(id, "say", "/ff1"); ShowVoiceAndRulesMenu(id); }
-        case 5: { amxclient_cmd(id, "say", "/ff0"); ShowVoiceAndRulesMenu(id); }
-        case 6: { amxclient_cmd(id, "say", "/j1"); ShowVoiceAndRulesMenu(id); }
-        case 7: { amxclient_cmd(id, "say", "/j0"); ShowVoiceAndRulesMenu(id); }
-        case 8: { amxclient_cmd(id, "say", "/j2"); ShowVoiceAndRulesMenu(id); }
-        case 9: Cmd_AdminDashboard(id)
-        case 10: { Cmd_ToggleJoinLock(id); ShowVoiceAndRulesMenu(id); }
-    }
-    return PLUGIN_HANDLED
-}
-
-// --- 5. MAP CONTROLS ---
-ShowMapControlMenu(id)
-{
-    new iMenu = menu_create("\y[GAMELAND] Map Management:\w", "Menu_MapControlHandler")
-
-    menu_additem(iMenu, "\wGameLand Map Browser \y(/map)\w", "1")
-    menu_additem(iMenu, "\wVote Map Menu \y(/vm)\w", "2")
-    menu_additem(iMenu, "\dStandard AMX Map Menu \d(amx_mapmenu)\w", "3")
-    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_MapControlHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    switch(str_to_num(szData))
-    {
-        case 1: amxclient_cmd(id, "say", "/map")
-        case 2: amxclient_cmd(id, "say", "/vm")
-        case 3: client_cmd(id, "amx_mapmenu")
-        case 9: Cmd_AdminDashboard(id)
-    }
-    return PLUGIN_HANDLED
-}
-
-// --- 6. MODERATION CONTROLS ---
-ShowModerationMenu(id)
-{
-    new iMenu = menu_create("\y[GAMELAND] Player Moderation & Fast Tools:\w", "Menu_ModerationHandler")
-
-    menu_additem(iMenu, "\wKick Player Menu \y(/k)\w", "1")
-    menu_additem(iMenu, "\wBan Player Menu \y(/b)\w", "2")
-    menu_additem(iMenu, "\wUnban Player Menu \y(/ub)\w", "3")
-    menu_additem(iMenu, "\dStandard Slap Menu \d(amx_slapmenu)\w", "4")
-    menu_additem(iMenu, "\wFast Server Controls \y(/r, /passon, /off)\w", "5")
-    menu_additem(iMenu, "\gManage Temp Sub-Servers \y(/sv2, /sv3)\w", "6")
-    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_ModerationHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    switch(str_to_num(szData))
-    {
-        case 1: amxclient_cmd(id, "say", "/k")
-        case 2: amxclient_cmd(id, "say", "/b")
-        case 3: amxclient_cmd(id, "say", "/ub")
-        case 4: client_cmd(id, "amx_slapmenu")
-        case 5: ShowServerControlMenu(id)
-        case 6: ShowTempServersSubMenu(id)
-        case 9: Cmd_AdminDashboard(id)
-    }
-    return PLUGIN_HANDLED
-}
-
-// --- 7. FAST SERVER TOOLS ---
-ShowServerControlMenu(id)
-{
-    new iMenu = menu_create("\y[GAMELAND] Fast Server Controls:\w", "Menu_ServerControlHandler")
-
-    menu_additem(iMenu, "\wRestart Round 1s \y(/r)\w", "1")
-    menu_additem(iMenu, "\wSet Server Password \y(/passon)\w", "2")
-    menu_additem(iMenu, "\wRemove Server Password \y(/passoff)\w", "3")
-    menu_additem(iMenu, "\wMute All Chat \y(/off)\w", "4")
-    menu_additem(iMenu, "\wUnmute All Chat \y(/on)\w", "5")
-    menu_additem(iMenu, "\d<- Back to Main Menu\w", "9")
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-}
-
-public Menu_ServerControlHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    switch(str_to_num(szData))
-    {
-        case 1: amxclient_cmd(id, "say", "/r")
-        case 2: { Cmd_PassOn(id); ShowServerControlMenu(id); }
-        case 3: { Cmd_PassOff(id); ShowServerControlMenu(id); }
-        case 4: { Cmd_ChatOff(id); ShowServerControlMenu(id); }
-        case 5: { Cmd_ChatOn(id); ShowServerControlMenu(id); }
-        case 9: Cmd_AdminDashboard(id)
-    }
-    return PLUGIN_HANDLED
-}
-
-// -----------------------------------------------------------------------------
-// Chat management
-// -----------------------------------------------------------------------------
-public Hook_Say(id)
-{
-    if(g_bChatMuted && !HasAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s ^1Chat is currently muted by an Administrator.", g_szChatPrefix)
-        return PLUGIN_HANDLED
-    }
-    return PLUGIN_CONTINUE
-}
-
-public Hook_SayTeam(id)
-{
-    return PLUGIN_CONTINUE
-}
-
-// -----------------------------------------------------------------------------
-// Natives Implementation
-// -----------------------------------------------------------------------------
-public native_is_half(iPlugin, iParams)
-{
-    return (g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_OVERTIME_HALFTIME ||
-            (g_iMatchState == STATE_FIRST_HALF && (g_iScore[CT_SCORE] + g_iScore[TERO_SCORE]) >= 15))
-}
-
-public native_is_last_round(iPlugin, iParams)
-{
-    if(g_iMatchState == STATE_SECOND_HALF)
-    {
-        return (g_iScore[CT_SCORE] == g_iMixEndRound - 1 || g_iScore[TERO_SCORE] == g_iMixEndRound - 1)
-    }
-    return false
-}
-
-public native_is_prelast_round(iPlugin, iParams)
-{
-    if(g_iMatchState == STATE_SECOND_HALF)
-    {
-        return (g_iScore[CT_SCORE] == g_iMixEndRound - 2 || g_iScore[TERO_SCORE] == g_iMixEndRound - 2)
-    }
-    return false
-}
-
-public native_can_overtime(iPlugin, iParams)
-{
-    return (g_iScore[CT_SCORE] == g_iOvertimeTriggerScore && g_iScore[TERO_SCORE] == g_iOvertimeTriggerScore)
-}
-
-public native_is_started(iPlugin, iParams)
-{
-    return (g_iMatchState == STATE_FIRST_HALF || g_iMatchState == STATE_HALFTIME || g_iMatchState == STATE_SECOND_HALF ||
-            g_iMatchState == STATE_OVERTIME_FIRST_HALF || g_iMatchState == STATE_OVERTIME_HALFTIME || g_iMatchState == STATE_OVERTIME_SECOND_HALF)
-}
-
-public native_is_warm(iPlugin, iParams)
-{
-    return (g_iMatchState == STATE_WARMUP)
-}
-
-public native_get_prefix(iPlugin, iParams)
-{
-    set_string(1, g_szChatPrefix, get_param(2))
-}
-
-public native_get_username(iPlugin, iParams)
-{
-    new id = get_param(1)
-    if(id < 1 || id > MaxClients)
-        return -1
-
-    set_string(2, g_szUserName[id], get_param(3))
-    return 1
-}
-
-// Backwards compatibility dummies (Points & SQL removed)
-public native_user_points(iPlugin, iParams)
-{
-    return 0
-}
-
-public bool:native_has_points_sys(iPlugin, iParams)
-{
-    return false
-}
-
-public native_search_for_user(iPlugin, iParams)
-{
-    return -1
-}
-
-public native_multiply_factor(iPlugin, iParams)
-{
-    return 1
-}
-
-public native_get_points_table(iPlugin, iParams)
-{
-    set_string(1, "", get_param(2))
-    return 0
-}
-
-public Cmd_NotifyClanWarMode(id)
-{
-    client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are currently in ^35v5 Match Server Mode^1!")
-    client_print_color(id, print_team_default, "^4[GAMELAND] ^1To play ^4Clan War Mode (10 Slots)^1, switch mode in the Web Panel or contact an Admin.")
-    return PLUGIN_HANDLED
-}
-
-// -----------------------------------------------------------------------------
-// DYNAMIC TEMP SUB-SERVERS CONTROLLER (/sv2 & /sv3)
-// -----------------------------------------------------------------------------
-stock bool:HasHeadAdminAccess(id)
-{
-    if(!id)
-        return true
-    return bool:(get_user_flags(id) & (ADMIN_RCON | ADMIN_BAN | ADMIN_CVAR | ADMIN_ADMIN | ADMIN_IMMUNITY))
-}
-
-stock GetServerCurrentPort()
-{
-    new iPort = get_cvar_num("port")
-    if(iPort >= 1024 && iPort <= 65535)
-        return iPort
-
-    new szIp[32]
-    get_user_ip(0, szIp, charsmax(szIp), 0)
-    new iColon = contain(szIp, ":")
-    if(iColon != -1)
-    {
-        iPort = str_to_num(szIp[iColon + 1])
-        if(iPort >= 1024 && iPort <= 65535)
-            return iPort
-    }
-
-    return 27015
-}
-
-stock bool:IsCurrentServerTemp(&iCurrentTempIndex, szParentId[], iParentMaxLen)
-{
-    iCurrentTempIndex = 0
-    copy(szParentId, iParentMaxLen, "main")
-
-    new szInstance[32]
-    get_pcvar_string(g_pCvarInstanceId, szInstance, charsmax(szInstance))
-    trim(szInstance)
-    if(!szInstance[0])
-    {
-        new iPort = GetServerCurrentPort()
-        if(iPort == 27015 || iPort <= 0)
-            copy(szInstance, charsmax(szInstance), "main")
-        else
-            formatex(szInstance, charsmax(szInstance), "cs_%d", iPort)
-    }
-
-    new iLen = strlen(szInstance)
-    if(iLen >= 4 && szInstance[iLen - 4] == '_' && szInstance[iLen - 3] == 's' && szInstance[iLen - 2] == 'v')
-    {
-        if(szInstance[iLen - 1] == '2')
-        {
-            iCurrentTempIndex = 2
-            copy(szParentId, iParentMaxLen, szInstance)
-            szParentId[iLen - 4] = '^0'
-            return true
-        }
-        else if(szInstance[iLen - 1] == '3')
-        {
-            iCurrentTempIndex = 3
-            copy(szParentId, iParentMaxLen, szInstance)
-            szParentId[iLen - 4] = '^0'
-            return true
-        }
-    }
-
-    // Secondary check: examine hostname for "[SV2]" / "_sv2" or "[SV3]" / "_sv3"
-    new szHostname[64]
-    get_cvar_string("hostname", szHostname, charsmax(szHostname))
-    if(containi(szHostname, "[SV2]") != -1 || containi(szHostname, "_sv2") != -1)
-    {
-        iCurrentTempIndex = 2
-        copy(szParentId, iParentMaxLen, szInstance)
-        return true
-    }
-    else if(containi(szHostname, "[SV3]") != -1 || containi(szHostname, "_sv3") != -1)
-    {
-        iCurrentTempIndex = 3
-        copy(szParentId, iParentMaxLen, szInstance)
-        return true
-    }
-
-    copy(szParentId, iParentMaxLen, szInstance)
-    return false
-}
-
-stock GetParentServerId(szOut[], iMaxLen)
-{
-    new iTempIdx
-    if(IsCurrentServerTemp(iTempIdx, szOut, iMaxLen))
-    {
-        return
-    }
-
-    new szInstance[32]
-    get_pcvar_string(g_pCvarInstanceId, szInstance, charsmax(szInstance))
-    trim(szInstance)
-    if(szInstance[0])
-    {
-        copy(szOut, iMaxLen, szInstance)
-    }
-    else
-    {
-        new iPort = GetServerCurrentPort()
-        if(iPort == 27015 || iPort <= 0)
-            copy(szOut, iMaxLen, "main")
-        else
-            formatex(szOut, iMaxLen, "cs_%d", iPort)
-    }
-}
-
-stock GetTempServerId(iTempIndex, szOut[], iMaxLen)
-{
-    new szParent[32], iCurrentTempIndex
-    if(IsCurrentServerTemp(iCurrentTempIndex, szParent, charsmax(szParent)))
-    {
-        if(iCurrentTempIndex == iTempIndex)
-        {
-            get_pcvar_string(g_pCvarInstanceId, szOut, iMaxLen)
-            trim(szOut)
-            return
-        }
-    }
-    else
-    {
-        GetParentServerId(szParent, charsmax(szParent))
-    }
-
-    formatex(szOut, iMaxLen, "%s_sv%d", szParent, iTempIndex)
-}
-
-stock GetTempServerPort(iTempIndex)
-{
-    new szParent[32], iCurrentTempIndex
-    new iCurrentPort = GetServerCurrentPort()
-    if(IsCurrentServerTemp(iCurrentTempIndex, szParent, charsmax(szParent)))
-    {
-        if(iCurrentTempIndex == iTempIndex)
-            return iCurrentPort
-
-        new iParentPort = (iCurrentTempIndex == 2) ? (iCurrentPort - 100) : (iCurrentPort - 101)
-        return (iTempIndex == 2) ? (iParentPort + 100) : (iParentPort + 101)
-    }
-
-    return (iTempIndex == 2) ? (iCurrentPort + 100) : (iCurrentPort + 101)
-}
-
-stock GetParentServerPort()
-{
-    new szParent[32], iCurrentTempIndex
-    new iCurrentPort = GetServerCurrentPort()
-    if(IsCurrentServerTemp(iCurrentTempIndex, szParent, charsmax(szParent)))
-    {
-        return (iCurrentTempIndex == 2) ? (iCurrentPort - 100) : (iCurrentPort - 101)
-    }
-    return iCurrentPort
-}
-
-stock bool:ReadTempServerStatus(const szTempId[], &bool:bRunning, &iExpireAt, &iRemainingSec, &iSlots)
-{
-    bRunning = false
-    iExpireAt = 0
-    iRemainingSec = 0
-    iSlots = 15
-
-    new szDataDir[96]
-    get_datadir(szDataDir, charsmax(szDataDir))
-
-    // 1. Candidate status files with key=value format (running=1, expire_at=..., slots=...)
-    new szCandidateStatus[4][192]
-    new iStatusCount = 0
-    formatex(szCandidateStatus[iStatusCount++], charsmax(szCandidateStatus[]), "/tmp/gameland_temp_status/%s.status", szTempId)
-    formatex(szCandidateStatus[iStatusCount++], charsmax(szCandidateStatus[]), "/opt/gameland/instances/.status/%s.status", szTempId)
-    formatex(szCandidateStatus[iStatusCount++], charsmax(szCandidateStatus[]), "instances/.status/%s.status", szTempId)
-    formatex(szCandidateStatus[iStatusCount++], charsmax(szCandidateStatus[]), "%s/temp_servers/status/%s.status", szDataDir, szTempId)
-
-    new iFile = 0
-    for(new i = 0; i < iStatusCount; i++)
-    {
-        iFile = fopen(szCandidateStatus[i], "rt")
-        if(iFile)
-            break
-    }
-
-    if(iFile)
-    {
-        new szLine[128], szKey[32], szVal[64]
-        while(!feof(iFile))
-        {
-            fgets(iFile, szLine, charsmax(szLine))
-            trim(szLine)
-            if(!szLine[0] || szLine[0] == ';' || szLine[0] == '#')
-                continue
-
-            if(contain(szLine, "=") != -1)
-            {
-                strtok2(szLine, szKey, charsmax(szKey), szVal, charsmax(szVal), '=', TRIM_INNER)
-                trim(szKey)
-                trim(szVal)
-
-                if(equali(szKey, "running"))
-                    bRunning = (str_to_num(szVal) == 1)
-                else if(equali(szKey, "expire_at"))
-                    iExpireAt = str_to_num(szVal)
-                else if(equali(szKey, "slots"))
-                    iSlots = str_to_num(szVal)
-            }
-            else if(isdigit(szLine[0]))
-            {
-                // Raw timestamp in status file
-                iExpireAt = str_to_num(szLine)
-            }
-        }
-        fclose(iFile)
-
-        new iNow = get_systime()
-        if(bRunning)
-        {
-            if(iExpireAt > iNow)
-            {
-                iRemainingSec = iExpireAt - iNow
-            }
-            else if(iExpireAt > 0 && iNow >= iExpireAt)
-            {
-                bRunning = false
-                iRemainingSec = 0
-            }
-            else
-            {
-                // Running without explicit expire_at limit
-                iRemainingSec = 14400
-            }
-        }
-        return true
-    }
-
-    // 2. Fallback: Candidate .expire files with raw timestamp integer
-    new szCandidateExpire[4][192]
-    new iExpCount = 0
-    formatex(szCandidateExpire[iExpCount++], charsmax(szCandidateExpire[]), "/opt/gameland/instances/%s.expire", szTempId)
-    formatex(szCandidateExpire[iExpCount++], charsmax(szCandidateExpire[]), "instances/%s.expire", szTempId)
-    formatex(szCandidateExpire[iExpCount++], charsmax(szCandidateExpire[]), "/tmp/gameland_temp_status/%s.expire", szTempId)
-    formatex(szCandidateExpire[iExpCount++], charsmax(szCandidateExpire[]), "%s/temp_servers/%s.expire", szDataDir, szTempId)
-
-    for(new i = 0; i < iExpCount; i++)
-    {
-        iFile = fopen(szCandidateExpire[i], "rt")
-        if(iFile)
-        {
-            new szLine[64]
-            if(fgets(iFile, szLine, charsmax(szLine)))
-            {
-                trim(szLine)
-                iExpireAt = str_to_num(szLine)
-            }
-            fclose(iFile)
-
-            new iNow = get_systime()
-            if(iExpireAt > iNow)
-            {
-                bRunning = true
-                iRemainingSec = iExpireAt - iNow
-                return true
-            }
-            else if(iExpireAt > 0)
-            {
-                bRunning = false
-                iRemainingSec = 0
-                return true
-            }
-        }
-    }
-
-    return false
-}
-
-stock bool:WriteTempServerCommand(const szAction[], iTempIndex, id)
-{
-    new szParentId[32], szTempId[32]
-    GetParentServerId(szParentId, charsmax(szParentId))
-    GetTempServerId(iTempIndex, szTempId, charsmax(szTempId))
-
-    new iParentPort = GetServerCurrentPort()
-    new iCurrentTemp = 0, szCurParent[32]
-    if(IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent)))
-    {
-        iParentPort = (iCurrentTemp == 2) ? (iParentPort - 100) : (iParentPort - 101)
-    }
-    new iTempPort = GetTempServerPort(iTempIndex)
-
-    new szAdminName[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdminName, charsmax(szAdminName))
-    else copy(szAdminName, charsmax(szAdminName), "Console")
-
-    new iNow = get_systime()
-    new szDataDir[96]
-    get_datadir(szDataDir, charsmax(szDataDir))
-
-    new szContent[512]
-    formatex(szContent, charsmax(szContent),
-        "action=%s^ntemp_id=%s^nparent_id=%s^nparent_port=%d^ntemp_index=%d^ntemp_port=%d^nslots=15^nadmin=%s^ntimestamp=%d^n",
-        szAction, szTempId, szParentId, iParentPort, iTempIndex, iTempPort, szAdminName, iNow)
-
-    new szCandidatePaths[4][192]
-    new iCount = 0
-    formatex(szCandidatePaths[iCount++], charsmax(szCandidatePaths[]), "/tmp/gameland_temp_queue/cmd_%s_%s_%d_%d.ini", szTempId, szAction, iNow, random_num(1000, 9999))
-    formatex(szCandidatePaths[iCount++], charsmax(szCandidatePaths[]), "/opt/gameland/instances/.queue/cmd_%s_%s_%d_%d.ini", szTempId, szAction, iNow, random_num(1000, 9999))
-    formatex(szCandidatePaths[iCount++], charsmax(szCandidatePaths[]), "instances/.queue/cmd_%s_%s_%d_%d.ini", szTempId, szAction, iNow, random_num(1000, 9999))
-    formatex(szCandidatePaths[iCount++], charsmax(szCandidatePaths[]), "%s/temp_servers/queue/cmd_%s_%s_%d_%d.ini", szDataDir, szTempId, szAction, iNow, random_num(1000, 9999))
-
-    new bool:bSuccess = false
-    for(new i = 0; i < iCount; i++)
-    {
-        new iFile = fopen(szCandidatePaths[i], "wt")
-        if(iFile)
-        {
-            fputs(iFile, szContent)
-            fclose(iFile)
-            bSuccess = true
-        }
-    }
-
-    return bSuccess
-}
-
-stock bool:IsPublicWanIp(const szIp[])
-{
-    if(!szIp[0] || equal(szIp, "0.0.0.0") || equal(szIp, "127.0.0.1") || equal(szIp, "localhost"))
-        return false
-
-    if(equal(szIp, "10.", 3) || equal(szIp, "192.168.", 8) || equal(szIp, "169.254.", 8))
-        return false
-
-    if(equal(szIp, "172.", 4))
-    {
-        new szSecond[4]
-        new iDot = contain(szIp[4], ".")
-        if(iDot != -1 && iDot <= 3)
-        {
-            copy(szSecond, iDot, szIp[4])
-            new iSec = str_to_num(szSecond)
-            if(iSec >= 16 && iSec <= 31)
-                return false
-        }
-    }
-
-    return true
-}
-
-stock GetServerPublicIp(szIpOut[], iMaxLen)
-{
-    szIpOut[0] = '^0'
-
-    // 1. Explicit cvar (set in server.cfg, launch line, or panel via gameland_server_ip "x.x.x.x")
-    if(g_pCvarServerIp)
-    {
-        get_pcvar_string(g_pCvarServerIp, szIpOut, iMaxLen)
-        trim(szIpOut)
-        if(IsPublicWanIp(szIpOut))
-            return
-    }
-
-    // 2. Check candidate public IP files
-    new szCandidateFiles[5][192]
-    new iFileCount = 0
-    formatex(szCandidateFiles[iFileCount++], charsmax(szCandidateFiles[]), "instances/public_ip.txt")
-    formatex(szCandidateFiles[iFileCount++], charsmax(szCandidateFiles[]), "cstrike/instances/public_ip.txt")
-    formatex(szCandidateFiles[iFileCount++], charsmax(szCandidateFiles[]), "/opt/gameland/instances/public_ip.txt")
-    formatex(szCandidateFiles[iFileCount++], charsmax(szCandidateFiles[]), "/tmp/gameland_public_ip.txt")
-    formatex(szCandidateFiles[iFileCount++], charsmax(szCandidateFiles[]), "/opt/gameland/server/instances/public_ip.txt")
-
-    for(new i = 0; i < iFileCount; i++)
-    {
-        new iFile = fopen(szCandidateFiles[i], "rt")
-        if(iFile)
-        {
-            fgets(iFile, szIpOut, iMaxLen)
-            fclose(iFile)
-            trim(szIpOut)
-            if(IsPublicWanIp(szIpOut))
-                return
-        }
-    }
-
-    // 3. Engine net_address cvar (check if valid public WAN IP)
-    get_cvar_string("net_address", szIpOut, iMaxLen)
-    new iColon = contain(szIpOut, ":")
-    if(iColon != -1)
-        szIpOut[iColon] = '^0'
-    trim(szIpOut)
-    if(IsPublicWanIp(szIpOut))
-        return
-
-    // 4. Standard server IP from engine (only if public WAN IP)
-    get_user_ip(0, szIpOut, iMaxLen, 1)
-    trim(szIpOut)
-    if(IsPublicWanIp(szIpOut))
-        return
-
-    // 5. Engine ip cvar (only if public WAN IP)
-    get_cvar_string("ip", szIpOut, iMaxLen)
-    trim(szIpOut)
-    if(IsPublicWanIp(szIpOut))
-        return
-
-    // 6. Absolute default: configured public WAN IP (Never private or loopback)
-    copy(szIpOut, iMaxLen, "185.236.38.83")
-}
-
-stock SendDirectorRedirect(id, const szIp[], iPort)
-{
-    if(!is_user_connected(id) || is_user_bot(id) || is_user_hltv(id))
-        return
-
-    new szCmd[96]
-    formatex(szCmd, charsmax(szCmd), "connect %s:%d^n", szIp, iPort)
-
-    static iMsgDirector = 0
-    if(!iMsgDirector)
-    {
-        iMsgDirector = get_user_msgid("Director")
-        if(iMsgDirector <= 0)
-            iMsgDirector = 51
-    }
-
-    message_begin(MSG_ONE, iMsgDirector, _, id)
-    write_byte(strlen(szCmd) + 2)
-    write_byte(DRC_CMD_STUFFTEXT) // 12 (DRC_CMD_STUFFTEXT)
-    write_string(szCmd)
-    message_end()
-}
-
-public Task_DelayedRedirect(const aData[])
-{
-    new id = aData[0]
-    new iPort = aData[1]
-    if(!is_user_connected(id) || is_user_bot(id) || is_user_hltv(id))
-        return
-
-    new szIp[32]
-    GetServerPublicIp(szIp, charsmax(szIp))
-
-    client_cmd(id, "slot10")
-    client_cmd(id, "Connect %s:%d", szIp, iPort)
-    client_cmd(id, "connect %s:%d", szIp, iPort)
-    client_cmd(id, ";connect %s:%d", szIp, iPort)
-    client_cmd(id, "engine connect %s:%d", szIp, iPort)
-    SendDirectorRedirect(id, szIp, iPort)
-}
-
-stock TransferPlayerToServer(id, iTargetPort, const szServerName[])
-{
-    if(!is_user_connected(id))
-        return
-
-    new szIp[32]
-    GetServerPublicIp(szIp, charsmax(szIp))
-
-    // 1. In-game Chat Notice (Clean & Professional - NO IP LEAK)
-    client_print_color(id, print_team_default, "^4[GAMELAND] ^1Transferring you to ^3%s^1...", szServerName)
-    client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1is transferring to ^3%s^1.", g_szUserName[id], szServerName)
-
-    // 2. High-visibility Top-screen DHUD notice (Clean - NO IP LEAK)
-    set_dhudmessage(0, 220, 255, -1.0, 0.20, 0, 0.0, 4.0, 0.1, 0.5)
-    show_dhudmessage(id, "[GAMELAND] Transferring to %s...", szServerName)
-
-    // 3. Clean Console Output (NO IP LEAK)
-    console_print(id, " ")
-    console_print(id, "==========================================================")
-    console_print(id, "[GAMELAND] Connecting to %s...", szServerName)
-    console_print(id, "==========================================================")
-    console_print(id, " ")
-
-    // 4. Force dismissal of any active menu before connecting
-    show_menu(id, 0, "^n", 0)
-    client_cmd(id, "slot10")
-
-    // 5. Multi-format client redirection commands (without trailing ^n)
-    client_cmd(id, "Connect %s:%d", szIp, iTargetPort)
-    client_cmd(id, "connect %s:%d", szIp, iTargetPort)
-    client_cmd(id, ";connect %s:%d", szIp, iTargetPort)
-    client_cmd(id, "engine connect %s:%d", szIp, iTargetPort)
-
-    // 6. SVC_DIRECTOR engine redirect (native engine redirect)
-    SendDirectorRedirect(id, szIp, iTargetPort)
-
-    // 7. Instant HTML MOTD Redirect (Triggers steam://connect for Steam & modern clients)
-    new szMotd[512]
-    formatex(szMotd, charsmax(szMotd),
-        "<html><head><meta http-equiv=^"refresh^" content=^"0;url=steam://connect/%s:%d^"><script>window.location=^"steam://connect/%s:%d^";</script></head><body bgcolor=^"#000000^" style=^"color:#fff;text-align:center;font-family:sans-serif;padding-top:40px;^"><h2>Transferring to %s...</h2></body></html>",
-        szIp, iTargetPort, szIp, iTargetPort, szServerName)
-    show_motd(id, szMotd, "GAMELAND Transfer")
-
-    // 8. Delayed follow-up redirect tasks (ensures execution after menu dismissal)
-    new aData[2]
-    aData[0] = id
-    aData[1] = iTargetPort
-    set_task(0.2, "Task_DelayedRedirect", TASK_PLAYER_REDIRECT + id, aData, sizeof(aData))
-    set_task(0.6, "Task_DelayedRedirect", TASK_PLAYER_REDIRECT + id + 100, aData, sizeof(aData))
-}
-
-public Cmd_ChooseTeam(id)
-{
-    if(!is_user_connected(id))
-        return PLUGIN_HANDLED
-
-    ShowTeamSelectMenu(id)
-    return PLUGIN_HANDLED
-}
-
-public Cmd_JoinTeam(id)
-{
-    if(!is_user_connected(id))
-        return PLUGIN_HANDLED
-
-    if(g_bInternalTeamCmd[id])
-        return PLUGIN_CONTINUE
-
-    if(read_argc() <= 1)
-    {
-        return Cmd_ChooseTeam(id)
-    }
-
-    new szArg[8]
-    read_argv(1, szArg, charsmax(szArg))
-    new iChoice = str_to_num(szArg)
-
-    if(iChoice == 6)
-    {
-        HandlePlayerTeamSelection(id, 6)
-        return PLUGIN_HANDLED
-    }
-    else if(iChoice == 5)
-    {
-        new iTs = GetTeamPlayerCount(TEAM_TERRORIST)
-        new iCTs = GetTeamPlayerCount(TEAM_CT)
-        new iTeamChoice = (iTs > iCTs) ? 2 : 1
-        HandlePlayerTeamSelection(id, iTeamChoice)
-        return PLUGIN_HANDLED
-    }
-    else if(iChoice == 1 || iChoice == 2)
-    {
-        new pJoinMode = get_cvar_pointer("gameland_join_mode")
-        new iJoinMode = pJoinMode ? get_pcvar_num(pJoinMode) : 1
-        new bool:bLocked = (g_bJoinLocked || (g_pCvarJoinLock && get_pcvar_num(g_pCvarJoinLock) == 1) || iJoinMode == 3)
-        if(bLocked && !HasAdminAccess(id))
-        {
-            client_print_color(id, print_team_default, "^4[GAMELAND] ^1Server join is currently ^3LOCKED ^1by Admin [/j3].")
-            return PLUGIN_HANDLED
-        }
-
-        if(g_iMatchState != STATE_WARMUP && !HasAdminAccess(id))
-        {
-            client_print_color(id, print_team_default, "^4[GAMELAND] ^1Team selection is locked during a live match.")
-            return PLUGIN_HANDLED
-        }
-
-        HandlePlayerTeamSelection(id, iChoice)
-        return PLUGIN_HANDLED
-    }
-
-    return PLUGIN_CONTINUE
-}
-
-public ShowTeamSelectMenu(id)
-{
-    if(!is_user_connected(id))
-        return PLUGIN_HANDLED
-
-    new iKeys = MENU_KEY_1 | MENU_KEY_2 | MENU_KEY_5 | MENU_KEY_6 | MENU_KEY_0
-    new szMenu[256], iLen = 0
-
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y[GAMELAND 5v5]\w Select Team^n^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y1.\w Terrorist Force^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y2.\w Counter-Terrorist Force^n^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y5.\w Auto-Select^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y6.\w Spectator^n^n")
-    iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\y0.\w Cancel")
-
-    set_member(id, m_iMenu, CS_Menu_OFF)
-    show_menu(id, iKeys, szMenu, -1, "GAMELAND_Team_Select_Menu")
-    return PLUGIN_HANDLED
-}
-
-public HandleTeamSelectMenu(id, key)
-{
-    if(!is_user_connected(id))
-        return PLUGIN_HANDLED
-
-    switch(key)
-    {
-        case 0: // Key 1 -> Terrorist
-        {
-            HandlePlayerTeamSelection(id, 1)
-        }
-        case 1: // Key 2 -> Counter-Terrorist
-        {
-            HandlePlayerTeamSelection(id, 2)
-        }
-        case 4: // Key 5 -> Auto-Select
-        {
-            new iTs = GetTeamPlayerCount(TEAM_TERRORIST)
-            new iCTs = GetTeamPlayerCount(TEAM_CT)
-            new iChoice = (iTs > iCTs) ? 2 : 1
-            HandlePlayerTeamSelection(id, iChoice)
-        }
-        case 5: // Key 6 -> Spectator
-        {
-            HandlePlayerTeamSelection(id, 6)
-        }
-        case 9: // Key 0 -> Cancel
-        {
-            return PLUGIN_HANDLED
-        }
-    }
-    return PLUGIN_HANDLED
-}
-
-
-stock GetTeamPlayerCount(TeamName:team)
-{
-    new iCount = 0
-    for(new i = 1; i <= MaxClients; i++)
-    {
-        if(is_user_connected(i) && get_member(i, m_iTeam) == team)
-        {
-            iCount++
-        }
-    }
-    return iCount
-}
-
-stock SpawnPlayerOnTeam(id, TeamName:iNewTeam)
-{
-    if(!is_user_connected(id))
-        return
-
-    remove_task(id)
-
-    if(is_user_alive(id))
-    {
-        user_silentkill(id)
-    }
-
-    new iFlags = get_entvar(id, var_flags)
-    if(iFlags & FL_SPECTATOR)
-    {
-        set_entvar(id, var_flags, iFlags & ~FL_SPECTATOR)
-    }
-    set_entvar(id, var_iuser1, OBS_NONE)
-    set_entvar(id, var_iuser2, 0)
-    set_member(id, m_hObserverTarget, 0)
-    set_entvar(id, var_deadflag, DEAD_NO)
-
-    set_member(id, m_iJoiningState, JOINED)
-    rg_set_user_team(id, iNewTeam, MODEL_AUTO)
-    set_member(id, m_iMenu, CS_Menu_OFF)
-
-    if(g_iMatchState == STATE_WARMUP)
-    {
-        rg_round_respawn(id)
-        set_task(0.1, "Task_EnsureWarmupSpawn", id)
-    }
-}
-
-public Task_EnsureWarmupSpawn(id)
-{
-    if(is_user_connected(id) && !is_user_alive(id) && g_iMatchState == STATE_WARMUP)
-    {
-        new TeamName:iTeam = get_member(id, m_iTeam)
-        if(iTeam == TEAM_TERRORIST || iTeam == TEAM_CT)
-        {
-            set_member(id, m_iJoiningState, JOINED)
-            set_entvar(id, var_deadflag, DEAD_NO)
-            rg_round_respawn(id)
-        }
-    }
-}
-
-stock MovePlayerToSpectator(id)
-{
-    if(!is_user_connected(id))
-        return
-
-    if(get_member(id, m_iTeam) == TEAM_SPECTATOR)
-    {
-        client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are already a ^3Spectator^1.")
-        return
-    }
-
-    remove_task(id)
-
-    if(is_user_alive(id))
-    {
-        user_silentkill(id)
-    }
-
-    rg_set_user_team(id, TEAM_SPECTATOR)
-    set_member(id, m_iMenu, CS_Menu_OFF)
-
-    set_task(0.1, "Task_InitSpectatorTarget", id)
-    client_print_color(id, print_team_default, "^4[GAMELAND] ^1You moved to ^3Spectator^1.")
-}
-
-stock HandlePlayerTeamSelection(id, iTeam)
-{
-    if(!is_user_connected(id))
-        return
-
-    // Check if join lock is active (/j3)
-    new pJoinMode = get_cvar_pointer("gameland_join_mode")
-    new iJoinMode = pJoinMode ? get_pcvar_num(pJoinMode) : 1
-    new bool:bLocked = (g_bJoinLocked || (g_pCvarJoinLock && get_pcvar_num(g_pCvarJoinLock) == 1) || iJoinMode == 3)
-    if(bLocked && !HasAdminAccess(id) && (iTeam == 1 || iTeam == 2))
-    {
-        client_print_color(id, print_team_default, "^4[GAMELAND] ^1Server join is currently ^3LOCKED ^1by Admin [/j3].")
-        return
-    }
-
-    // In competitive live match, block arbitrary switching between CT and T, or spectators joining active teams
-    if(g_iMatchState != STATE_WARMUP)
-    {
-        if(iTeam == 6)
-        {
-            MovePlayerToSpectator(id)
-            return
-        }
-        else if(!HasAdminAccess(id))
-        {
-            client_print_color(id, print_team_default, "^4[GAMELAND] ^1Team selection is locked during a live match.")
-            return
-        }
-    }
-
-    if(iTeam == 1) // Terrorist
-    {
-        if(get_member(id, m_iTeam) == TEAM_TERRORIST)
-        {
-            client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are already on the ^3Terrorist ^1team.")
-            return
-        }
-
-        SpawnPlayerOnTeam(id, TEAM_TERRORIST)
-        client_print_color(id, print_team_default, "^4[GAMELAND] ^1You joined the ^3Terrorist ^1team.")
-    }
-    else if(iTeam == 2) // Counter-Terrorist
-    {
-        if(get_member(id, m_iTeam) == TEAM_CT)
-        {
-            client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are already on the ^3Counter-Terrorist ^1team.")
-            return
-        }
-
-        SpawnPlayerOnTeam(id, TEAM_CT)
-        client_print_color(id, print_team_default, "^4[GAMELAND] ^1You joined the ^3Counter-Terrorist ^1team.")
-    }
-    else if(iTeam == 6) // Spectator
-    {
-        MovePlayerToSpectator(id)
-    }
-}
-
-stock HandleTeamMenuServerAction(id, iKeyNum)
-{
-    if(!is_user_connected(id))
-        return
-
-    new iCurrentTemp = 0, szCurParent[32]
-    new bool:bIsTemp = IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent))
-
-    if(!bIsTemp)
-    {
-        // On Main Server
-        if(iKeyNum == 7)
-        {
-            TransferPlayerToServer(id, GetTempServerPort(2), "Temp Server #2")
-        }
-        else if(iKeyNum == 8 || iKeyNum == 9)
-        {
-            TransferPlayerToServer(id, GetTempServerPort(3), "Temp Server #3")
-        }
-    }
-    else
-    {
-        // On Temp Server
-        new iCurPort = GetServerCurrentPort()
-        new iParentPort = (iCurrentTemp == 2) ? (iCurPort - 100) : (iCurPort - 101)
-        new iOtherTemp = (iCurrentTemp == 2) ? 3 : 2
-
-        if(iKeyNum == 7)
-        {
-            TransferPlayerToServer(id, iParentPort, "Main Server")
-        }
-        else if(iKeyNum == 8 || iKeyNum == 9)
-        {
-            new szTargetName[32]
-            formatex(szTargetName, charsmax(szTargetName), "Temp Server #%d", iOtherTemp)
-            TransferPlayerToServer(id, GetTempServerPort(iOtherTemp), szTargetName)
-        }
-    }
-}
-
-stock HandleServerTransferAction(id, iChoice)
-{
-    if(!is_user_connected(id))
-        return
-
-    new iCurrentTemp = 0, szParentId[32]
-    new bool:bIsTemp = IsCurrentServerTemp(iCurrentTemp, szParentId, charsmax(szParentId))
-
-    if(!bIsTemp)
-    {
-        // On permanent / parent server
-        if(iChoice == 7)
-        {
-            TransferPlayerToServer(id, GetTempServerPort(2), "Temp Server #2")
-        }
-        else if(iChoice == 8)
-        {
-            TransferPlayerToServer(id, GetTempServerPort(3), "Temp Server #3")
-        }
-    }
-    else
-    {
-        // Inside a temp server (sv2 or sv3)
-        new iCurPort = GetServerCurrentPort()
-        new iParentPort = (iCurrentTemp == 2) ? (iCurPort - 100) : (iCurPort - 101)
-        new iOtherTemp = (iCurrentTemp == 2) ? 3 : 2
-        new iOtherPort = GetTempServerPort(iOtherTemp)
-
-        if(iChoice == 7)
-        {
-            TransferPlayerToServer(id, iParentPort, "Main Server")
-        }
-        else if(iChoice == 8)
-        {
-            new szTargetName[32]
-            formatex(szTargetName, charsmax(szTargetName), "Temp Server #%d", iOtherTemp)
-            TransferPlayerToServer(id, iOtherPort, szTargetName)
-        }
-    }
-}
-
-public ShowTempServersSubMenu(id)
-{
-    if(!HasHeadAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    new iMenu = menu_create("\y[GAMELAND] Dynamic Temp Sub-Servers:\w", "Menu_TempServersSubHandler")
-
-    new iParentPort = GetServerCurrentPort()
-    new iCurrentTemp = 0, szCurParent[32]
-    if(IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent)))
-    {
-        iParentPort = (iCurrentTemp == 2) ? (iParentPort - 100) : (iParentPort - 101)
-    }
-
-    new szItem2[96], szItem3[96]
-    formatex(szItem2, charsmax(szItem2), "\wManage \yTemp Server #2 \d(Port: %d / 15 Slots)\w", iParentPort + 100)
-    formatex(szItem3, charsmax(szItem3), "\wManage \yTemp Server #3 \d(Port: %d / 15 Slots)\w", iParentPort + 101)
-
-    menu_additem(iMenu, szItem2, "2")
-    menu_additem(iMenu, szItem3, "3")
-    menu_additem(iMenu, "\d<- Back to Master Panel (/a)\w", "9")
-
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_ALL)
-    menu_display(id, iMenu, 0)
-    return PLUGIN_HANDLED
-}
-
-public Menu_TempServersSubHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    new iChoice = str_to_num(szData)
-    if(iChoice == 2)
-        ShowTempServerController(id, 2)
-    else if(iChoice == 3)
-        ShowTempServerController(id, 3)
-    else
-        Cmd_AdminDashboard(id)
-
-    return PLUGIN_HANDLED
-}
-
-public Cmd_MainServer(id)
-{
-    if(!is_user_connected(id))
-        return PLUGIN_HANDLED
-
-    new iCurrentTemp = 0, szParentId[32]
-    new bool:bIsTemp = IsCurrentServerTemp(iCurrentTemp, szParentId, charsmax(szParentId))
-
-    if(!bIsTemp)
-    {
-        client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are already connected to the ^3Main Server^1.")
-        return PLUGIN_HANDLED
-    }
-
-    new iCurPort = GetServerCurrentPort()
-    new iParentPort = (iCurrentTemp == 2) ? (iCurPort - 100) : (iCurPort - 101)
-    TransferPlayerToServer(id, iParentPort, "Main Server")
-    return PLUGIN_HANDLED
-}
-
-public Cmd_TempServer2(id)
-{
-    if(!is_user_connected(id))
-        return PLUGIN_HANDLED
-
-    new iCurrentTemp = 0, szCurParent[32]
-    new bool:bIsTemp = IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent))
-
-    if(bIsTemp && iCurrentTemp == 2)
-    {
-        client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are already connected to ^3Temp Server #2^1.")
-        return PLUGIN_HANDLED
-    }
-
-    new iPort = GetTempServerPort(2)
-    TransferPlayerToServer(id, iPort, "Temp Server #2")
-    return PLUGIN_HANDLED
-}
-
-public Cmd_TempServer3(id)
-{
-    if(!is_user_connected(id))
-        return PLUGIN_HANDLED
-
-    new iCurrentTemp = 0, szCurParent[32]
-    new bool:bIsTemp = IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent))
-
-    if(bIsTemp && iCurrentTemp == 3)
-    {
-        client_print_color(id, print_team_default, "^4[GAMELAND] ^1You are already connected to ^3Temp Server #3^1.")
-        return PLUGIN_HANDLED
-    }
-
-    new iPort = GetTempServerPort(3)
-    TransferPlayerToServer(id, iPort, "Temp Server #3")
-    return PLUGIN_HANDLED
-}
-
-public Cmd_ManageTempServer2(id)
-{
-    if(!HasHeadAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-    return ShowTempServerController(id, 2)
-}
-
-public Cmd_ManageTempServer3(id)
-{
-    if(!HasHeadAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-    return ShowTempServerController(id, 3)
-}
-
-public Cmd_ShowMainMenu(id)
-{
-    if(HasAdminAccess(id))
-        return Cmd_AdminDashboard(id)
-
-    return ShowPlayerMainMenu(id)
-}
-
-public ShowPlayerMainMenu(id)
-{
-    if(!is_user_connected(id))
-        return PLUGIN_HANDLED
-
-    new iCurrentTemp = 0, szParentId[32]
-    new bool:bIsTemp = IsCurrentServerTemp(iCurrentTemp, szParentId, charsmax(szParentId))
-
-    new szTitle[128]
-    if(bIsTemp)
-        formatex(szTitle, charsmax(szTitle), "\y[GAMELAND] Temp Server #%d Menu (/menu)\w^n\dQuick Navigation & Match Tools:\w", iCurrentTemp)
-    else
-        formatex(szTitle, charsmax(szTitle), "\y[GAMELAND] 5v5 Match Server (/menu)\w^n\dQuick Navigation & Match Tools:\w")
-
-    new iMenu = menu_create(szTitle, "Menu_PlayerMainHandler")
-
-    menu_additem(iMenu, "\wAvailable Commands \y(/commands)\w", "1")
-    menu_additem(iMenu, "\wCurrent Match Score \y(/score)\w", "2")
-    menu_additem(iMenu, "\wTactical Timeout / Pause \y(/pause)\w", "3")
-    menu_additem(iMenu, "\wServer Status & Mode \y(/status)\w", "4")
-    menu_additem(iMenu, "\wMatch Rules & Info \y(/rules)\w", "5")
-    menu_additem(iMenu, "\wRefresh Menu / Ping \y(/menu)\w", "6")
-
-    if(!bIsTemp)
-    {
-        new szTemp2Id[32], bool:bTemp2Online = false, iExp2, iRem2, iSlots2
-        GetTempServerId(2, szTemp2Id, charsmax(szTemp2Id))
-        ReadTempServerStatus(szTemp2Id, bTemp2Online, iExp2, iRem2, iSlots2)
-
-        new szTemp3Id[32], bool:bTemp3Online = false, iExp3, iRem3, iSlots3
-        GetTempServerId(3, szTemp3Id, charsmax(szTemp3Id))
-        ReadTempServerStatus(szTemp3Id, bTemp3Online, iExp3, iRem3, iSlots3)
-
-        new szItem7[128], szItem8[128]
-        if(bTemp2Online && (iRem2 > 0 || iExp2 == 0))
-            formatex(szItem7, charsmax(szItem7), "\wConnect to \yTemp Server 2\w")
-        else
-            formatex(szItem7, charsmax(szItem7), "\dTemp Server 2 [Offline]\w")
-
-        if(bTemp3Online && (iRem3 > 0 || iExp3 == 0))
-            formatex(szItem8, charsmax(szItem8), "\wConnect to \yTemp Server 3\w")
-        else
-            formatex(szItem8, charsmax(szItem8), "\dTemp Server 3 [Offline]\w")
-
-        menu_additem(iMenu, szItem7, "7")
-        menu_additem(iMenu, szItem8, "8")
-    }
-    else
-    {
-        new iOtherTemp = (iCurrentTemp == 2) ? 3 : 2
-
-        new szOtherId[32], bool:bOtherOnline = false, iExpO, iRemO, iSlotsO
-        GetTempServerId(iOtherTemp, szOtherId, charsmax(szOtherId))
-        ReadTempServerStatus(szOtherId, bOtherOnline, iExpO, iRemO, iSlotsO)
-
-        new szItem7[128], szItem8[128]
-        formatex(szItem7, charsmax(szItem7), "\wConnect to \yMain Server\w")
-
-        if(bOtherOnline && (iRemO > 0 || iExpO == 0))
-            formatex(szItem8, charsmax(szItem8), "\wConnect to \yTemp Server %d\w", iOtherTemp)
-        else
-            formatex(szItem8, charsmax(szItem8), "\dTemp Server %d [Offline]\w", iOtherTemp)
-
-        menu_additem(iMenu, szItem7, "7")
-        menu_additem(iMenu, szItem8, "8")
-    }
-
-    menu_setprop(iMenu, MPROP_PERPAGE, 0)
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_FORCE)
-    menu_display(id, iMenu, 0)
-    return PLUGIN_HANDLED
-}
-
-public Menu_PlayerMainHandler(id, iMenu, iItem)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    switch(str_to_num(szData))
-    {
-        case 1: Cmd_ShowCommands(id)
-        case 2: Cmd_Score(id)
-        case 3: Cmd_Pause(id)
-        case 4: Cmd_TempServerStatus(id)
-        case 5: Cmd_ShowRulesInfo(id)
-        case 6: ShowPlayerMainMenu(id)
-        case 7: HandleServerTransferAction(id, 7)
-        case 8: HandleServerTransferAction(id, 8)
-    }
-    return PLUGIN_HANDLED
-}
-
-public Cmd_TempServerRenew(id)
-{
-    if(!HasHeadAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    new iCurrentTemp = 0, szCurParent[32]
-    if(IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent)))
-    {
-        WriteTempServerCommand("renew", iCurrentTemp, id)
-        new szAdmin[MAX_NAME_LENGTH]
-        if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-        else copy(szAdmin, charsmax(szAdmin), "Console")
-        client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1renewed this Temp Server (#%d) for ^2+4 Hours^1!", szAdmin, iCurrentTemp)
-        return ShowTempServerController(id, iCurrentTemp)
-    }
-
-    return ShowTempServerController(id, 2)
-}
-
-public Cmd_TempServerStatus(id)
-{
-    new iCurrentTemp = 0, szCurParent[32]
-    if(!IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent)))
-    {
-        new szTemp2Id[32], bool:bRunning2 = false, iExp2 = 0, iRem2 = 0, iSlots2 = 15
-        GetTempServerId(2, szTemp2Id, charsmax(szTemp2Id))
-        ReadTempServerStatus(szTemp2Id, bRunning2, iExp2, iRem2, iSlots2)
-
-        new szTemp3Id[32], bool:bRunning3 = false, iExp3 = 0, iRem3 = 0, iSlots3 = 15
-        GetTempServerId(3, szTemp3Id, charsmax(szTemp3Id))
-        ReadTempServerStatus(szTemp3Id, bRunning3, iExp3, iRem3, iSlots3)
-
-        client_print_color(id, print_team_default, "^4[GAMELAND] ^1Permanent Main Server.")
-
-        if(bRunning2 && (iRem2 > 0 || iExp2 == 0))
-            client_print_color(id, print_team_default, "^4[GAMELAND] ^3Temp Server #2: ^4ONLINE ^1(^2%dh %dm remaining^1). Type ^4/sv2 ^1to join.", iRem2 / 3600, (iRem2 % 3600) / 60)
-        else
-            client_print_color(id, print_team_default, "^4[GAMELAND] ^3Temp Server #2: ^1Offline / Stopped.")
-
-        if(bRunning3 && (iRem3 > 0 || iExp3 == 0))
-            client_print_color(id, print_team_default, "^4[GAMELAND] ^3Temp Server #3: ^4ONLINE ^1(^2%dh %dm remaining^1). Type ^4/sv3 ^1to join.", iRem3 / 3600, (iRem3 % 3600) / 60)
-        else
-            client_print_color(id, print_team_default, "^4[GAMELAND] ^3Temp Server #3: ^1Offline / Stopped.")
-
-        return PLUGIN_HANDLED
-    }
-
-    new szTempId[32], bool:bRunning = false, iExpireAt = 0, iRemainingSec = 0, iSlots = 15
-    GetTempServerId(iCurrentTemp, szTempId, charsmax(szTempId))
-    ReadTempServerStatus(szTempId, bRunning, iExpireAt, iRemainingSec, iSlots)
-
-    if(bRunning && (iRemainingSec > 0 || iExpireAt == 0))
-    {
-        new iHours = iRemainingSec / 3600
-        new iMinutes = (iRemainingSec % 3600) / 60
-        client_print_color(id, print_team_default, "^4[GAMELAND] ^3Temp Server #%d Status: ^4ONLINE ^1- ^2%d hours and %d minutes remaining^1 (15 Slots).", iCurrentTemp, iHours, iMinutes)
-        set_dhudmessage(0, 200, 255, -1.0, 0.30, 0, 0.0, 5.0, 0.1, 0.5)
-        show_dhudmessage(id, "Temp Server #%d: %dh %dm remaining", iCurrentTemp, iHours, iMinutes)
-    }
-    else
-    {
-        client_print_color(id, print_team_default, "^4[GAMELAND] ^3Temp Server #%d Status: ^1Offline / Expired.", iCurrentTemp)
-    }
-    return PLUGIN_HANDLED
-}
-
-public Task_TempServerCountdownNotice()
-{
-}
-
-public Task_RefreshTempMenu(iData)
-{
-    new id = iData % 100
-    new iTempIndex = iData / 100
-    if(is_user_connected(id) && HasHeadAdminAccess(id))
-    {
-        ShowTempServerController(id, iTempIndex)
-    }
-}
-
-public ShowTempServerController(id, iTempIndex)
-{
-    if(!HasHeadAdminAccess(id))
-    {
-        client_print_color(id, print_team_default, "^4%s %L", g_szChatPrefix, LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
-        return PLUGIN_HANDLED
-    }
-
-    new szParentId[32], szTempId[32]
-    GetParentServerId(szParentId, charsmax(szParentId))
-    GetTempServerId(iTempIndex, szTempId, charsmax(szTempId))
-
-    new iParentPort = GetServerCurrentPort()
-    new iCurrentTemp = 0, szCurParent[32]
-    new bool:bIsCurrentServer = false
-    if(IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent)))
-    {
-        iParentPort = (iCurrentTemp == 2) ? (iParentPort - 100) : (iParentPort - 101)
-        if(iCurrentTemp == iTempIndex)
-            bIsCurrentServer = true
-    }
-    new iTempPort = GetTempServerPort(iTempIndex)
-
-    new bool:bRunning = false, iExpireAt = 0, iRemainingSec = 0, iSlots = 15
-    ReadTempServerStatus(szTempId, bRunning, iExpireAt, iRemainingSec, iSlots)
-
-    new szStatusStr[128]
-    if(bRunning && iRemainingSec > 0)
-    {
-        new iHours = iRemainingSec / 3600
-        new iMinutes = (iRemainingSec % 3600) / 60
-        formatex(szStatusStr, charsmax(szStatusStr), "\y[ONLINE]\w - \r%dh %dm remaining\w", iHours, iMinutes)
-    }
-    else if(!bRunning && iExpireAt > 0 && get_systime() >= iExpireAt)
-    {
-        formatex(szStatusStr, charsmax(szStatusStr), "\r[EXPIRED / STOPPED]\w (4h timeout)")
-    }
-    else
-    {
-        formatex(szStatusStr, charsmax(szStatusStr), "\d[OFFLINE / STOPPED]\w")
-    }
-
-    new szTitle[256]
-    if(bIsCurrentServer)
-    {
-        formatex(szTitle, charsmax(szTitle), "\y[GAMELAND] Temp Server #%d \r(CURRENT SERVER)\w^n\dParent: %s | Port: %d | 15 Slots^nStatus: %s\w",
-            iTempIndex, szParentId, iTempPort, szStatusStr)
-    }
-    else
-    {
-        formatex(szTitle, charsmax(szTitle), "\y[GAMELAND] Temp Server #%d Controller^n\dParent: %s (%d) | Temp Port: %d | 15 Slots^nStatus: %s\w",
-            iTempIndex, szParentId, iParentPort, iTempPort, szStatusStr)
-    }
-
-    new iMenu = menu_create(szTitle, (iTempIndex == 2) ? "HandleTempMenu2" : "HandleTempMenu3")
-
-    if(bIsCurrentServer)
-    {
-        menu_additem(iMenu, "\g1. Renew Server (+4 Hours)\w", "4")
-        menu_additem(iMenu, "\w2. Broadcast Connect IP:Port to All\w", "5")
-        menu_additem(iMenu, "\w3. Refresh Status\w", "6")
-        menu_additem(iMenu, "\r4. Stop / Shut Down Server\w", "2")
-        new szOther[64]
-        formatex(szOther, charsmax(szOther), "\y5. Manage Temp Server #%d\w", (iTempIndex == 2) ? 3 : 2)
-        menu_additem(iMenu, szOther, "7")
-        menu_additem(iMenu, "\w6. Connect to Main Server\w", "8")
-    }
-    else
-    {
-        if(!bRunning)
-        {
-            menu_additem(iMenu, "\y1. Start / Create Server \d(15 Slots, 4h Limit)\w", "1")
-            menu_additem(iMenu, "\d2. Stop Server (Already Offline)\w", "2")
-            menu_additem(iMenu, "\d3. Restart Server (Already Offline)\w", "3")
-        }
-        else
-        {
-            menu_additem(iMenu, "\d1. Server Already Online\w", "1")
-            menu_additem(iMenu, "\r2. Stop Temp Server\w", "2")
-            menu_additem(iMenu, "\y3. Restart Temp Server\w", "3")
-        }
-
-        menu_additem(iMenu, "\g4. Renew Server (+4 Hours)\w", "4")
-        menu_additem(iMenu, "\w5. Broadcast Connect IP:Port to All\w", "5")
-        menu_additem(iMenu, "\w6. Refresh Status\w", "6")
-        new szOther[64]
-        formatex(szOther, charsmax(szOther), "\y7. Switch to /sv%d\w", (iTempIndex == 2) ? 3 : 2)
-        menu_additem(iMenu, szOther, "7")
-        if(bRunning)
-        {
-            new szJoin[64]
-            formatex(szJoin, charsmax(szJoin), "\w8. Connect to Temp Server #%d\w", iTempIndex)
-            menu_additem(iMenu, szJoin, "8")
-        }
-    }
-
-    menu_additem(iMenu, "\d<- Back to Master Panel (/a)\w", "9")
-
-    menu_setprop(iMenu, MPROP_PERPAGE, 0)
-    menu_setprop(iMenu, MPROP_EXIT, MEXIT_FORCE)
-    menu_display(id, iMenu, 0)
-    return PLUGIN_HANDLED
-}
-
-public HandleTempMenu2(id, iMenu, iItem)
-{
-    return HandleTempMenuAction(id, iMenu, iItem, 2)
-}
-
-public HandleTempMenu3(id, iMenu, iItem)
-{
-    return HandleTempMenuAction(id, iMenu, iItem, 3)
-}
-
-HandleTempMenuAction(id, iMenu, iItem, iTempIndex)
-{
-    if(iItem == MENU_EXIT)
-    {
-        menu_destroy(iMenu)
-        return PLUGIN_HANDLED
-    }
-
-    new szData[6], szName[64], iAccess, iCallback
-    menu_item_getinfo(iMenu, iItem, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback)
-    menu_destroy(iMenu)
-
-    new iAction = str_to_num(szData)
-    new iTempPort = GetTempServerPort(iTempIndex)
-
-    new szAdmin[MAX_NAME_LENGTH]
-    if(id) get_user_name(id, szAdmin, charsmax(szAdmin))
-    else copy(szAdmin, charsmax(szAdmin), "Console")
-
-    switch(iAction)
-    {
-        case 1: // Start / Create
-        {
-            WriteTempServerCommand("start", iTempIndex, id)
-            client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1initiated ^4START ^1for Temp Server #%d (15 Slots, 4 Hours)! Starting up...", szAdmin, iTempIndex)
-            set_task(1.0, "Task_RefreshTempMenu", id + (iTempIndex * 100))
-        }
-        case 2: // Stop
-        {
-            WriteTempServerCommand("stop", iTempIndex, id)
-            client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1requested ^1STOP for Temp Server #%d .", szAdmin, iTempIndex)
-            set_task(1.0, "Task_RefreshTempMenu", id + (iTempIndex * 100))
-        }
-        case 3: // Restart
-        {
-            WriteTempServerCommand("restart", iTempIndex, id)
-            client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1restarted ^3Temp Server #%d .", szAdmin, iTempIndex)
-            set_task(1.0, "Task_RefreshTempMenu", id + (iTempIndex * 100))
-        }
-        case 4: // Renew (+4 Hours)
-        {
-            WriteTempServerCommand("renew", iTempIndex, id)
-            client_print_color(0, print_team_default, "^4[GAMELAND] ^3%s ^1renewed ^4Temp Server #%d ^1for ^2+4 Hours^1! ", szAdmin, iTempIndex)
-            set_task(0.8, "Task_RefreshTempMenu", id + (iTempIndex * 100))
-        }
-        case 5: // Broadcast Connect Info (Clean & Masked - NO IP LEAK)
-        {
-            client_print_color(0, print_team_default, "^4[GAMELAND] ^3Temp Server #%d is ONLINE! ^1(15 Slots). Type ^4/sv%d ^1or press ^3m -> 8/9 ^1to join.", iTempIndex, iTempIndex)
-            set_dhudmessage(0, 220, 255, -1.0, 0.28, 0, 0.0, 6.0, 0.1, 0.5)
-            show_dhudmessage(0, "Temp Server #%d (15 Slots) is ONLINE!^nType /sv%d to join", iTempIndex, iTempIndex)
-            ShowTempServerController(id, iTempIndex)
-        }
-        case 6: // Refresh
-        {
-            ShowTempServerController(id, iTempIndex)
-        }
-        case 7: // Switch to other temp server
-        {
-            ShowTempServerController(id, (iTempIndex == 2) ? 3 : 2)
-        }
-        case 8: // Direct Connect / Join
-        {
-            new iCurrentTemp = 0, szCurParent[32]
-            new bool:bIsCurrentServer = false
-            if(IsCurrentServerTemp(iCurrentTemp, szCurParent, charsmax(szCurParent)) && iCurrentTemp == iTempIndex)
-                bIsCurrentServer = true
-
-            if(bIsCurrentServer)
-            {
-                new iCurPort = GetServerCurrentPort()
-                new iParentPort = (iTempIndex == 2) ? (iCurPort - 100) : (iCurPort - 101)
-                TransferPlayerToServer(id, iParentPort, "Main Server")
-            }
-            else
-            {
-                new szTName[32]
-                formatex(szTName, charsmax(szTName), "Temp Server #%d", iTempIndex)
-                TransferPlayerToServer(id, iTempPort, szTName)
-            }
-        }
-        case 9:
-        {
-            Cmd_AdminDashboard(id)
-        }
-    }
-    return PLUGIN_HANDLED
+	new fp_q = fopen("ready_to_compress.txt", "at")
+	if(fp_q)
+	{
+		if(g_szHltvDemoName[0])
+		{
+			fprintf(fp_q, "%s^n", g_szHltvDemoName)
+		}
+		else
+		{
+			fprintf(fp_q, "ALL^n")
+		}
+		fclose(fp_q)
+	}
+
+	if(g_szHltvDemoName[0])
+	{
+		client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Demo recording ^3STOPPED^1: ^4%s ^1-> Queued for Web Panel!", g_szHltvDemoName)
+		server_print("[GAMELAND HLTV] Demo recording STOPPED: %s -> Queued for Web Panel!", g_szHltvDemoName)
+		g_szHltvDemoName[0] = 0
+	}
+	else
+	{
+		client_print_color(0, print_team_default, "^4[GAMELAND HLTV] ^1Demo recording ^3STOPPED^1 -> Queued for Web Panel!")
+		server_print("[GAMELAND HLTV] Demo recording STOPPED -> Queued for Web Panel!")
+	}
+}
+
+stock gregorian_to_jalali(g_y, g_m, g_d, &j_y, &j_m, &j_d)
+{
+	new g_days_in_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+	new j_days_in_month[] = {31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 29}
+	
+	new gy = g_y - 1600
+	new gm = g_m - 1
+	new gd = g_d - 1
+	
+	new g_day_no = 365*gy + floatround(float((gy+3)/4)) - floatround(float((gy+99)/100)) + floatround(float((gy+399)/400))
+	
+	for(new i=0; i<gm; ++i)
+		g_day_no += g_days_in_month[i]
+		
+	if (gm > 1 && ((gy%4==0 && gy%100!=0) || (gy%400==0)))
+		g_day_no++
+		
+	g_day_no += gd
+	new j_day_no = g_day_no - 79
+	
+	new j_np = j_day_no / 12053
+	j_day_no = j_day_no % 12053
+	
+	j_y = 979 + 33*j_np + 4 * (j_day_no/1461)
+	j_day_no %= 1461
+	
+	if (j_day_no >= 366) {
+		j_y += (j_day_no-1)/365
+		j_day_no = (j_day_no-1)%365
+	}
+	
+	for (new i = 0; i < 11 && j_day_no >= j_days_in_month[i]; ++i) {
+		j_day_no -= j_days_in_month[i]
+		j_m = i + 1
+	}
+	j_m++
+	j_d = j_day_no + 1
+}
+
+stock MakeDemoSafeName(szName[], const iLen)
+{
+	replace_all(szName, iLen, " ", "_")
+	replace_all(szName, iLen, "^"", "_")
+	replace_all(szName, iLen, "\", "_")
+	replace_all(szName, iLen, "/", "_")
+	replace_all(szName, iLen, ":", "_")
+	replace_all(szName, iLen, "*", "_")
+	replace_all(szName, iLen, "?", "_")
+	replace_all(szName, iLen, "<", "_")
+	replace_all(szName, iLen, ">", "_")
+	replace_all(szName, iLen, "|", "_")
+	replace_all(szName, iLen, ".", "_")
+}
+
+stock Client_StartRecordingAll(const szDemoPrefix[])
+{
+	#pragma unused szDemoPrefix
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Client POV demo is local-only now. Players can press ^3F5^1 to start or stop their own demo.")
+}
+
+stock Client_StopRecordingAll()
+{
+	client_print_color(0, print_team_default, "^4[GAMELAND] ^1Client POV demo is controlled locally with ^3F5^1.")
+}
+
+
+public clcmd_startmix(id, bool:bKnife)
+{
+	client_print_color(id, print_team_default, "^4[Debug] ^1clcmd_startmix called with id: %d", id)
+	
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	if(g_eBooleans[bIsMixOn] || g_eBooleans[bIsKnife])
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_ALREADY_STARTED")
+		return PLUGIN_HANDLED
+	}
+
+	if(g_ePluginSettings[bRequireTen])
+	{
+		new iTemp[7]
+		rg_initialize_player_counts(iTemp[0], iTemp[1], iTemp[2], iTemp[3])
+		iTemp[4] = iTemp[0] + iTemp[2]
+		iTemp[5] = iTemp[1] + iTemp[3]
+		iTemp[6] = iTemp[5] + iTemp[4]
+
+		if(iTemp[6] < 10)
+		{
+			client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NEEDS_TEN_PLAYERS")
+			return PLUGIN_HANDLED
+		}
+	}
+
+	g_eInformations[MIX_STARTER] = id
+
+	#if defined FASTCUP_MODE
+	if(!g_eBooleans[bWasKnife])
+	{
+		g_eBooleans[bShouldRecordMix] = false
+		clcmd_startmix_internal(id, bKnife)
+		return PLUGIN_HANDLED
+	}
+	#endif
+
+	ShowRecordMatchMenu(id, bKnife)
+	return PLUGIN_HANDLED
+}
+
+public ApplyShootingLoadout()
+{
+	if(!g_eBooleans[bIsMixOn] || !IsShootingMap())
+	{
+		return
+	}
+
+	new players[MAX_PLAYERS], count
+	get_players(players, count, "ch")
+
+	new mapName[32]
+	get_mapname(mapName, charsmax(mapName))
+	new bool:bAwp = containi(mapName, "awp_") == 0 || containi(mapName, "aim_sk_awp") == 0
+
+	for(new i; i < count; i++)
+	{
+		new id = players[i]
+		new CsTeams:team = cs_get_user_team(id)
+		if(!IsPlayer(id) || (team != CS_TEAM_T && team != CS_TEAM_CT))
+		{
+			continue
+		}
+
+		if(bAwp)
+		{
+			rg_give_item(id, "weapon_awp", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_AWP, 90)
+		}
+		else if(team == CS_TEAM_CT)
+		{
+			rg_give_item(id, "weapon_m4a1", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_M4A1, 90)
+		}
+		else
+		{
+			rg_give_item(id, "weapon_ak47", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_AK47, 90)
+		}
+
+		rg_give_item(id, "weapon_deagle", GT_REPLACE)
+		rg_set_user_bpammo(id, WEAPON_DEAGLE, 35)
+		rg_set_user_armor(id, 100, ARMOR_VESTHELM)
+	}
+}
+
+stock ShowRecordMatchMenu(id, bool:bKnife)
+{
+	if(!is_user_connected(id))
+	{
+		g_eBooleans[bShouldRecordMix] = false
+		clcmd_startmix_internal(id, bKnife)
+		return
+	}
+
+	client_print_color(id, print_team_default, "^4[Debug] ^1Displaying HLTV record menu to id: %d", id)
+
+	new szTitle[128]
+	formatex(szTitle, charsmax(szTitle), "\y[GAMELAND]\w Start server-side HLTV recording?")
+	new menu = menu_create(szTitle, "menu_record_match")
+	
+	new szInfo[2]
+	szInfo[0] = bKnife ? '1' : '0'
+	szInfo[1] = 0
+	
+	menu_additem(menu, "Yes, Record", szInfo)
+	menu_additem(menu, "No, Do not record", szInfo)
+	menu_additem(menu, "Cancel", "2")
+	
+	menu_display(id, menu)
+}
+
+public menu_record_match(id, menu, item)
+{
+	if(item == MENU_EXIT)
+	{
+		menu_destroy(menu)
+		return PLUGIN_HANDLED
+	}
+	
+	new szData[6], szName[64], access, callback
+	menu_item_getinfo(menu, item, access, szData, charsmax(szData), szName, charsmax(szName), callback)
+	menu_destroy(menu)
+	
+	if(szData[0] == '2') 
+	{
+		return PLUGIN_HANDLED // Cancel
+	}
+	
+	new bool:bKnife = (szData[0] == '1')
+	g_eBooleans[bShouldRecordMix] = (item == 0) // item 0 is Yes, item 1 is No
+	
+	clcmd_startmix_internal(id, bKnife)
+	return PLUGIN_HANDLED
+}
+
+public clcmd_startmix_internal(id, bool:bKnife)
+{
+	new bool:bShootingMap = IsShootingMap()
+
+	#if defined FASTCUP_MODE
+	if(g_eBooleans[bWasKnife])
+	#endif
+	{
+		ExecuteForward(g_eForwards[GameBeginPre], g_iRet)
+	}
+
+	new szMapName[32], iDate[3], iTime[3]
+	enum { iYear = 0, iMonth, iDay }
+	enum { iHour = 0, iMin, iSec }
+	get_mapname(szMapName, charsmax(szMapName))
+	date(iDate[iYear], iDate[iMonth], iDate[iDay])
+	time(iTime[iHour], iTime[iMin], iTime[iSec])
+	
+	if(g_eBooleans[bShouldRecordMix])
+	{
+		HLTV_StartRecording("GL_Mix")
+		Client_StartRecordingAll("GL_Mix")
+	}
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	new CsTeams:iTeam
+
+	for(new i; i < iNum ; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		g_eBooleans[bCanChat][iPlayer] = true
+
+		#if defined FASTCUP_MODE
+		if(g_eBooleans[bWasKnife] && bKnife)
+		{
+		#endif
+			if(g_eInformations[MIX_STARTER] == iPlayer)
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_PLAYER, "MIX_STARTED_BY_YOU")
+			}
+			else
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_STARTED_BY_X", g_szName[g_eInformations[MIX_STARTER]])
+			}
+
+			// Client POV demo recording disabled - HLTV records the match centrally on the server
+			
+			iTeam = cs_get_user_team(iPlayer)
+
+			if(iTeam == CS_TEAM_CT || iTeam == CS_TEAM_T)
+			{
+
+							}
+		#if defined FASTCUP_MODE
+		}
+		#endif
+	}
+
+	g_eBooleans[bCanChat][id] = false
+
+	g_iStart = 0
+
+	ResetScore()
+	g_eBooleans[bIsShooting] = bShootingMap
+
+	#if defined FASTCUP_MODE
+	if(!bShootingMap && !g_eBooleans[bWasKnife])
+	{
+		g_eBooleans[bWasKnife] = true
+		clcmd_knife(id)
+		return PLUGIN_HANDLED
+	}
+
+	if(!bShootingMap && !bKnife)
+	{
+		return PLUGIN_HANDLED
+	}
+	#endif
+
+	g_eBooleans[bIsMixOn] = true
+	g_eBooleans[bOvertime] = false
+	g_eBooleans[bIsStoppingMix] = false
+	g_eInformations[ACE] = -1
+	g_eInformations[SEMI_ACE] = -1
+	g_eTeamPause[CT_PAUSE] = 0
+	g_eTeamPause[TERO_PAUSE] = 0
+
+	StartConfig()
+
+	if(bShootingMap)
+	{
+		g_bShootingOpening = true
+		RandomizeShootingTeams()
+		server_cmd("mp_timelimit 0")
+		// The plugin owns the ten-round shooting match. Keep the engine
+		// max-round limit disabled so it cannot trigger a map change.
+		server_cmd("mp_maxrounds 0")
+		server_cmd("mp_winlimit 0")
+		server_cmd("mp_freezetime 7")
+		server_cmd("mp_buytime 0.25")
+		set_task(0.4, "ApplyShootingLoadout")
+		server_cmd("sv_restart 1")
+		set_task(1.0, "StartCount", TASK_COUNT_DURATION, .flags = "b")
+		return PLUGIN_CONTINUE
+	}
+
+	server_cmd("sv_restart 1")
+	set_task(3.0, "task_mix_restart1")
+	set_task(8.0, "task_mix_restart2")
+	set_task(13.0, "task_mix_live")
+
+	set_task(1.0, "StartCount", TASK_COUNT_DURATION, .flags = "b")
+
+	return PLUGIN_CONTINUE
+}
+
+public clcmd_stopmix(id)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	#if defined DEBUG
+	client_print_color(0, 0, "clcmd_stopmix() called")
+	#endif
+
+	if(!g_eBooleans[bIsKnife] && !g_eBooleans[bIsMixOn])
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
+		return PLUGIN_HANDLED
+	}
+
+	g_eBooleans[bIsStoppingMix] = true
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	new CsTeams:iTeam
+
+	g_eInformations[MIX_STOPER] = id
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(g_eInformations[MIX_STOPER] == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_PLAYER, "MIX_STOPPED_BY_YOU")
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_STOPPED_BY_X", g_szName[g_eInformations[MIX_STOPER]])
+		}
+
+		iTeam = cs_get_user_team(iPlayer)
+
+		if(iTeam == CS_TEAM_CT || iTeam == CS_TEAM_T)
+		{
+					}
+
+			}
+
+	#if defined FASTCUP_MODE
+	g_eBooleans[bWasKnife] = false
+	#endif
+
+	ResetScore()
+	StopConfig()
+
+	HLTV_StopRecording()
+	Client_StopRecordingAll()
+
+	server_cmd("sv_restart 1")
+
+	return PLUGIN_CONTINUE
+}
+
+public clcmd_warm(id)
+{
+	if(is_user_connected(id))
+	{
+		if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+		{
+			client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+			return PLUGIN_HANDLED
+		}
+	}
+
+	if(g_eBooleans[bIsMixOn] || g_eBooleans[bIsKnife] || task_exists(TASK_CHECKVOTES))
+	{
+		clcmd_stopmix(id)
+	}
+	
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	g_eInformations[WARM_CALLER] = id
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(g_eInformations[WARM_CALLER] == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_PLAYER, "WARM_STARTED_BY_YOU")
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "WARM_STARTED_BY_X", strlen(g_szName[g_eInformations[WARM_CALLER]]) ? 
+			                   g_szName[g_eInformations[WARM_CALLER]] : "Server")
+		}
+
+		set_task(2.0, "Task_Warmup", iPlayer + TASK_WARM)
+	}
+
+	g_eBooleans[bIsWarm] = true
+	g_eBooleans[bOvertime] = false
+	// ReGameDLL must ignore team win conditions during warmup.  The hook
+	// prevents our mix logic from advancing, while this cvar also blocks the
+	// engine's native round-end path after a player dies.
+	server_cmd("mp_ignore_round_win_conditions 1")
+	#if defined FASTCUP_MODE
+	g_eBooleans[bWasKnife] = false
+	#endif
+
+	StopConfig()
+
+	server_cmd("mp_freezetime 0")
+
+	server_cmd("mp_buytime 99999")
+
+	server_cmd("sv_restart 1")
+
+	SetGameDesc(MATCHSTATE_WARM)
+
+	return PLUGIN_CONTINUE
+}
+
+public Task_Warmup(iPlayer)
+{
+	iPlayer -= TASK_WARM
+
+	if(g_eBooleans[bIsWarm] && is_user_connected(iPlayer))
+	{
+		rg_set_user_armor(iPlayer, 100, ARMOR_VESTHELM)
+
+		switch(g_eWarmSettings[bWarmType])
+		{
+			case false:
+			{
+				set_task(1.0, "task_set_money", iPlayer + TASK_SET_MONEY)
+			}
+			case true:
+			{
+				set_task(1.0, "task_give_weapon", iPlayer + TASK_GIVE_WEAPON)
+			}
+		}
+	}
+	return PLUGIN_CONTINUE
+}
+
+public task_set_money(id)
+{
+	id -= TASK_SET_MONEY
+
+	if(!IsPlayer(id) || !g_eBooleans[bIsWarm])
+	{
+		return PLUGIN_HANDLED
+	}
+
+	rg_add_account(id, g_eWarmSettings[iWarmMoney], AS_ADD, true)
+
+	#if defined DEBUG
+	client_print_color(id, id, "task_set_money() called")
+	#endif
+
+	return PLUGIN_CONTINUE
+}
+
+public task_give_weapon(id)
+{
+	id -= TASK_GIVE_WEAPON
+
+	if(!IsPlayer(id) || !g_eBooleans[bIsWarm] || !is_user_connected(id))
+	{
+		return PLUGIN_HANDLED
+	}
+
+	new TeamName:iTeam = get_member(id, m_iTeam)
+
+	// Shooting maps use the same weapon set during warmup and live play.
+	if(IsShootingMap())
+	{
+		new mapName[32]
+		get_mapname(mapName, charsmax(mapName))
+		new bool:bAwp = containi(mapName, "awp_") == 0 || containi(mapName, "aim_sk_awp") == 0
+		rg_remove_all_items(id, true)
+		if(bAwp)
+		{
+			rg_give_item(id, "weapon_awp", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_AWP, 90)
+		}
+		else if(iTeam == TEAM_CT)
+		{
+			rg_give_item(id, "weapon_m4a1", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_M4A1, 90)
+		}
+		else
+		{
+			rg_give_item(id, "weapon_ak47", GT_REPLACE)
+			rg_set_user_bpammo(id, WEAPON_AK47, 90)
+		}
+		rg_give_item(id, "weapon_deagle", GT_REPLACE)
+		rg_set_user_bpammo(id, WEAPON_DEAGLE, 35)
+		rg_set_user_armor(id, 100, ARMOR_VESTHELM)
+		return PLUGIN_HANDLED
+	}
+
+	new iWeaponID[3]
+
+	iWeaponID[0] = rg_get_weapon_info(g_eWarmSettings[szWeaponT], WI_ID)
+	iWeaponID[1] = rg_get_weapon_info(g_eWarmSettings[szWeaponCT], WI_ID)
+	iWeaponID[2] = rg_get_weapon_info(g_eWarmSettings[szPistol], WI_ID)
+
+	switch(iTeam)
+	{
+		case TEAM_TERRORIST:
+		{
+			rg_give_item(id, g_eWarmSettings[szWeaponT], GT_REPLACE)
+			rg_give_item(id, g_eWarmSettings[szPistol], GT_REPLACE)
+			rg_set_user_bpammo(id, WeaponIdType:iWeaponID[0], g_eWarmSettings[iBpAmmo])
+			rg_set_user_bpammo(id, WeaponIdType:iWeaponID[2], g_eWarmSettings[iBpAmmo])
+		}
+		case TEAM_CT:
+		{
+			rg_give_item(id, g_eWarmSettings[szWeaponCT], GT_REPLACE)
+			rg_give_item(id, g_eWarmSettings[szPistol], GT_REPLACE)
+			rg_set_user_bpammo(id, WeaponIdType:iWeaponID[1], g_eWarmSettings[iBpAmmo])
+			rg_set_user_bpammo(id, WeaponIdType:iWeaponID[2], g_eWarmSettings[iBpAmmo])
+		}
+	}
+	
+	#if defined DEBUG
+	client_print_color(id, id, "task_give_weapon() called")
+	#endif
+
+	return PLUGIN_HANDLED
+}
+
+public clcmd_knife(id)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	if(g_eBooleans[bIsMixOn])
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NEED_STOPPED")
+		return PLUGIN_HANDLED
+	}
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	g_eInformations[KNIFE_STRATER] = id
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		#if !defined FASTCUP_MODE
+		if(g_eInformations[KNIFE_STRATER] == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "KNIFE_STARTED_BY_YOU")
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "KNIFE_STARTED_BY_X", g_szName[g_eInformations[KNIFE_STRATER]])
+		}
+		#else
+		client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "KNIFE_STARTED")
+		#endif
+	}
+
+	g_iKnifes = 0
+
+	ResetScore()
+
+	g_eBooleans[bIsKnife] = true
+
+	g_iKnifes += 1
+
+	StopConfig()
+	
+	server_cmd("mp_freezetime 3")
+	server_cmd("mp_startmoney 800")
+
+	server_cmd("sv_restart 1")
+
+	SetGameDesc(MATCHSTATE_KNIFE_ROUND)
+
+	return PLUGIN_CONTINUE
+}
+
+public RG_EndRound(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
+{
+	if(get_playersnum() < 1)
+	{
+		return
+	}
+
+	if(event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
+	{
+		if(g_eBooleans[bIsWarm])
+		{
+			set_task(0.5, "task_reapply_warm")
+		}
+		return
+	}
+
+	if(g_eBooleans[bIsWarm])
+	{
+		return
+	}
+
+	set_task(1.0, "task_end_round", any:status)
+}
+
+public RG_EndRound_Pre(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay)
+{
+	if(!g_eBooleans[bIsWarm] || event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE)
+	{
+		return HC_CONTINUE
+	}
+
+	// Warmup is continuous: keep a 1v1 running after a death.
+	for(new id = 1; id <= MAX_PLAYERS; id++)
+	{
+		if(IsPlayer(id) && !is_user_alive(id))
+		{
+			remove_task(id + TASK_REVIVE)
+			set_task(0.1, "task_revive", id + TASK_REVIVE)
+		}
+	}
+
+	return HC_SUPERCEDE
+}
+
+public RG_CheckWinConditions_Pre()
+{
+	if(g_eBooleans[bIsWarm])
+	{
+		return HC_SUPERCEDE
+	}
+
+	return HC_CONTINUE
+}
+
+public task_end_round(index)
+{
+	new WinStatus:status = WinStatus:index
+
+	new szTeamWon[12]
+	#if defined FASTCUP_MODE
+	new TeamName:iWTeam
+	#endif
+
+	switch(status)
+	{
+		case WINSTATUS_CTS:
+		{
+			formatex(szTeamWon, charsmax(szTeamWon), "%L", LANG_SERVER, "CT_TEAM")
+			#if defined FASTCUP_MODE
+			iWTeam = TEAM_CT
+			#endif
+
+			if(g_eBooleans[bIsMixOn])
+			{
+				if(!g_eBooleans[bOvertime])
+				{
+					g_iScore[CT_SCORE] += 1
+					g_iRoundNum += 1
+				}
+				else
+				{
+					g_iOvertimeScore[CT_OVER_SCORE] += 1
+				}
+			}
+		}
+		case WINSTATUS_TERRORISTS:
+		{
+			formatex(szTeamWon, charsmax(szTeamWon), "%L", LANG_SERVER, "TERO_TEAM")
+			#if defined FASTCUP_MODE
+			iWTeam = TEAM_TERRORIST
+			#endif
+
+			if(g_eBooleans[bIsMixOn])
+			{
+				if(!g_eBooleans[bOvertime])
+				{
+					g_iScore[TERO_SCORE] += 1
+					g_iRoundNum += 1
+				}
+				else
+				{
+					g_iOvertimeScore[TERO_OVER_SCORE] += 1
+				}
+			}
+		}
+	}
+
+	// Do not wait for the delayed score HUD task on shooting maps.  The
+	// round-end callback is the authoritative point where the winning
+	// team's score has just been committed, so finish immediately at ten.
+	if(g_eBooleans[bIsShooting] && g_eBooleans[bIsMixOn]
+		&& (g_iScore[CT_SCORE] >= SHOOTING_END_SCORE || g_iScore[TERO_SCORE] >= SHOOTING_END_SCORE))
+	{
+		new szWinningTeam[16]
+		if(g_iScore[CT_SCORE] >= SHOOTING_END_SCORE)
+		{
+			formatex(szWinningTeam, charsmax(szWinningTeam), "%L", LANG_SERVER, "CT_TEAM")
+		}
+		else
+		{
+			formatex(szWinningTeam, charsmax(szWinningTeam), "%L", LANG_SERVER, "TERO_TEAM")
+		}
+
+		client_print_color(0, 0, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_WON_BY_X_TEAM", szWinningTeam)
+		client_print_color(0, 0, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_END_SCORE", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
+
+		FinishShootingMatch()
+		return HC_CONTINUE
+	}
+
+	if(g_eBooleans[bIsMixOn])
+		SetGameDesc(g_eBooleans[bOvertime] ? MATCHSTATE_OVERTIME : MATCHSTATE_IN_MATCH)
+	else if(g_ePluginSettings[bForceWarmup] && !g_eBooleans[bIsWarm] && !g_eBooleans[bIsKnife])
+	{
+		clcmd_warm(0)
+	}
+
+	if(g_iKnifes >= 1 && (status == WINSTATUS_CTS || status == WINSTATUS_TERRORISTS))
+	{
+		if(g_eBooleans[bIsKnife] && !g_eBooleans[bIsStoppingMix])
+		{
+			set_pcvar_num(g_cFreezeTime, g_ePluginSettings[iKnifeStartDelay])
+			static iPlayer, iPlayers[MAX_PLAYERS], iNum
+			get_players(iPlayers, iNum, "ch")
+
+			for(new i; i < iNum; i++)
+			{
+				iPlayer = iPlayers[i]
+
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "KNIFE_ROUND_WON_BY_X_TEAM", szTeamWon)
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "KNIFE_ROUND_MATCH_START_IN", g_ePluginSettings[iKnifeStartDelay])
+				
+				#if defined FASTCUP_MODE
+				if(get_member(iPlayer, m_iTeam) == iWTeam)
+				{
+					g_iPlayers += 1
+					set_task(0.2, "task_ask_player", iPlayer + TASK_ASK)
+				}
+				#endif
+			}
+
+#if defined FASTCUP_MODE
+			if(!task_exists(TASK_CHECKVOTES))
+			{
+				set_task(float(g_ePluginSettings[iKnifeStartDelay]), "task_do_change", TASK_CHECKVOTES)
+			}
+#endif
+			g_eBooleans[bIsKnife] = false
+			g_iKnifes = 3
+
+			ResetScore()
+		}
+	}
+
+	if(CanOvertime() && g_ePluginSettings[iAutoOvertime] && !g_eBooleans[bOvertime])
+	{
+		g_eBooleans[bOvertime] = true
+		g_eOvertime[FirstOvertime] = true
+
+		new iPlayer, iPlayers[MAX_PLAYERS], iNum
+		get_players(iPlayers, iNum, "ch")
+
+		for(new i; i < iNum; i++)
+		{
+			iPlayer = iPlayers[i]
+
+			if(!IsPlayer(iPlayer))
+			{
+				continue
+			}
+
+			#if defined OVERTIME_ONE_ROUND
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "OVERTIME_AUTOMATIC_WILL_START_ONER")
+			#else
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "OVERTIME_AUTOMATIC_WILL_START")
+			#endif
+		}
+
+		g_eBooleans[bTeamSwap] = false
+
+		OvertimeConfig()
+
+		set_pcvar_num(g_cFreezeTime, 15)
+		set_task(0.2, "task_delayed_swap")
+		set_task(2.5, "task_show_overtime_start")
+		set_task(12.0, "task_halftime_restart1")
+		set_task(17.0, "task_halftime_restart2")
+		set_task(22.0, "task_overtime_live")
+	}
+
+	if(g_eBooleans[bOvertime])
+	{
+		CheckOvertimePhase()
+	}
+
+ 	if(g_eBooleans[bIsKnife])
+ 	{
+		g_iKnifes += 1
+ 	}
+
+ 	if(g_eBooleans[bIsMixOn])
+ 	{
+ 		g_bPaused = false
+ 		g_iTimer = g_ePluginSettings[iPauseTime] - 1
+
+	 	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+		get_players(iPlayers, iNum, "ch")
+
+		new iDamageGiven, iDamageTaken, iHitsGiven, iHitsTaken, iVictim, CsTeams:iTeam
+
+		for(new i; i < iNum; i++)
+		{
+			iPlayer = iPlayers[i]
+
+			static bool:bCanShowStatsDisabled = false
+			if(bCanShowStatsDisabled /* g_eBooleans[bCanShowStats] disabled by user */)
+			{
+				for(new j; j < iNum; j++)
+				{
+					iVictim = iPlayers[j]
+
+					iTeam = cs_get_user_team(iVictim)
+
+					if(iTeam == CS_TEAM_CT || iTeam == CS_TEAM_T)
+					{
+						iDamageGiven = g_ePlayerStats[iPlayer][iVictim][DamageGiven]
+						iDamageTaken = g_ePlayerStats[iVictim][iPlayer][DamageGiven]
+
+						if(iDamageGiven > 100)
+						{
+							iDamageGiven = 100
+						}
+
+						if(iDamageTaken > 100)
+						{
+							iDamageTaken = 100
+						}
+
+						if(i != j && iTeam != cs_get_user_team(iPlayer))
+						{
+							if(!(iDamageGiven || iDamageTaken))
+								continue
+
+							iHitsGiven = g_ePlayerStats[iPlayer][iVictim][HitsGiven]
+							iHitsTaken = g_ePlayerStats[iVictim][iPlayer][HitsGiven]
+
+							client_print_color(iPlayer, iPlayer, "^4%s ^1%s (^4%d ^1%L^4 %d^1) %L, (^4%d^1 %L^4 %d^1) %L.", 
+							                   g_ePluginSettings[szPrefix], g_szName[iVictim], iDamageGiven, LANG_PLAYER, "IN",
+							                    iHitsGiven, LANG_PLAYER, "DAMAGE", iDamageTaken, LANG_PLAYER, "IN", iHitsTaken, LANG_PLAYER, "RECEIVED")
+						}
+					}
+				}
+			}
+
+			if(g_iPlayerKills[iPlayer] == 5)
+			{
+				g_eInformations[ACE] = iPlayer
+			}
+
+			if(g_iPlayerKills[iPlayer] == 4)
+			{
+				g_eInformations[SEMI_ACE] = iPlayer
+			}
+		}
+
+		for(new i; i < iNum; i++)
+		{
+			iPlayer = iPlayers[i]
+
+			if(g_eInformations[ACE] != -1)
+			{
+				if(g_eInformations[ACE] == iPlayer)
+				{
+									}
+				else
+				{
+					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "X_SCORED_ACE", g_szName[g_eInformations[ACE]])
+				}
+			}
+
+			if(g_eInformations[SEMI_ACE] != -1)
+			{
+				if(g_eInformations[SEMI_ACE] == iPlayer)
+				{
+									}
+				else
+				{
+					client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "X_SCORED_SEMIACE", g_szName[g_eInformations[SEMI_ACE]])
+				}
+			}
+
+					}
+
+		for(new i = 1; i <= MAX_PLAYERS; i++)
+		{
+			for(new j = 1; j <= MAX_PLAYERS; j++)
+			{
+				g_ePlayerStats[i][j][DamageGiven] = 0
+				g_ePlayerStats[i][j][HitsGiven] = 0
+				g_ePlayerStats[i][j][PlayerHealth] = 0
+			}
+		}
+
+		if(g_eTeamPause[TERO_PAUSE] == 1)
+		{
+			set_pcvar_num(g_cFreezeTime, g_ePluginSettings[iPauseTime])
+			server_cmd("mp_buytime 0.80")
+			g_eTeamPause[TERO_PAUSE] += 1
+			g_bPaused = true
+		}
+		else if(g_eTeamPause[CT_PAUSE] == 1)
+		{
+			set_pcvar_num(g_cFreezeTime, g_ePluginSettings[iPauseTime])
+			server_cmd("mp_buytime 0.80")
+			g_eTeamPause[CT_PAUSE] += 1
+			g_bPaused = true
+		}
+
+		if(!g_bPaused && !task_exists(TASK_CHECKVOTES))
+		{
+			set_pcvar_num(g_cFreezeTime, g_eBooleans[bIsShooting] ? 0 : g_iFreezeTime)
+		}
+
+		if(IsHalf() && !g_eBooleans[bOvertime] && !g_eBooleans[bTeamSwap])
+		{
+			set_pcvar_num(g_cFreezeTime, g_ePluginSettings[iFreezetimeSwap])
+			set_task(0.1, "task_swap_score")
+			set_task(0.2, "task_delayed_swap")
+			set_task(2.5, "task_show_halftime")
+			set_task(12.0, "task_halftime_restart1")
+			set_task(17.0, "task_halftime_restart2")
+			set_task(22.0, "task_halftime_live")
+		}
+	}
+
+	return HC_CONTINUE
+}
+
+#if defined FASTCUP_MODE
+public task_ask_player(id)
+{
+	id -= TASK_ASK
+
+	new szTemp[64]
+
+	formatex(szTemp, charsmax(szTemp), "\r%s \w%L", g_ePluginSettings[szPrefix], LANG_SERVER, "MENU_ASK_PLAYER")
+	new menu = menu_create(szTemp, "handle_ask_menu")
+
+	formatex(szTemp, charsmax(szTemp), "\y%L", LANG_SERVER, "ASK_MENU_SWITCH")
+	menu_additem(menu, szTemp)
+
+	formatex(szTemp, charsmax(szTemp), "\y%L", LANG_SERVER, "ASK_MENU_STAY")
+	menu_additem(menu, szTemp)
+
+	_MenuDisplay(id, menu)
+}
+
+public handle_ask_menu(id, menu, item)
+{
+	if(item == MENU_EXIT || !IsPlayer(id) || g_bVoted || g_eBooleans[bIsMixOn])
+	{
+		return _MenuExit(menu)
+	}
+
+	switch(item)
+	{
+		case 0:
+		{
+			g_iAnswer[SWITCH] += 1
+		}
+		case 1:
+		{
+			g_iAnswer[STAY] += 1
+		}
+	}
+
+	CheckVotes(g_iAnswer)
+
+	return _MenuExit(menu)
+}
+
+public CheckVotes(any:iAnswer[])
+{
+	if(iAnswer[SWITCH] > iAnswer[STAY])
+	{
+		g_iVote = 1
+	}
+	else if(iAnswer[SWITCH] < iAnswer[STAY])
+	{
+		g_iVote = 0
+	}
+	else if(iAnswer[SWITCH] == iAnswer[STAY])
+	{
+		g_iVote = 0
+	}
+	else 
+	{
+		g_iVote = 0
+	}
+}
+
+public task_do_change(iTaskID)
+{
+	g_bVoted = true
+
+	new szTemp[128]
+
+	switch(g_iVote)
+	{
+		case 0:
+		{
+			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "STAY")
+		}
+		case 1:
+		{
+			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "SWITCH")
+		}
+	}
+
+	client_print_color(0, 0, "^4%s %L %s", g_ePluginSettings[szPrefix], LANG_SERVER, "TEAM_VOTED", szTemp)
+
+	if(g_iVote) 
+	{
+		rg_swap_all_players()
+	}
+
+	g_eBooleans[bCanShowStats] = false
+
+	ShowRecordMatchMenu(g_eInformations[MIX_STARTER], true)
+
+	return PLUGIN_HANDLED
+}
+#endif
+
+public ev_NewRound()
+{
+	#if defined FASTCUP_MODE
+	if(g_eBooleans[bIsMixOn] && g_iKnifes == 3)
+	#else
+	if(g_eBooleans[bIsMixOn])
+	#endif
+	{
+		set_task(1.0, "task_show_score")
+
+		g_eBooleans[bCanShowStats] = true
+
+		if(g_bPaused)
+		{
+			set_task(0.01, "task_show_dhud")
+		}
+	}
+}
+
+public ev_GameRestart()
+{
+	set_task(1.0, "task_change_bool", TASK_CHANGE_BOOL)
+}
+
+public task_change_bool(taskid)
+{
+	g_eBooleans[bIsStoppingMix] = false
+
+	remove_task(TASK_CHANGE_BOOL)
+}
+
+public CS_OnBuyAttempt(id, item)
+{
+	if(g_eBooleans[bIsWarm] && g_eWarmSettings[bWarmType])
+	{
+		return PLUGIN_HANDLED
+	}
+
+	if(g_eBooleans[bIsKnife])
+	{
+		if(item != CSI_VEST && item != CSI_VESTHELM)
+		{
+			return PLUGIN_HANDLED
+		}
+	}
+	
+	if(item == CSI_SHIELDGUN || item == CSI_NVGS || item == CSI_SG550 || item == CSI_G3SG1 || item == CSI_SHIELD)
+	{
+		return PLUGIN_HANDLED
+	}
+
+	return PLUGIN_CONTINUE
+}
+
+public clcmd_chat_on(id)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	#if defined DEBUG
+	client_print_color(0, 0, "clcmd_chat() called")
+	#endif
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	g_eInformations[CHAT] = id
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(g_eInformations[CHAT] == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "CHAT_OPENED_BY_YOU")
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "CHAT_OPENED_BY_X", g_szName[g_eInformations[CHAT]])
+		}
+
+		g_eBooleans[bCanChat][iPlayer] = true
+	}
+
+	return PLUGIN_HANDLED
+}
+
+public clcmd_chat_off(id)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	#if defined DEBUG
+	client_print_color(0, 0, "clcmd_chat() called")
+	#endif
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	g_eInformations[CHAT] = id
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(g_eInformations[CHAT] == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "CHAT_CLOSED_BY_YOU")
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "CHAT_CLOSED_BY_X", g_szName[g_eInformations[CHAT]])
+		}
+		
+		if(!(get_user_flags(iPlayer) & read_flags(g_ePluginSettings[szAdminFlags])))
+		{
+			g_eBooleans[bCanChat][iPlayer] = false
+		}
+	}
+
+	return PLUGIN_HANDLED
+}
+
+public plugin_cfg()
+{
+	set_task(3.0, "task_start_warm")
+}
+
+public hook_say(id)
+{
+	if(!is_user_connected(id))
+		return PLUGIN_CONTINUE
+
+	if(!g_eBooleans[bCanChat][id])
+	{
+		if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminFlags])))
+		{
+			return PLUGIN_HANDLED
+		}
+	}
+
+	new sArg[MAX_NAME_LENGTH], szMessage[180]
+	read_argv(1, sArg, charsmax(sArg))
+	read_args(szMessage, charsmax(szMessage))
+	remove_quotes(szMessage)
+
+	if(equal(szMessage, "hs1") || equal(szMessage, "/hs1") || equal(szMessage, ".hs1"))
+	{
+		clcmd_hs1(id)
+		return PLUGIN_HANDLED
+	}
+	if(equal(szMessage, "hs0") || equal(szMessage, "/hs0") || equal(szMessage, ".hs0"))
+	{
+		clcmd_hs0(id)
+		return PLUGIN_HANDLED
+	}
+
+	if(strlen(szMessage) != 0)
+	{
+		if(szMessage[0] == '/')
+		{
+			switch(szMessage[1])
+			{
+				case 's':
+				{
+					if(szMessage[2] == 'p' && szMessage[5] != 'a')
+					{
+						clcmd_move_spec(id, szMessage, charsmax(szMessage), 1)
+						return PLUGIN_HANDLED
+					}
+				}
+				case 't':
+				{
+					if(szMessage[2] == ' ')
+					{
+						clcmd_move_t(id, szMessage, charsmax(szMessage), 1)
+						return PLUGIN_HANDLED
+					}
+				}
+				case 'c':
+				{
+					if(szMessage[2] == 't')
+					{
+						clcmd_move_ct(id, szMessage, charsmax(szMessage), 1)
+						return PLUGIN_HANDLED
+					}
+				}
+				case 'p':
+				{
+					if(szMessage[2] == 'a' && szMessage[5] == ' ')
+					{
+						clcmd_passon(id, szMessage, 1)
+						return PLUGIN_HANDLED
+					}
+				}
+			}
+		}
+
+		new iPlayer, iPlayers[MAX_PLAYERS], iNum
+		get_players(iPlayers, iNum, "c")
+
+		if(is_user_alive(id))
+		{
+			format(szMessage, charsmax(szMessage), "^3%n^1: %s", id, szMessage)
+		}
+		else
+		{
+			format(szMessage, charsmax(szMessage), "^1*[DEAD] ^3%n^1: %s", id, szMessage)
+		}
+
+		for(new i; i < iNum; i++)
+		{
+			iPlayer = iPlayers[i]
+
+			client_print_color(iPlayer, id, szMessage)
+		}
+	}
+
+	return PLUGIN_CONTINUE
+}
+
+public HookSay(iMsgID, Msg, iDest)
+{
+	new szBuffer[64]
+	get_msg_arg_string(2, szBuffer, charsmax(szBuffer))
+
+	if(g_eBooleans[bIsMixOn] || g_eBooleans[bIsStoppingMix])
+	{
+		if(equal(szBuffer, "#Cstrike_Name_Change"))
+		{
+	        return PLUGIN_HANDLED
+		}
+	}
+
+	if(equal(szBuffer, "#Cstrike_Chat_CT") || equal(szBuffer, "#Cstrike_Chat_T") || equal(szBuffer, "#Cstrike_Chat_CT_Dead") || equal(szBuffer, "#Cstrike_Chat_T_Dead"))
+	{
+		return PLUGIN_CONTINUE
+	}
+
+	return PLUGIN_HANDLED
+}
+
+public clcmd_overtime(id)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	#if defined DEBUG
+	client_print_color(0, 0, "clcmd_overtime() called")
+	#endif
+
+	if(!g_eBooleans[bIsMixOn])
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
+		return PLUGIN_HANDLED
+	}
+
+	if(!CanOvertime())
+	{
+		client_print_color(id, id, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_SERVER, "CANT_START_OVERTIME_YET")
+		return PLUGIN_HANDLED
+	}
+
+	if(g_eBooleans[bOvertime])
+	{
+		client_print_color(id, id, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_SERVER, "OVERTIME_ALREADY_STARTED")
+		return PLUGIN_HANDLED
+	}
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	g_eInformations[OVERTIME_STARTER] = id
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(g_eInformations[OVERTIME_STARTER] == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "OVERTIME_STARTED_BY_YOU")
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "OVERTIME_STARTED_BY_X", g_szName[g_eInformations[OVERTIME_STARTER]])
+		}
+	}
+
+	OvertimeConfig()
+
+	set_pcvar_num(g_cFreezeTime, 15)
+	set_task(0.2, "task_delayed_swap")
+	set_task(2.5, "task_show_overtime_start")
+	set_task(12.0, "task_halftime_restart1")
+	set_task(17.0, "task_halftime_restart2")
+	set_task(22.0, "task_overtime_live")
+
+	g_eBooleans[bOvertime] = true
+
+	g_eBooleans[bTeamSwap] = false
+
+	g_eOvertime[FirstOvertime] = true
+
+	return PLUGIN_HANDLED
+}
+
+public clcmd_passon(id, szMessage[180], IsSay)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	#if defined DEBUG
+	client_print_color(0, 0, "clcmd_passon() called")
+	#endif
+
+	if(!g_eBooleans[bIsMixOn])
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
+		return PLUGIN_HANDLED
+	}
+
+	if(IsSay)
+	{
+		read_argv(1, szMessage, charsmax(szMessage))
+		replace_all(szMessage, charsmax(szMessage), "/pass", "")
+	}
+
+	server_cmd("sv_password %s", szMessage)
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	g_eInformations[PASSON_CALLER] = id
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(g_eInformations[PASSON_CALLER] == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PASSWORD_SETTED_BY_YOU", szMessage)
+		}
+		else if((get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PASSWORD_SETTED_BY_X_ADMIN", g_szName[g_eInformations[PASSON_CALLER]], szMessage)
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PASSWORD_SETTED_BY_X", g_szName[g_eInformations[PASSON_CALLER]])
+		}
+	}
+
+	return PLUGIN_HANDLED
+}
+
+public clcmd_passoff(id)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	#if defined DEBUG
+	client_print_color(0, 0, "clcmd_passoff() called")
+	#endif
+
+	if(!g_eBooleans[bIsMixOn])
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
+		return PLUGIN_HANDLED
+	}
+
+	server_cmd("sv_password ^"^"")
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	g_eInformations[PASSOFF_CALLER] = id
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(g_eInformations[PASSOFF_CALLER] == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PASSWORD_REMOVED_BY_YOU")
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PASSWORD_REMOVED_BY_X", g_szName[g_eInformations[PASSOFF_CALLER]])
+		}
+	}
+
+	return PLUGIN_HANDLED
+}
+
+public task_show_score()
+{
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	new bool:bShootingFinished
+	get_players(iPlayers, iNum, "ch")
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(!IsHalf() && !IsLastRound() && !g_eBooleans[bOvertime] && !IsPreLastRound())
+		{
+			if(!g_iStart)
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_SCORE_IS", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
+			}
+			else
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_SCORE_IS_WITH_END", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
+			}
+		}
+		
+		if(IsHalf() && !g_eBooleans[bOvertime] && !g_eBooleans[bTeamSwap])
+		{
+			set_pcvar_num(g_cFreezeTime, g_ePluginSettings[iFreezetimeSwap])
+			if(!IsPreLastRound())
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_HALF_SCORE", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
+			}
+
+			#if defined DEBUG
+			client_print_color(0, 0, "IsHalf() called")
+			#endif
+		}
+
+		if(IsPreLastRound() && !g_eBooleans[bOvertime])
+		{
+			new szTemp[16]
+			LastRoundUntilWin(szTemp, charsmax(szTemp))
+
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_LAST_ROUND_FOR_X_TEAM", szTemp)
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_SCORE_IS_WITH_END", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
+		}
+
+		if(IsLastRound())
+		{
+			new szTemp[16]
+			WinnerTeam(szTemp, charsmax(szTemp))
+
+			
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_WON_BY_X_TEAM", szTemp)
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_PLAYER, "MIX_END_SCORE", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
+
+			if(g_eBooleans[bIsShooting])
+			{
+				bShootingFinished = true
+			}
+		
+			// Client POV demo recording is controlled locally by the player.
+		}
+
+		if(g_eOvertime[FirstOvertime] && !IsHalf() && !OvertimeFinished())
+		{
+			#if !defined OVERTIME_ONE_ROUND
+			if(!g_eOvertime[SecondOvertime] && !g_eBooleans[bTeamSwap])
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "FIRST_OVERTIME_SCORE_IS", LANG_SERVER, "CT_TEAM", g_iOvertimeScore[CT_OVER_SCORE], LANG_SERVER, "TERO_TEAM", g_iOvertimeScore[TERO_OVER_SCORE])
+			}
+			
+			if(g_eOvertime[SecondOvertime] && g_eBooleans[bTeamSwap])
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "SECOND_OVERTIME_SCORE_IS", LANG_SERVER, "CT_TEAM", g_iOvertimeScore[CT_OVER_SCORE], LANG_SERVER, "TERO_TEAM", g_iOvertimeScore[TERO_OVER_SCORE])
+			}
+			#else
+			if(!g_eOvertime[SecondOvertime] && !g_eBooleans[bTeamSwap])
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "ONE_ROUND_FOR_WIN", LANG_SERVER)
+			}
+			#endif
+		}
+
+		if(OvertimeFinished())
+		{
+			new szTemp[16]
+			WinnerTeam(szTemp, charsmax(szTemp))
+
+			
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_WON_BY_X_TEAM_IN_OVERTIME", szTemp)
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_PLAYER, "MIX_OVERTIME_END_SCORE", LANG_SERVER, "CT_TEAM", g_iOvertimeScore[CT_OVER_SCORE], LANG_SERVER, "TERO_TEAM", g_iOvertimeScore[TERO_OVER_SCORE])
+		
+			// Client POV demo recording is controlled locally by the player.
+		}
+
+		g_iPlayerKills[iPlayer] = 0
+	}
+
+	ExecuteForward(g_eForwards[NewRound], g_iRet, g_iScore[CT_SCORE], g_iScore[TERO_SCORE], g_iDuration)
+
+	// Shooting matches are single-half games. Once one team reaches ten
+	// rounds, end the plugin state before starting warmup; otherwise the
+	// regular warmup guard sees bIsMixOn and silently refuses the transition.
+	if(bShootingFinished)
+	{
+		FinishShootingMatch()
+		return
+	}
+
+	if(IsLastRound() || OvertimeFinished())
+	{
+		set_task(5.0, "task_start_warm")
+		
+		HLTV_StopRecording()
+		Client_StopRecordingAll()
+	}
+
+	g_eBooleans[bIsStoppingMix] = false
+	g_eInformations[ACE] = -1
+	g_eInformations[SEMI_ACE] = -1
+
+	g_iStart = 1
+}
+
+stock FinishShootingMatch()
+{
+	if(!g_eBooleans[bIsMixOn] || !g_eBooleans[bIsShooting])
+	{
+		return
+	}
+
+	g_eBooleans[bIsStoppingMix] = true
+
+	HLTV_StopRecording()
+	Client_StopRecordingAll()
+
+	// Keep the shooting map loaded and prevent the engine from starting
+	// another match or changing the map while the result is displayed.
+	StopConfig()
+	server_cmd("mp_timelimit 0")
+	server_cmd("mp_maxrounds 0")
+	server_cmd("mp_winlimit 0")
+	set_pcvar_num(g_cFreezeTime, 0)
+
+	// Clear the mix state first so clcmd_warm(0) is accepted.
+	ResetScore()
+	set_task(1.0, "task_start_warm")
+}
+
+public task_show_dhud()
+{
+	if(g_iTimer > 0)
+	{
+		static szMsg[64]
+		formatex(szMsg, charsmax(szMsg), "%s %L [%d]", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_TIMEOUTED", g_iTimer)
+		set_dhudmessage(255, 255, 255, -1.0, 0.2, 0, 0.0, 1.00)
+		show_dhudmessage(0, szMsg)
+
+		g_iTimer--
+
+		if(g_bPaused)
+		{
+			set_task(1.0, "task_show_dhud")
+		}
+	}
+}
+
+public task_delayed_swap()
+{
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
+		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
+	}
+
+	rg_swap_all_players()
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		new TeamName:iTeam = get_member(iPlayer, m_iTeam)
+
+		if(iTeam == TEAM_UNASSIGNED || iTeam == TEAM_SPECTATOR)
+			continue 
+		SetMembers()
+		set_member_game(m_bCTCantBuy, true)
+		set_member_game(m_bTCantBuy, true)
+		rg_add_account(iPlayer, get_cvar_num("mp_startmoney"), AS_SET)
+		rg_remove_all_items(iPlayer, true)
+
+		set_task(1.4, "task_give_equipment", iPlayer + TASK_GIVE_EQUIPMENT)
+	}
+
+	rg_round_end(1.0, WINSTATUS_NONE, ROUND_GAME_OVER)
+
+	set_task(1.2, "task_delayed_members")
+}
+
+public SetMembers()
+{
+	// https://github.com/rehlds/ReGameDLL_CS/blob/master/regamedll/dlls/multiplay_gamerules.cpp#L1967-L1978
+	set_member_game(m_iAccountTerrorist, 0)
+	set_member_game(m_iAccountCT, 0)
+	set_member_game(m_iNumTerroristWins, 0)
+	set_member_game(m_iNumCTWins, 0)
+	set_member_game(m_iNumConsecutiveTerroristLoses, 0)
+	set_member_game(m_iNumConsecutiveCTLoses, 0)
+	set_member_game(m_iLoserBonus, rg_get_account_rules(RR_LOSER_BONUS_DEFAULT))
+}
+
+public task_delayed_members()
+{
+	set_member_game(m_bCTCantBuy, false)
+	set_member_game(m_bTCantBuy, false)
+	g_iGaveC4 = false
+	
+	new iCT, iT
+	if(g_eBooleans[bOvertime])
+	{
+		iCT = g_iOvertimeScore[CT_OVER_SCORE]
+		iT = g_iOvertimeScore[TERO_OVER_SCORE]
+	}
+	else
+	{
+		iCT = g_iScore[CT_SCORE]
+		iT = g_iScore[TERO_SCORE]
+	}
+
+	// Set engine internal counters so sv_restart reads correct values
+	set_member_game(m_iNumCTWins, iCT)
+	set_member_game(m_iNumTerroristWins, iT)
+	rg_update_teamscores(iCT, iT, false)
+
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		set_user_frags(iPlayer, g_ePlayerScore[iPlayer][iKILLS])
+		cs_set_user_deaths(iPlayer, g_ePlayerScore[iPlayer][iDEATHS])
+
+		message_begin(MSG_ALL, get_user_msgid("ScoreInfo"))
+		write_byte(iPlayer)
+		write_short(g_ePlayerScore[iPlayer][iKILLS])
+		write_short(g_ePlayerScore[iPlayer][iDEATHS])
+		write_short(0)
+		write_short(get_member(iPlayer, m_iTeam))
+		message_end()
+	}
+}
+
+public task_halftime_restart1()
+{
+	server_cmd("sv_restart 1")
+	set_task(1.5, "task_delayed_members")
+	client_print_color(0, print_team_default, "^4%s ^1Restart ^4[1/3]", g_ePluginSettings[szPrefix])
+}
+
+public task_halftime_restart2()
+{
+	server_cmd("sv_restart 1")
+	set_task(1.5, "task_delayed_members")
+	client_print_color(0, print_team_default, "^4%s ^1Restart ^4[2/3]", g_ePluginSettings[szPrefix])
+}
+
+public task_halftime_live()
+{
+	server_cmd("sv_restart 1")
+	set_task(1.5, "task_delayed_members")
+	set_task(1.5, "task_show_live")
+}
+
+public task_mix_restart1()
+{
+	server_cmd("sv_restart 1")
+	client_print_color(0, print_team_default, "^4%s ^1Restart ^4[1/3]", g_ePluginSettings[szPrefix])
+}
+
+public task_mix_restart2()
+{
+	server_cmd("sv_restart 1")
+	client_print_color(0, print_team_default, "^4%s ^1Restart ^4[2/3]", g_ePluginSettings[szPrefix])
+}
+
+public task_mix_live()
+{
+	server_cmd("sv_restart 1")
+	set_task(2.5, "task_show_live")
+}
+
+public task_give_equipment(iPlayer)
+{
+	iPlayer -= TASK_GIVE_EQUIPMENT
+
+	if(!is_user_alive(iPlayer))
+		return
+
+	new szDefaultWeap[48]
+
+	new TeamName:iTeam = get_member(iPlayer, m_iTeam)
+
+	if(iTeam == TEAM_UNASSIGNED || iTeam == TEAM_SPECTATOR)
+		return 
+
+	rg_remove_all_items(iPlayer, g_eBooleans[bIsShooting] && IsShootingMap())
+	rg_set_user_armor(iPlayer, 100, ARMOR_KEVLAR)
+
+	// Shooting maps own their weapon rules.  The regular mix equipment path
+	// used to run after ApplyShootingLoadout and replace the guns with a knife
+	// and the default pistol on every restart/round setup.
+	if(g_eBooleans[bIsShooting] && IsShootingMap())
+	{
+		new mapName[32]
+		get_mapname(mapName, charsmax(mapName))
+		new bool:bAwp = containi(mapName, "awp_") == 0 || containi(mapName, "aim_sk_awp") == 0
+
+		if(bAwp)
+		{
+			rg_give_item(iPlayer, "weapon_awp", GT_REPLACE)
+			rg_set_user_bpammo(iPlayer, WEAPON_AWP, 90)
+		}
+		else if(iTeam == TEAM_CT)
+		{
+			rg_give_item(iPlayer, "weapon_m4a1", GT_REPLACE)
+			rg_set_user_bpammo(iPlayer, WEAPON_M4A1, 90)
+		}
+		else
+		{
+			rg_give_item(iPlayer, "weapon_ak47", GT_REPLACE)
+			rg_set_user_bpammo(iPlayer, WEAPON_AK47, 90)
+		}
+
+		rg_give_item(iPlayer, "weapon_deagle", GT_REPLACE)
+		rg_set_user_bpammo(iPlayer, WEAPON_DEAGLE, 35)
+		rg_set_user_armor(iPlayer, 100, ARMOR_VESTHELM)
+		return
+	}
+
+	rg_give_item(iPlayer, "weapon_knife")
+
+	switch(iTeam)
+	{
+		case TEAM_TERRORIST:
+		{
+			get_cvar_string("mp_t_default_weapons_secondary", szDefaultWeap, charsmax(szDefaultWeap))
+			// if we stripped the C4 from player, give one to a random player
+			if(get_member_game(m_bMapHasBombZone) && !g_iGaveC4)
+			{
+				rg_give_item(iPlayer, "weapon_c4", GT_REPLACE)
+				g_iGaveC4 = true
+			}
+		}
+		case TEAM_CT:
+		{
+			get_cvar_string("mp_ct_default_weapons_secondary", szDefaultWeap, charsmax(szDefaultWeap))
+		}
+	}
+
+	format(szDefaultWeap, charsmax(szDefaultWeap), "weapon_%s", szDefaultWeap)
+	rg_give_item(iPlayer, szDefaultWeap)
+	new WeaponIdType:wid = rg_get_weapon_info(szDefaultWeap, WI_ID)
+
+	if(!wid)
+		return
+
+	rg_set_user_bpammo(iPlayer, wid, rg_get_global_iteminfo(wid, ItemInfo_iMaxClip) * 2)
+}
+
+public task_swap_score()
+{
+	g_eBooleans[bTeamSwap] = true
+
+	#if defined DEBUG
+	client_print_color(0, 0, "task_swap_score() called")
+	#endif
+	
+	new temp[6]
+	if(g_eBooleans[bOvertime])
+	{
+			temp[2] = g_iOvertimeScore[CT_OVER_SCORE]
+			temp[3] = g_iOvertimeScore[TERO_OVER_SCORE]
+			g_iOvertimeScore[TERO_OVER_SCORE] = temp[2]
+			g_iOvertimeScore[CT_OVER_SCORE] = temp[3]
+
+			#if defined DEBUG
+			client_print_color(0, 0, "if() called")
+			#endif
+	}
+	else
+	{
+		temp[0] = g_iScore[CT_SCORE]
+		temp[1] = g_iScore[TERO_SCORE]
+		g_iScore[TERO_SCORE] = temp[0]
+		g_iScore[CT_SCORE] = temp[1]
+
+		#if defined DEBUG
+		client_print_color(0, 0, "else() called")
+		client_print_color(0, 0, "temp[0] = %i", temp[0])
+		client_print_color(0, 0, "temp[1] = %i", temp[1])
+		#endif
+	}
+	
+	temp[4] = g_eTeamPause[CT_PAUSE]
+	temp[5] = g_eTeamPause[TERO_PAUSE]
+	g_eTeamPause[TERO_PAUSE] = temp[4]
+	g_eTeamPause[CT_PAUSE] = temp[5]
+
+	set_pcvar_num(g_cFreezeTime, g_iFreezeTime)
+
+	for(new i; i < ArraySize(g_aPlayerData); i++)
+	{
+		ArrayDeleteItem(g_aPlayerData, i)
+	}
+}
+
+public clcmd_specall(id)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	if(g_eBooleans[bIsMixOn])
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NEED_STOPPED")
+		return PLUGIN_HANDLED
+	}
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	g_eInformations[SPECALL_CALLER] = id
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(g_eInformations[SPECALL_CALLER] == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYERS_MOVED_SPEC_BY_YOU")
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYERS_MOVED_SPEC_BY_X", g_szName[g_eInformations[SPECALL_CALLER]])
+		}
+
+		rg_join_team(iPlayer, TEAM_SPECTATOR)
+		rg_round_end(1.0, WINSTATUS_DRAW, ROUND_END_DRAW, "ROUND DRAW", "ROUND DRAW", true)
+	}
+
+	return PLUGIN_HANDLED
+}
+
+public task_specall(id)
+{
+	id -= TASK_SPECALL
+
+	if(!is_user_connected(id))
+	{
+		return
+	}
+
+	rg_join_team(id, TEAM_SPECTATOR)
+}
+
+public clcmd_restart(id)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	if(g_eBooleans[bIsKnife])
+	{
+		g_iKnifes = 0
+		
+		#if defined FASTCUP_MODE
+		g_bVoted = false
+		remove_task(TASK_CHECKVOTES)
+		arrayset(g_iAnswer, 0, sizeof(g_iAnswer))
+		#endif
+	}
+
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
+		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
+	}
+
+	server_cmd("sv_restart 1")
+	set_task(1.5, "task_delayed_members")
+	client_print_color(0, print_team_default, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_HAS_BEEN_RESTARTED")
+
+	return PLUGIN_HANDLED
+}
+
+public task_set_score()
+{
+	rg_update_teamscores(g_iScore[CT_SCORE], g_iScore[TERO_SCORE], false)
+}
+
+public clcmd_score(id)
+{
+	if(!g_eBooleans[bIsMixOn])
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
+		return PLUGIN_HANDLED
+	}
+
+	if(!IsHalf() && !IsLastRound() && !g_eBooleans[bOvertime] && !IsPreLastRound())
+	{
+		if(!g_iStart)
+		{
+			client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_SCORE_IS", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
+		}
+		else
+		{
+			client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_SCORE_IS_WITH_END", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
+		}
+	}
+
+	if(g_eOvertime[FirstOvertime] && !IsHalf() && !OvertimeFinished())
+	{
+		if(!g_eOvertime[SecondOvertime] && !g_eBooleans[bTeamSwap])
+		{
+			client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "FIRST_OVERTIME_SCORE_IS", LANG_SERVER, "CT_TEAM", g_iOvertimeScore[CT_OVER_SCORE], LANG_SERVER, "TERO_TEAM", g_iOvertimeScore[TERO_OVER_SCORE])
+		}
+	}
+
+	if(IsPreLastRound() && !g_eBooleans[bOvertime])
+	{
+		new szTemp[16]
+		LastRoundUntilWin(szTemp, charsmax(szTemp))
+
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_LAST_ROUND_FOR_X_TEAM", szTemp)
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_SCORE_IS_WITH_END", LANG_SERVER, "CT_TEAM", g_iScore[CT_SCORE], LANG_SERVER, "TERO_TEAM", g_iScore[TERO_SCORE])
+	}
+
+	return PLUGIN_CONTINUE
+}
+
+public clcmd_ct(id)
+{
+	new arg1[MAX_NAME_LENGTH]
+	read_argv(1, arg1, charsmax(arg1))
+
+	clcmd_move_ct(id, arg1, charsmax(arg1))
+
+	return PLUGIN_HANDLED
+}
+
+stock clcmd_move_ct(id, szMessage[], iLen, IsSay = -1)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	new target
+
+	if(IsSay)
+	{
+		replace_all(szMessage, iLen, "/ct ", "")
+		replace_all(szMessage, iLen, "^"", "")
+	}
+
+	target = cmd_target(id, szMessage, CMDTARGET_ALLOW_SELF)
+
+	if(!target)
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_NOT_FOUND")
+		return PLUGIN_HANDLED
+	}
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum, szTeam[22]
+	get_players(iPlayers, iNum, "ch")
+
+	GetTeam(CT, szTeam, charsmax(szTeam))
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(id == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_X_MOVED_X_BY_YOU", g_szName[target], szTeam)
+		}
+		else if(target == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_WERE_MOVED_X_BY_X", szTeam, g_szName[id])
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_X_MOVED_X_BY_X", g_szName[target], szTeam, g_szName[id])
+		}
+	}
+
+	rg_join_team(target, TEAM_CT)
+
+	return PLUGIN_HANDLED
+}
+
+public clcmd_t(id)
+{
+	new arg1[MAX_NAME_LENGTH]
+	read_argv(1, arg1, charsmax(arg1))
+
+	clcmd_move_t(id, arg1, charsmax(arg1))
+
+	return PLUGIN_HANDLED
+}
+
+stock clcmd_move_t(id, szMessage[], iLen, IsSay = -1)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	new target
+	
+	if(IsSay)
+	{
+		replace_all(szMessage, iLen, "/t ", "")
+		replace_all(szMessage, iLen, "^"", "")
+	}
+
+	target = cmd_target(id, szMessage, CMDTARGET_ALLOW_SELF)
+
+	if(!target)
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_NOT_FOUND")
+		return PLUGIN_HANDLED
+	}
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum, szTeam[22]
+	get_players(iPlayers, iNum, "ch")
+
+	GetTeam(TERO, szTeam, charsmax(szTeam))
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(id == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_X_MOVED_X_BY_YOU", g_szName[target], szTeam)
+		}
+		else if(target == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_WERE_MOVED_X_BY_X", szTeam, g_szName[id])
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_X_MOVED_X_BY_X", g_szName[target], szTeam, g_szName[id])
+		}
+	}
+
+	rg_join_team(target, TEAM_TERRORIST)
+
+	return PLUGIN_HANDLED
+}
+
+public clcmd_spec(id)
+{
+	new arg1[MAX_NAME_LENGTH]
+	read_argv(1, arg1, charsmax(arg1))
+
+	clcmd_move_spec(id, arg1, charsmax(arg1))
+
+	return PLUGIN_HANDLED
+}
+
+stock clcmd_move_spec(id, szMessage[], iLen, IsSay = -1)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	new target
+
+	if(IsSay)
+	{
+		replace_all(szMessage, iLen, "/spec ", "")
+		replace_all(szMessage, iLen, "^"", "")
+	}
+
+	target = cmd_target(id, szMessage, CMDTARGET_ALLOW_SELF)
+
+	if(!target)
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_NOT_FOUND")
+		return PLUGIN_HANDLED
+	}
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum, szTeam[22]
+	get_players(iPlayers, iNum, "ch")
+
+	GetTeam(SPEC, szTeam, charsmax(szTeam))
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(id == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_X_MOVED_X_BY_YOU", g_szName[target], szTeam)
+		}
+		else if(target == iPlayer)
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_WERE_MOVED_X_BY_X", szTeam, g_szName[id])
+		}
+		else
+		{
+			client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_X_MOVED_X_BY_X", g_szName[target], szTeam, g_szName[id])
+		}
+	}
+
+	rg_join_team(target, TEAM_SPECTATOR)
+	
+
+	return PLUGIN_HANDLED
+}
+
+public clcmd_start_demo(id)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	#if defined DEBUG
+	client_print_color(0, 0, "clcmd_start_Demo() called")
+	#endif
+
+	if(!g_eBooleans[bIsMixOn])
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
+		return PLUGIN_HANDLED
+	}
+
+	new arg1[MAX_NAME_LENGTH], arg2[32], target
+	read_argv(1, arg1, charsmax(arg1))
+
+	if(g_eDemoSettings[iDemoType] == DEMO_CIN_NAME)
+	{
+		read_argv(2, arg2, charsmax(arg2))
+	}
+
+	#if defined DEBUG
+	target = cmd_target(id, arg1, CMDTARGET_ALLOW_SELF)
+	#else
+	target = cmd_target(id, arg1)
+	#endif
+
+	if(!target)
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_NOT_FOUND")
+		return PLUGIN_HANDLED
+	}
+
+	new len = strlen(arg2)
+	if(g_eDemoSettings[iDemoType] == DEMO_CIN_NAME)
+	{
+		if(len < 2)
+		{
+			client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "DEMO_NAME_REQUIRED")
+			return PLUGIN_HANDLED
+		}
+	}
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(get_user_flags(iPlayer) & read_flags(g_ePluginSettings[szAdminFlags]))
+		{
+			if(iPlayer == id)
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "DEMO_STARTED_BY_YOU_FOR_X", g_szName[target])
+			}
+			else
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "DEMO_STARTED_BY_X_FOR_X", g_szName[id], g_szName[target])
+			}
+		}
+	}
+
+	client_print_color(target, target, "^4[GAMELAND] ^1Admin requested a POV demo. Press ^3F5^1 and choose ^3Start demo^1.")
+	client_print_color(id, id, "^4%s ^1Client POV demo is local-only now. Player must press ^3F5^1.", g_ePluginSettings[szPrefix])
+
+	return PLUGIN_HANDLED
+}
+
+public clcmd_stop_demo(id)
+{
+	if(!(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	#if defined DEBUG
+	client_print_color(0, 0, "clcmd_stop_Demo() called")
+	#endif
+
+	if(!g_eBooleans[bIsMixOn])
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
+		return PLUGIN_HANDLED
+	}
+
+	new arg1[MAX_NAME_LENGTH], target
+	read_argv(1, arg1, charsmax(arg1))
+
+	#if defined DEBUG
+	target = cmd_target(id, arg1, CMDTARGET_ALLOW_SELF)
+	#else
+	target = cmd_target(id, arg1)
+	#endif
+
+	if(!target)
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_NOT_FOUND")
+		return PLUGIN_HANDLED
+	}
+
+	static iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+
+		if(get_user_flags(iPlayer) & read_flags(g_ePluginSettings[szAdminFlags]))
+		{
+			if(iPlayer == id)
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "DEMO_STOPPED_BY_YOU_FOR_X", g_szName[target])
+			}
+			else
+			{
+				client_print_color(iPlayer, iPlayer, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "DEMO_STOPPED_BY_X_FOR_X", g_szName[id], g_szName[target])
+			}
+		}
+	}
+
+	client_print_color(target, target, "^4[GAMELAND] ^1Admin requested demo stop. Press ^3F5^1 and choose ^3Stop demo^1.")
+	client_print_color(id, id, "^4%s ^1Client POV demo is local-only now. Player must press ^3F5^1.", g_ePluginSettings[szPrefix])
+
+	return PLUGIN_HANDLED
+}
+
+
+public clcmd_say_pause(id)
+{
+	if(!g_eBooleans[bIsMixOn])
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_NOT_STARTED_YET")
+		return PLUGIN_HANDLED
+	}
+
+	new CsTeams:iTeam = cs_get_user_team(id)
+
+	switch(iTeam)
+	{
+		case CS_TEAM_T:
+		{
+			if(!g_eTeamPause[TERO_PAUSE])
+			{
+				g_eTeamPause[TERO_PAUSE] = 1
+				client_print_color(0, 0, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_X_REQUESTED_TIMEOUT", g_szName[id])
+			}
+			else
+			{
+				client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOUR_TEAM_ALREADY_TIMEOUT")
+			}
+		}
+		case CS_TEAM_CT:
+		{
+			if(!g_eTeamPause[CT_PAUSE])
+			{
+				g_eTeamPause[CT_PAUSE] = 1
+				client_print_color(0, 0, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "PLAYER_X_REQUESTED_TIMEOUT", g_szName[id])
+			}
+			else
+			{
+				client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOUR_TEAM_ALREADY_TIMEOUT")
+			}
+		}
+	}
+
+	return PLUGIN_CONTINUE
+}
+
+
+ResetScore()
+{
+	g_bShootingOpening = false
+	if(g_eBooleans[bIsShooting])
+	{
+		for(new id = 1; id <= MAX_PLAYERS; id++)
+			if(is_user_connected(id))
+				cs_reset_user_model(id)
+	}
+	g_iScore[TERO_SCORE] = 0
+	g_iScore[CT_SCORE] = 0
+	g_iOvertimeScore[CT_OVER_SCORE] = 0
+	g_iOvertimeScore[TERO_OVER_SCORE] = 0
+	g_eTeamPause[CT_PAUSE] = 0
+	g_eTeamPause[TERO_PAUSE] = 0
+	g_iRoundNum = 0
+	for(new i; i < MAX_PLAYERS; i++ )
+	{
+		g_eBooleans[bCanChat][i] = true
+	}
+	g_eBooleans[bIsMixOn] = false
+
+	HLTV_StopRecording()
+	Client_StopRecordingAll()
+	g_eBooleans[bOvertime] = false  // Fix #5: removed duplicate reset that was on next line
+	g_eBooleans[bIsShooting] = false
+	g_eBooleans[bTeamSwap] = false
+	g_eBooleans[bIsWarm] = false
+	server_cmd("mp_ignore_round_win_conditions 0")
+	g_eOvertime[FirstOvertime] = false
+	g_eOvertime[SecondOvertime] = false
+	g_eBooleans[bIsKnife] = false
+
+	#if defined FASTCUP_MODE
+	g_bVoted = false
+	arrayset(g_iAnswer, 0, sizeof(g_iAnswer))
+	#endif
+	server_cmd("sv_restart 1")
+}
+
+stock StartConfig()
+{
+	GetConfigsDir()
+	
+	server_cmd("exec %s/%s", g_szConfigsDir, g_ePluginSettings[szStartCfg])
+}
+
+stock StopConfig()
+{
+	GetConfigsDir()
+
+	server_cmd("exec %s/%s", g_szConfigsDir, g_ePluginSettings[szStopCfg])
+}
+
+stock OvertimeConfig()
+{
+	GetConfigsDir()
+
+	server_cmd("exec %s/%s", g_szConfigsDir, g_ePluginSettings[szOvertimeCfg])
+}
+
+stock GetConfigsDir()
+{
+	if(g_szConfigsDir[0] == EOS)
+	{
+		get_configsdir(g_szConfigsDir, charsmax(g_szConfigsDir))
+	}
+}
+
+stock bool:is_bot(id)
+{
+	if(is_user_bot(id) || is_user_hltv(id))
+	{
+		return true
+	}
+	return false
+}
+
+public task_stop_mix()
+{
+	g_iDuration = 0
+
+	remove_task(TASK_COUNT_DURATION)
+
+	ResetScore()
+}
+
+stock bool:IsHalf()
+{
+	if(g_eBooleans[bIsShooting])
+	{
+		return false
+	}
+
+	if(!g_eBooleans[bTeamSwap] && g_iRoundNum == 15 && !g_eBooleans[bOvertime])
+	{
+		return true
+	}
+	return false
+}
+
+stock bool:IsLastRound()
+{
+	if(g_eBooleans[bIsShooting])
+	{
+		return g_iScore[CT_SCORE] >= SHOOTING_END_SCORE || g_iScore[TERO_SCORE] >= SHOOTING_END_SCORE
+	}
+
+	if(g_eBooleans[bTeamSwap] && g_iScore[CT_SCORE] == g_ePluginSettings[iMixEndRound] && !g_eBooleans[bOvertime] || g_eBooleans[bTeamSwap] && g_iScore[TERO_SCORE] == g_ePluginSettings[iMixEndRound] && !g_eBooleans[bOvertime])
+	{
+		return true
+	}
+	return false
+}
+
+stock bool:IsShootingMap()
+{
+	new mapName[32]
+	get_mapname(mapName, charsmax(mapName))
+
+	// Standard fast-shooting map families. Keep de_/cs_ maps on the normal
+	// competitive mix path; everything here uses randomized teams and a
+	// dedicated weapon loadout.
+	return containi(mapName, "aim_") == 0
+		|| containi(mapName, "awp_") == 0
+		|| containi(mapName, "sk_") == 0
+		|| containi(mapName, "fy_") == 0
+		|| containi(mapName, "dm_") == 0
+		|| containi(mapName, "ka_") == 0
+		|| containi(mapName, "hs_") == 0
+}
+
+stock RandomizeShootingTeams()
+{
+	new connected[MAX_PLAYERS], players[MAX_PLAYERS], count, playerCount
+	get_players(connected, count, "ch")
+
+	for(new i; i < count; i++)
+	{
+		new id = connected[i]
+		new CsTeams:team = cs_get_user_team(id)
+		if(team == CS_TEAM_T || team == CS_TEAM_CT)
+		{
+			players[playerCount++] = id
+		}
+	}
+
+	for(new i = playerCount - 1; i > 0; i--)
+	{
+		new j = random_num(0, i)
+		new temp = players[i]
+		players[i] = players[j]
+		players[j] = temp
+	}
+
+	new half = playerCount / 2 + (playerCount % 2 ? random_num(0, 1) : 0)
+	for(new i; i < playerCount; i++)
+	{
+		new id = players[i]
+		if(!IsPlayer(id))
+		{
+			continue
+		}
+
+		cs_set_user_team(id, i < half ? CS_TEAM_CT : CS_TEAM_T, i < half ? CS_CT_URBAN : CS_T_TERROR)
+		cs_set_user_model(id, i < half ? "urban" : "terror")
+	}
+}
+
+stock bool:IsPreLastRound()
+{
+	if(g_eBooleans[bTeamSwap] && g_iScore[CT_SCORE] == g_ePluginSettings[iOvertimeScore] && !g_eBooleans[bOvertime] || g_eBooleans[bTeamSwap] && g_iScore[TERO_SCORE] == g_ePluginSettings[iOvertimeScore] && !g_eBooleans[bOvertime])
+	{
+		return true
+	}
+	return false
+}
+
+stock bool:CanOvertime()
+{
+	if(IsPreLastRound() && g_iScore[CT_SCORE] == g_iScore[TERO_SCORE])
+	{
+		return true
+	}
+	return false
+}
+
+stock bool:OvertimeFinished()
+{
+	#if !defined OVERTIME_ONE_ROUND
+	if(g_eBooleans[bOvertime] && g_eOvertime[SecondOvertime])
+	{
+		if(CheckOverScore() == g_ePluginSettings[iRoundOvertime] * 2)
+		{
+			return true
+		}
+		return false
+	}
+	#else
+	if(g_eBooleans[bOvertime])
+	{
+		if(CheckOverScore())
+		{
+			return true
+		}
+		return false
+	}
+	#endif
+	return false
+}
+
+stock CheckOvertimePhase()
+{
+	if((CheckOverScore() == g_ePluginSettings[iRoundOvertime]) && g_eOvertime[FirstOvertime])
+	{
+		if(g_eBooleans[bOvertime] && !OvertimeFinished() && !g_eBooleans[bTeamSwap] && !g_eOvertime[SecondOvertime])
+		{
+			g_eOvertime[FirstOvertime] = true
+			g_eOvertime[SecondOvertime] = true
+
+			set_pcvar_num(g_cFreezeTime, 15)
+			set_task(0.1, "task_swap_score")
+			set_task(0.2, "task_delayed_swap")
+			set_task(2.5, "task_show_halftime")
+			set_task(12.0, "task_halftime_restart1")
+			set_task(17.0, "task_halftime_restart2")
+			set_task(22.0, "task_overtime_halftime_live")
+		}
+	}
+
+	#if defined DEBUG
+	client_print_color(0, 0, "CheckOvertimePhase() called")
+	#endif
+}
+
+stock CheckOverScore()
+{
+	new iResult
+	iResult = g_iOvertimeScore[CT_OVER_SCORE] + g_iOvertimeScore[TERO_OVER_SCORE]
+
+	return iResult
+}
+
+stock LastRoundUntilWin(output[], len)
+{
+	if(IsPreLastRound())
+	{
+		switch(CheckScore())
+		{
+			case CT_LAST:
+			{
+				formatex(output, len, "CTs")
+			}
+			case T_LAST:
+			{
+				formatex(output, len, "TERORISTs")
+			}
+		}
+	}
+}
+
+stock CheckWinner()
+{
+	new iResult
+
+	if(!g_eBooleans[bOvertime])
+	{
+		if(g_iScore[CT_SCORE] == g_ePluginSettings[iMixEndRound])
+		{
+			iResult = CT_SCORE
+
+			#if defined DEBUG
+			server_print("iResult case CT_SCORE")
+			#endif
+		}
+		else if(g_iScore[TERO_SCORE] == g_ePluginSettings[iMixEndRound])
+		{
+			iResult = TERO_SCORE
+
+			#if defined DEBUG
+			server_print("iResult case TERO_SCORE")
+			#endif
+		}
+	}
+	else 
+	{
+		if(CheckOverScore() == (g_ePluginSettings[iRoundOvertime] * 2))
+		{
+			if(g_iOvertimeScore[CT_OVER_SCORE] > g_iOvertimeScore[TERO_OVER_SCORE])
+			{
+				iResult = CT_OVER_SCORE
+
+				#if defined DEBUG
+				server_print("iResult case CT_OVER_SCORE")
+				#endif
+			}
+			else if(g_iOvertimeScore[TERO_OVER_SCORE] > g_iOvertimeScore[CT_OVER_SCORE])
+			{
+				iResult = TERO_OVER_SCORE
+
+				#if defined DEBUG
+				server_print("iResult case TERO_OVER_sCORE")
+				#endif
+			}
+			else if(g_iOvertimeScore[TERO_OVER_SCORE] == g_iOvertimeScore[CT_OVER_SCORE])
+			{
+				iResult = DRAW
+
+				#if defined DEBUG
+				server_print("iResult case DRAW")
+				#endif
+			}
+		}
+	}
+
+	#if defined DEBUG
+	server_print("iResult: %i", iResult)
+	#endif
+
+	return iResult
+}
+
+stock WinnerTeam(output[], len)
+{
+	if(IsLastRound() || OvertimeFinished())
+	{
+		switch(CheckWinner())
+		{
+			case CT_SCORE, CT_OVER_SCORE:
+			{
+				formatex(output, len, "%L", LANG_SERVER, "CT_TEAM")
+			}
+			case TERO_SCORE, TERO_OVER_SCORE:
+			{
+				formatex(output, len, "%L", LANG_SERVER, "TERO_TEAM")
+			}
+			case DRAW:
+			{
+				formatex(output, len, "%L", LANG_SERVER, "DRAW")
+			}
+		}
+	}
+}
+
+stock GiveTeamReward(iPlayer, iPoints)
+{
+	if(IsLastRound() || OvertimeFinished())
+	{
+		client_print_color(iPlayer, iPlayer, "^4%s ^1%L", g_ePluginSettings[szPrefix], LANG_SERVER, "MIX_YOUR_TEAM_WON", g_ePointSystem[PointsTeamWin])
+	
+		g_iPoints[iPlayer] += iPoints
+	}
+}
+
+stock CheckScore()
+{
+	new iResult
+	if(!g_eBooleans[bOvertime])
+	{
+		if(g_iScore[CT_SCORE] == (g_ePluginSettings[iMixEndRound] - 1 ))
+		{
+			iResult = CT_LAST
+		}
+		
+		if(g_iScore[TERO_SCORE] == (g_ePluginSettings[iMixEndRound] - 1))
+		{
+			iResult = T_LAST
+		}
+	}
+
+	return iResult
+}
+
+stock GetTeam(iNum, output[], len)
+{
+	switch(iNum)
+	{
+		case SPEC:
+		{
+			formatex(output, len, "%L", LANG_SERVER, "SPEC_TEAM")
+		}
+		case TERO:
+		{
+			formatex(output, len, "%L", LANG_SERVER, "TERO_TEAM")
+		}
+		case CT:
+		{
+			formatex(output, len, "%L", LANG_SERVER, "CT_TEAM")
+		}
+	}
+}
+
+stock _MenuExit(menu)
+{
+	menu_destroy(menu)
+	return PLUGIN_HANDLED
+}
+
+stock _MenuDisplay(id, menu)
+{
+	menu_display(id, menu)
+	set_member(id, m_iMenu, Menu_OFF)
+	return PLUGIN_HANDLED
+}
+
+stock mysql_escape_string(const source[], dest[], length)
+{
+	SQL_QuoteString(Empty_Handle, dest, length, source)
+}
+
+stock SetGameDesc(MatchState:matchState)
+{
+	new szTemp[30]
+	switch(matchState)
+	{
+		case MATCHSTATE_WARM:
+		{
+			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "MATCHSTATE_WARM")
+		}
+		case MATCHSTATE_IN_MATCH:
+		{
+			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "MATCHSTATE_IN_MATCH", g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+		}
+		case MATCHSTATE_KNIFE_ROUND:
+		{
+			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "MATCHSTATE_KNIFE_ROUND")
+		}
+		case MATCHSTATE_OVERTIME:
+		{
+			formatex(szTemp, charsmax(szTemp), "%L", LANG_SERVER, "MATCHSTATE_OVERTIME", g_iOvertimeScore[CT_OVER_SCORE], g_iOvertimeScore[TERO_OVER_SCORE])
+		}
+	}
+
+	set_member_game(m_GameDesc, szTemp)
+}
+
+public native_is_half(iPluginID, iParamNum)
+{
+	return IsHalf()
+}
+
+public native_is_last_round(iPluginID, iParamNum)
+{
+	return IsLastRound()
+}
+
+public native_is_prelast_round(iPluginID, iParamNum)
+{
+	return IsPreLastRound()
+}
+
+public native_can_overtime(iPluginID, iParamNum)
+{
+	return CanOvertime()
+}
+
+public native_is_started(iPluginID, iParamNum)
+{
+	return g_eBooleans[bIsMixOn]
+}
+
+public native_is_warm(iPluginID, iParamNum)
+{
+	return g_eBooleans[bIsWarm]
+}	
+
+public native_get_prefix(iPluginID, iParamNum)
+{
+	set_string(1, g_ePluginSettings[szPrefix], get_param(2))
+}
+
+public native_get_username(iPluginID, iParamNum)
+{
+	if (iParamNum != 3)
+	{
+		log_error(AMX_ERR_NATIVE, "%s Invalid param num ! Valid: (PlayerID, Name[], Len)", g_ePluginSettings[szPrefix])
+		return NATIVE_ERROR
+	}
+	new id = get_param(1)
+
+	if(!is_user_connected(id))
+	{
+		log_error(AMX_ERR_NATIVE, "%s Player is not connected (%d)", g_ePluginSettings[szPrefix], id)
+		return NATIVE_ERROR
+	}
+
+	set_string(2, g_szName[id], get_param(3))
+
+	return 1
+}
+
+
+public native_has_points_sys(iPluginID, iParamNum)
+{
+	return false
+}
+
+public task_start_warm()
+{
+	clcmd_warm(0)
+}
+
+public task_show_live()
+{
+	fnScreenFade(0, 5, 5, {0, 255, 0}, 75, 0x0000)
+	set_dhudmessage(0, 255, 0, -1.0, 0.3, 2, 0.1, 5.0, 0.1, 5.0)
+	show_dhudmessage(0, "=== LIVE LIVE LIVE ===")
+}
+
+public task_show_halftime()
+{
+	fnScreenFade(0, 5, 5, {0, 150, 255}, 75, 0x0000)
+	set_dhudmessage(0, 150, 255, -1.0, 0.3, 2, 0.1, 5.0, 0.1, 5.0)
+	show_dhudmessage(0, "=== HALF TIME ===")
+}
+
+public task_reapply_warm()
+{
+	server_cmd("mp_freezetime 0")
+	server_cmd("mp_buytime 99999")
+	server_cmd("mp_startmoney 16000")
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		if(is_user_connected(iPlayer))
+			rg_add_account(iPlayer, 16000, AS_SET)
+	}
+}
+
+stock fnScreenFade(id, Timer, FadeTime, Colors[3], Alpha, Type)
+{
+	if(id == 0)
+	{
+		message_begin(MSG_BROADCAST, g_iMsgScreenFade)
+	}
+	else
+	{
+		if(!is_user_connected(id)) return
+		message_begin(MSG_ONE_UNRELIABLE, g_iMsgScreenFade, _, id)
+	}
+	write_short((1<<12) * Timer)
+	write_short((1<<12) * FadeTime)
+	write_short(Type)
+	write_byte(Colors[0])
+	write_byte(Colors[1])
+	write_byte(Colors[2])
+	write_byte(Alpha)
+	message_end()
+}
+
+public task_overtime_live()
+{
+	server_cmd("sv_restart 1")
+	set_pcvar_num(g_cFreezeTime, 12)
+	set_task(2.5, "task_show_overtime_start")
+}
+
+public task_show_overtime_start()
+{
+	fnScreenFade(0, 5, 5, {255, 100, 0}, 75, 0x0000)
+	set_dhudmessage(255, 100, 0, -1.0, 0.3, 2, 0.1, 5.0, 0.1, 5.0)
+	
+	new szMsg[128]
+	formatex(szMsg, charsmax(szMsg), "=== OVERTIME STARTED ===^nWINNER GETS %d ROUNDS TOTAL", g_ePluginSettings[iRoundOvertime] + 1)
+	show_dhudmessage(0, szMsg)
+}
+
+public task_overtime_halftime_live()
+{
+	server_cmd("sv_restart 1")
+	set_pcvar_num(g_cFreezeTime, 12)
+	set_task(2.5, "task_show_halftime")
+}
+
+public clcmd_hs1(id)
+{
+	if(id && !(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	HLTV_StartRecording("GL_Mix")
+	client_print_color(id ? id : 0, print_team_default, "^4[GAMELAND] ^1HLTV recording started. Client POV recording is local-only; players use ^3F5^1.")
+	return PLUGIN_HANDLED
+}
+
+public clcmd_hs0(id)
+{
+	if(id && !(get_user_flags(id) & read_flags(g_ePluginSettings[szAdminAccess])))
+	{
+		client_print_color(id, id, "^4%s %L", g_ePluginSettings[szPrefix], LANG_SERVER, "YOU_DONT_HAVE_ACCESS")
+		return PLUGIN_HANDLED
+	}
+
+	HLTV_StopRecording()
+	Client_StopRecordingAll()
+	return PLUGIN_HANDLED
 }
