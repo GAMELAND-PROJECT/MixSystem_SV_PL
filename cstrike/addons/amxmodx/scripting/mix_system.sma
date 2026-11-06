@@ -343,6 +343,16 @@ new g_szWeapon[MAX_PLAYERS + 1][32]
 
 new g_ePlayerScore[MAX_PLAYERS + 1][PlayerScore]
 
+enum _:MatchStats
+{
+	M_KILLS,
+	M_DEATHS,
+	M_HEADSHOTS,
+	M_DAMAGE
+}
+new g_iMatchStats[MAX_PLAYERS + 1][MatchStats]
+new g_szMatchPlayerName[MAX_PLAYERS + 1][MAX_NAME_LENGTH]
+
 new g_eTeamPause[Teams]
 new bool:g_bPaused
 new g_iTimer
@@ -1041,8 +1051,14 @@ public client_putinserver(id)
 {
 	get_user_authid(id, g_szAuthID[id], charsmax(g_szAuthID[]))
 	get_user_name(id, g_szName[id], charsmax(g_szName[]))
+	copy(g_szMatchPlayerName[id], charsmax(g_szMatchPlayerName[]), g_szName[id])
 
 	g_iPlayerKills[id] = 0
+
+	if(!g_eBooleans[bIsMixOn])
+	{
+		arrayset(g_iMatchStats[id], 0, MatchStats)
+	}
 
 	g_eBooleans[bCanChat][id] = true
 
@@ -1057,6 +1073,15 @@ public client_putinserver(id)
 			g_eBooleans[bCanChat][id] = false
 		}
 	}
+}
+
+public client_infochanged(id)
+{
+	if(!is_user_connected(id))
+		return
+
+	get_user_info(id, "name", g_szName[id], charsmax(g_szName[]))
+	copy(g_szMatchPlayerName[id], charsmax(g_szMatchPlayerName[]), g_szName[id])
 }
 
 public client_disconnected(id)
@@ -1255,7 +1280,7 @@ public RG_PlayerTakeDamage_Pre(iVictim, pevInflictor, iAttacker, Float:flDamage,
 
 public RG_PlayerTakeDamage_Post(iVictim, pevInflictor, iAttacker, Float:flDamage, bitsDamageType)
 {
-	if(!g_eBooleans[bIsMixOn])
+	if(!g_eBooleans[bIsMixOn] || g_eBooleans[bIsWarm])
 		return
 
 	new iAfter = g_ePlayerStats[iAttacker][iVictim][PlayerHealth] - get_user_health( iVictim )
@@ -1264,6 +1289,11 @@ public RG_PlayerTakeDamage_Post(iVictim, pevInflictor, iAttacker, Float:flDamage
 
 	g_ePlayerStats[iAttacker][iVictim][DamageGiven] += iCalculation;
 	g_ePlayerStats[iAttacker][iVictim][HitsGiven] += 1
+
+	if(IsPlayer(iAttacker) && IsPlayer(iVictim) && iAttacker != iVictim)
+	{
+		g_iMatchStats[iAttacker][M_DAMAGE] += iCalculation
+	}
 }
 
 public RG_Player_Killed_Post(iVictim, iKiller, iInflictor)
@@ -1283,12 +1313,20 @@ public RG_Player_Killed_Post(iVictim, iKiller, iInflictor)
 
 		if(iKiller == iVictim)
 		{
+			g_iMatchStats[iVictim][M_DEATHS]++
 			goto _return
 		}
 
 		new bool:bHeadshot = get_member(iVictim, m_bHeadshotKilled)
 
 		g_iPlayerKills[iKiller] += 1
+
+		g_iMatchStats[iKiller][M_KILLS]++
+		g_iMatchStats[iVictim][M_DEATHS]++
+		if(bHeadshot)
+		{
+			g_iMatchStats[iKiller][M_HEADSHOTS]++
+		}
 
 		ExecuteForward(g_eForwards[Kill], g_iRet, iVictim, iKiller, bHeadshot ? 1 : 0, g_szName[iKiller], g_szAuthID[iKiller])
 	}
@@ -2299,9 +2337,9 @@ public task_end_round(index)
 		set_task(0.1, "task_swap_score")
 		set_task(0.5, "task_delayed_swap")
 		set_task(1.0, "task_show_overtime_start")
-		set_task(5.0, "task_halftime_restart1")
+		set_task(3.0, "task_halftime_restart1")
 		set_task(8.0, "task_halftime_restart2")
-		set_task(11.0, "task_overtime_live")
+		set_task(13.0, "task_overtime_live")
 	}
 
 	if(g_eBooleans[bOvertime])
@@ -2443,9 +2481,9 @@ public task_end_round(index)
 			set_task(0.1, "task_swap_score")
 			set_task(0.5, "task_delayed_swap")
 			set_task(1.0, "task_show_halftime")
-			set_task(5.0, "task_halftime_restart1")
+			set_task(3.0, "task_halftime_restart1")
 			set_task(8.0, "task_halftime_restart2")
-			set_task(11.0, "task_halftime_live")
+			set_task(13.0, "task_halftime_live")
 		}
 	}
 
@@ -2926,9 +2964,9 @@ public clcmd_overtime(id)
 	set_task(0.1, "task_swap_score")
 	set_task(0.5, "task_delayed_swap")
 	set_task(1.0, "task_show_overtime_start")
-	set_task(5.0, "task_halftime_restart1")
+	set_task(3.0, "task_halftime_restart1")
 	set_task(8.0, "task_halftime_restart2")
-	set_task(11.0, "task_overtime_live")
+	set_task(13.0, "task_overtime_live")
 
 	g_eBooleans[bOvertime] = true
 
@@ -3142,7 +3180,8 @@ public task_show_score()
 
 	if(IsLastRound() || OvertimeFinished())
 	{
-		set_task(5.0, "task_start_warm")
+		DisplayMatchFinalStats()
+		set_task(12.0, "task_start_warm")
 		
 		HLTV_StopRecording()
 		Client_StopRecordingAll()
@@ -3175,9 +3214,8 @@ stock FinishShootingMatch()
 	server_cmd("mp_winlimit 0")
 	set_pcvar_num(g_cFreezeTime, 0)
 
-	// Clear the mix state first so clcmd_warm(0) is accepted.
-	ResetScore()
-	set_task(1.0, "task_start_warm")
+	DisplayMatchFinalStats()
+	set_task(12.0, "task_start_warm")
 }
 
 public task_show_dhud()
@@ -3206,8 +3244,10 @@ public task_delayed_swap()
 	for(new i; i < iNum; i++)
 	{
 		iPlayer = iPlayers[i]
-		g_ePlayerScore[iPlayer][iKILLS] = get_user_frags(iPlayer)
-		g_ePlayerScore[iPlayer][iDEATHS] = get_user_deaths(iPlayer)
+		g_ePlayerScore[iPlayer][iKILLS] = 0
+		g_ePlayerScore[iPlayer][iDEATHS] = 0
+		set_user_frags(iPlayer, 0)
+		cs_set_user_deaths(iPlayer, 0)
 	}
 
 	rg_swap_all_players()
@@ -3224,6 +3264,12 @@ public task_delayed_swap()
 
 		if(iTeam == TEAM_UNASSIGNED || iTeam == TEAM_SPECTATOR)
 			continue 
+
+		if(is_user_alive(iPlayer))
+		{
+			user_silentkill(iPlayer)
+		}
+		rg_round_respawn(iPlayer)
 
 		rg_add_account(iPlayer, get_cvar_num("mp_startmoney"), AS_SET)
 		rg_remove_all_items(iPlayer, true)
@@ -3275,13 +3321,16 @@ public task_delayed_members()
 	for(new i; i < iNum; i++)
 	{
 		iPlayer = iPlayers[i]
-		set_user_frags(iPlayer, g_ePlayerScore[iPlayer][iKILLS])
-		cs_set_user_deaths(iPlayer, g_ePlayerScore[iPlayer][iDEATHS])
+		new iFrags = g_eBooleans[bTeamSwap] ? 0 : g_ePlayerScore[iPlayer][iKILLS]
+		new iDeaths = g_eBooleans[bTeamSwap] ? 0 : g_ePlayerScore[iPlayer][iDEATHS]
+
+		set_user_frags(iPlayer, iFrags)
+		cs_set_user_deaths(iPlayer, iDeaths)
 
 		message_begin(MSG_ALL, get_user_msgid("ScoreInfo"))
 		write_byte(iPlayer)
-		write_short(g_ePlayerScore[iPlayer][iKILLS])
-		write_short(g_ePlayerScore[iPlayer][iDEATHS])
+		write_short(iFrags)
+		write_short(iDeaths)
 		write_short(0)
 		write_short(get_member(iPlayer, m_iTeam))
 		message_end()
@@ -3305,8 +3354,9 @@ public task_halftime_restart2()
 public task_halftime_live()
 {
 	server_cmd("sv_restart 1")
+	set_pcvar_num(g_cFreezeTime, g_iFreezeTime)
 	set_task(1.5, "task_delayed_members")
-	set_task(1.5, "task_show_live")
+	set_task(2.5, "task_show_halftime_live")
 }
 
 public task_mix_restart1()
@@ -3973,6 +4023,13 @@ ResetScore()
 	g_eOvertime[SecondOvertime] = false
 	g_eBooleans[bIsKnife] = false
 
+	for(new id = 1; id <= MAX_PLAYERS; id++)
+	{
+		arrayset(g_iMatchStats[id], 0, MatchStats)
+		g_ePlayerScore[id][iKILLS] = 0
+		g_ePlayerScore[id][iDEATHS] = 0
+	}
+
 	#if defined FASTCUP_MODE
 	g_bVoted = false
 	arrayset(g_iAnswer, 0, sizeof(g_iAnswer))
@@ -4164,9 +4221,9 @@ stock CheckOvertimePhase()
 			set_task(0.1, "task_swap_score")
 			set_task(0.5, "task_delayed_swap")
 			set_task(1.0, "task_show_halftime")
-			set_task(5.0, "task_halftime_restart1")
+			set_task(3.0, "task_halftime_restart1")
 			set_task(8.0, "task_halftime_restart2")
-			set_task(11.0, "task_overtime_halftime_live")
+			set_task(13.0, "task_overtime_halftime_live")
 		}
 	}
 
@@ -4444,16 +4501,281 @@ public task_start_warm()
 
 public task_show_live()
 {
-	fnScreenFade(0, 5, 5, {0, 255, 0}, 75, 0x0000)
-	set_dhudmessage(0, 255, 0, -1.0, 0.3, 2, 0.1, 5.0, 0.1, 5.0)
-	show_dhudmessage(0, "=== LIVE LIVE LIVE ===")
+	client_cmd(0, "spk buttons/bell1")
+	fnScreenFade(0, 3, 2, {0, 255, 100}, 65, 0x0000)
+	set_dhudmessage(0, 255, 70, -1.0, 0.25, 2, 0.1, 4.5, 0.1, 0.8)
+	show_dhudmessage(0, "★ MATCH IS LIVE ★^nGood Luck & Have Fun!")
+
+	client_print_color(0, print_team_default, "^4========================================")
+	client_print_color(0, print_team_default, "^4%s ^3★ MATCH IS NOW LIVE! GL & HF! ★", g_ePluginSettings[szPrefix])
+	client_print_color(0, print_team_default, "^4========================================")
 }
 
 public task_show_halftime()
 {
-	fnScreenFade(0, 5, 5, {0, 150, 255}, 75, 0x0000)
-	set_dhudmessage(0, 150, 255, -1.0, 0.3, 2, 0.1, 5.0, 0.1, 5.0)
-	show_dhudmessage(0, "=== HALF TIME ===")
+	client_cmd(0, "spk buttons/bell1")
+	fnScreenFade(0, 3, 2, {0, 160, 255}, 70, 0x0000)
+	set_dhudmessage(0, 180, 255, -1.0, 0.25, 2, 0.1, 4.5, 0.1, 0.8)
+	show_dhudmessage(0, "★ HALF TIME - SWITCHING TEAMS ★^nFirst Half Finished | Prepare for Second Half")
+
+	client_print_color(0, print_team_default, "^4========================================")
+	client_print_color(0, print_team_default, "^4%s ^3★ HALF TIME: TEAMS SWAPPED! ★", g_ePluginSettings[szPrefix])
+	client_print_color(0, print_team_default, "^4%s ^1Scoreboard K/D reset to 0. Round scores preserved.", g_ePluginSettings[szPrefix])
+	client_print_color(0, print_team_default, "^4========================================")
+}
+
+public task_show_halftime_live()
+{
+	client_cmd(0, "spk buttons/bell1")
+	fnScreenFade(0, 3, 2, {0, 255, 120}, 65, 0x0000)
+	set_dhudmessage(0, 255, 120, -1.0, 0.25, 2, 0.1, 4.5, 0.1, 0.8)
+	show_dhudmessage(0, "★ SECOND HALF IS LIVE ★^nFight For Victory!")
+
+	client_print_color(0, print_team_default, "^4========================================")
+	client_print_color(0, print_team_default, "^4%s ^3★ SECOND HALF IS LIVE! ★", g_ePluginSettings[szPrefix])
+	client_print_color(0, print_team_default, "^4========================================")
+}
+
+public DisplayMatchFinalStats()
+{
+	new iPlayerList[MAX_PLAYERS], iCount = 0
+
+	for(new id = 1; id <= MAX_PLAYERS; id++)
+	{
+		if(g_iMatchStats[id][M_KILLS] > 0 || g_iMatchStats[id][M_DEATHS] > 0 || g_iMatchStats[id][M_DAMAGE] > 0 || (is_user_connected(id) && !is_user_bot(id)))
+		{
+			iPlayerList[iCount++] = id
+		}
+	}
+
+	if(iCount == 0)
+		return
+
+	// Sort descending: Kills -> Headshots -> Lowest Deaths -> Damage
+	for(new i = 0; i < iCount - 1; i++)
+	{
+		for(new j = i + 1; j < iCount; j++)
+		{
+			new idA = iPlayerList[i]
+			new idB = iPlayerList[j]
+			new bool:bSwap = false
+
+			if(g_iMatchStats[idB][M_KILLS] > g_iMatchStats[idA][M_KILLS])
+			{
+				bSwap = true
+			}
+			else if(g_iMatchStats[idB][M_KILLS] == g_iMatchStats[idA][M_KILLS])
+			{
+				if(g_iMatchStats[idB][M_HEADSHOTS] > g_iMatchStats[idA][M_HEADSHOTS])
+				{
+					bSwap = true
+				}
+				else if(g_iMatchStats[idB][M_HEADSHOTS] == g_iMatchStats[idA][M_HEADSHOTS])
+				{
+					if(g_iMatchStats[idB][M_DEATHS] < g_iMatchStats[idA][M_DEATHS])
+					{
+						bSwap = true
+					}
+					else if(g_iMatchStats[idB][M_DEATHS] == g_iMatchStats[idA][M_DEATHS])
+					{
+						if(g_iMatchStats[idB][M_DAMAGE] > g_iMatchStats[idA][M_DAMAGE])
+						{
+							bSwap = true
+						}
+					}
+				}
+			}
+
+			if(bSwap)
+			{
+				new temp = iPlayerList[i]
+				iPlayerList[i] = iPlayerList[j]
+				iPlayerList[j] = temp
+			}
+		}
+	}
+
+	new iMVP = iPlayerList[0]
+	new szMVPName[32]
+	copy(szMVPName, charsmax(szMVPName), g_szMatchPlayerName[iMVP])
+	if(szMVPName[0] == '^0')
+	{
+		get_user_name(iMVP, szMVPName, charsmax(szMVPName))
+	}
+
+	new iMVPKills = g_iMatchStats[iMVP][M_KILLS]
+	new iMVPDeaths = g_iMatchStats[iMVP][M_DEATHS]
+	new iMVPHS = g_iMatchStats[iMVP][M_HEADSHOTS]
+	new iMVPDamage = g_iMatchStats[iMVP][M_DAMAGE]
+	new iMVPHSPercent = (iMVPKills > 0) ? (iMVPHS * 100 / iMVPKills) : 0
+
+	// 1. Audio and Gold Screen Tint
+	client_cmd(0, "spk events/tutor_msg.wav; spk buttons/bell1")
+	fnScreenFade(0, 4, 3, {255, 215, 0}, 80, 0x0000)
+
+	// 2. Centered Gold DHUD for MVP
+	set_dhudmessage(255, 215, 0, -1.0, 0.22, 2, 0.2, 8.5, 0.1, 1.5)
+	show_dhudmessage(0, "★ MATCH MVP: %s ★^n%d Kills | %d HS (%d%%) | %d Deaths | %d DMG",
+		szMVPName, iMVPKills, iMVPHS, iMVPHSPercent, iMVPDeaths, iMVPDamage)
+
+	// 3. Colored Chat Leaderboard (Top 1 to 10)
+	client_print_color(0, print_team_default, "^4========================================")
+	client_print_color(0, print_team_default, "^4%s ^3★ MATCH RESULTS & LEADERBOARD ★", g_ePluginSettings[szPrefix])
+	client_print_color(0, print_team_default, "^4%s ^3★ MVP: ^4%s ^1(^4%d ^1Kills | ^4%d ^1HS | ^3%d ^1Deaths | ^4%d ^1DMG)",
+		g_ePluginSettings[szPrefix], szMVPName, iMVPKills, iMVPHS, iMVPDeaths, iMVPDamage)
+	client_print_color(0, print_team_default, "^4----------------------------------------")
+
+	new iTopCount = min(iCount, 10)
+	for(new i = 0; i < iTopCount; i++)
+	{
+		new id = iPlayerList[i]
+		new szName[32]
+		copy(szName, charsmax(szName), g_szMatchPlayerName[id])
+		if(szName[0] == '^0')
+			get_user_name(id, szName, charsmax(szName))
+
+		new iK = g_iMatchStats[id][M_KILLS]
+		new iD = g_iMatchStats[id][M_DEATHS]
+		new iHS = g_iMatchStats[id][M_HEADSHOTS]
+		new iDmg = g_iMatchStats[id][M_DAMAGE]
+
+		if(i == 0)
+		{
+			client_print_color(0, print_team_default, "^4#1 [MVP] ^3%s ^1- ^4%d ^1Kills | ^4%d ^1HS | ^3%d ^1Deaths | ^4%d ^1DMG", szName, iK, iHS, iD, iDmg)
+		}
+		else
+		{
+			client_print_color(0, print_team_default, "^4#%d ^3%s ^1- ^4%d ^1Kills | ^4%d ^1HS | ^3%d ^1Deaths | ^4%d ^1DMG", i + 1, szName, iK, iHS, iD, iDmg)
+		}
+	}
+	client_print_color(0, print_team_default, "^4========================================")
+
+	// 4. Formatted Console Table to all clients
+	new iPlayers[MAX_PLAYERS], iPNum
+	get_players(iPlayers, iPNum, "ch")
+
+	server_print("^n========================================================================")
+	server_print("                       GAMELAND MATCH FINAL STATS")
+	server_print("========================================================================")
+	server_print(" #   Player                         Kills   Deaths   HS   HS%%    Damage")
+	server_print("------------------------------------------------------------------------")
+	for(new i = 0; i < iCount; i++)
+	{
+		new id = iPlayerList[i]
+		new szName[32]
+		copy(szName, charsmax(szName), g_szMatchPlayerName[id])
+		if(szName[0] == '^0')
+			get_user_name(id, szName, charsmax(szName))
+
+		new iK = g_iMatchStats[id][M_KILLS]
+		new iD = g_iMatchStats[id][M_DEATHS]
+		new iHS = g_iMatchStats[id][M_HEADSHOTS]
+		new iDmg = g_iMatchStats[id][M_DAMAGE]
+		new iHSP = (iK > 0) ? (iHS * 100 / iK) : 0
+
+		server_print(" %-3d %-28.28s %-7d %-8d %-4d %-6d %-7d",
+			i + 1, szName, iK, iD, iHS, iHSP, iDmg)
+	}
+	server_print("========================================================================^n")
+
+	for(new p = 0; p < iPNum; p++)
+	{
+		new iTarget = iPlayers[p]
+		console_print(iTarget, "^n========================================================================")
+		console_print(iTarget, "                       GAMELAND MATCH FINAL STATS")
+		console_print(iTarget, "========================================================================")
+		console_print(iTarget, " #   Player                         Kills   Deaths   HS   HS%%    Damage")
+		console_print(iTarget, "------------------------------------------------------------------------")
+		for(new i = 0; i < iCount; i++)
+		{
+			new id = iPlayerList[i]
+			new szName[32]
+			copy(szName, charsmax(szName), g_szMatchPlayerName[id])
+			if(szName[0] == '^0')
+				get_user_name(id, szName, charsmax(szName))
+
+			new iK = g_iMatchStats[id][M_KILLS]
+			new iD = g_iMatchStats[id][M_DEATHS]
+			new iHS = g_iMatchStats[id][M_HEADSHOTS]
+			new iDmg = g_iMatchStats[id][M_DAMAGE]
+			new iHSP = (iK > 0) ? (iHS * 100 / iK) : 0
+
+			console_print(iTarget, " %-3d %-28.28s %-7d %-8d %-4d %-6d %-7d",
+				i + 1, szName, iK, iD, iHS, iHSP, iDmg)
+		}
+		console_print(iTarget, "========================================================================^n")
+	}
+
+	// 5. In-game HTML MOTD Popup
+	static szHtml[1536]
+	new iLen = 0
+
+	iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+		"<html><head><meta charset='UTF-8'><style>body{background:#0e1117;color:#c9d1d9;font-family:Tahoma,sans-serif;font-size:11px;margin:10px;text-align:center;}table{width:100%%;border-collapse:collapse;margin-top:8px;}th{background:#161b22;color:#58a6ff;padding:6px;border:1px solid #30363d;font-size:11px;}td{padding:5px;border:1px solid #21262d;text-align:center;}.mvp{background:#2e2305;color:#ffd700;font-weight:bold;}.tleft{text-align:left;padding-left:8px;}</style></head><body>")
+
+	iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+		"<h2 style='color:#e6edf3;margin:0 0 4px 0;'>GAMELAND MATCH SUMMARY</h2>")
+
+	new szWinner[32]
+	WinnerTeam(szWinner, charsmax(szWinner))
+	if(szWinner[0] == '^0')
+	{
+		if(g_iScore[CT_SCORE] > g_iScore[TERO_SCORE])
+			copy(szWinner, charsmax(szWinner), "CT")
+		else if(g_iScore[TERO_SCORE] > g_iScore[CT_SCORE])
+			copy(szWinner, charsmax(szWinner), "Terrorist")
+		else
+			copy(szWinner, charsmax(szWinner), "Draw")
+	}
+
+	iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+		"<div style='color:#7ee787;font-size:12px;margin-bottom:8px;'>Winner: <b>%s</b> | Final: CT %d - %d TR</div>",
+		szWinner, g_iScore[CT_SCORE], g_iScore[TERO_SCORE])
+
+	iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+		"<table><tr><th>#</th><th class='tleft'>Player</th><th>K</th><th>D</th><th>HS</th><th>HS%%</th><th>DMG</th></tr>")
+
+	for(new i = 0; i < iTopCount; i++)
+	{
+		new id = iPlayerList[i]
+		new szClean[24]
+		copy(szClean, charsmax(szClean), g_szMatchPlayerName[id])
+		if(szClean[0] == '^0')
+			get_user_name(id, szClean, charsmax(szClean))
+
+		replace_all(szClean, charsmax(szClean), "<", "")
+		replace_all(szClean, charsmax(szClean), ">", "")
+		replace_all(szClean, charsmax(szClean), "'", "")
+		replace_all(szClean, charsmax(szClean), "^"", "")
+
+		new iK = g_iMatchStats[id][M_KILLS]
+		new iD = g_iMatchStats[id][M_DEATHS]
+		new iHS = g_iMatchStats[id][M_HEADSHOTS]
+		new iDmg = g_iMatchStats[id][M_DAMAGE]
+		new iHSP = (iK > 0) ? (iHS * 100 / iK) : 0
+
+		if(i == 0)
+		{
+			iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+				"<tr class='mvp'><td>[MVP]</td><td class='tleft'>%s</td><td>%d</td><td>%d</td><td>%d</td><td>%d%%</td><td>%d</td></tr>",
+				szClean, iK, iD, iHS, iHSP, iDmg)
+		}
+		else
+		{
+			new szBg[20]
+			copy(szBg, charsmax(szBg), (i % 2 == 1) ? "#161b22" : "#0d1117")
+			iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen,
+				"<tr style='background:%s;'><td>%d</td><td class='tleft'>%s</td><td>%d</td><td>%d</td><td>%d</td><td>%d%%</td><td>%d</td></tr>",
+				szBg, i + 1, szClean, iK, iD, iHS, iHSP, iDmg)
+		}
+	}
+
+	iLen += formatex(szHtml[iLen], charsmax(szHtml) - iLen, "</table></body></html>")
+
+	for(new i = 0; i < iPNum; i++)
+	{
+		show_motd(iPlayers[i], szHtml, "GAMELAND Match Statistics")
+	}
 }
 
 public task_reapply_warm()
@@ -4581,8 +4903,87 @@ public Cmd_SwapTeams(id)
 		return PLUGIN_HANDLED
 	}
 
+	new iPlayer, iPlayers[MAX_PLAYERS], iNum
+	get_players(iPlayers, iNum, "ch")
+
+	// Reset player scoreboard K/D on side swap
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		g_ePlayerScore[iPlayer][iKILLS] = 0
+		g_ePlayerScore[iPlayer][iDEATHS] = 0
+		set_user_frags(iPlayer, 0)
+		cs_set_user_deaths(iPlayer, 0)
+	}
+
+	// In match, swap round scores
+	if(g_eBooleans[bIsMixOn])
+	{
+		if(g_eBooleans[bOvertime])
+		{
+			new iTemp = g_iOvertimeScore[CT_OVER_SCORE]
+			g_iOvertimeScore[CT_OVER_SCORE] = g_iOvertimeScore[TERO_OVER_SCORE]
+			g_iOvertimeScore[TERO_OVER_SCORE] = iTemp
+			set_member_game(m_iNumCTWins, g_iOvertimeScore[CT_OVER_SCORE])
+			set_member_game(m_iNumTerroristWins, g_iOvertimeScore[TERO_OVER_SCORE])
+			rg_update_teamscores(g_iOvertimeScore[CT_OVER_SCORE], g_iOvertimeScore[TERO_OVER_SCORE], false)
+			SetGameDesc(MATCHSTATE_OVERTIME)
+		}
+		else
+		{
+			new iTemp = g_iScore[CT_SCORE]
+			g_iScore[CT_SCORE] = g_iScore[TERO_SCORE]
+			g_iScore[TERO_SCORE] = iTemp
+			set_member_game(m_iNumCTWins, g_iScore[CT_SCORE])
+			set_member_game(m_iNumTerroristWins, g_iScore[TERO_SCORE])
+			rg_update_teamscores(g_iScore[CT_SCORE], g_iScore[TERO_SCORE], false)
+			SetGameDesc(MATCHSTATE_IN_MATCH)
+		}
+		g_eBooleans[bTeamSwap] = g_eBooleans[bTeamSwap] ? false : true
+	}
+
+	// Swap teams in engine
 	rg_swap_all_players()
-	client_print_color(0, print_team_default, "^4%s ^1Teams swapped by Admin ^4%s^1.", g_ePluginSettings[szPrefix], g_szName[id])
+	SetMembers()
+
+	// Silently kill alive players, respawn at new base, reset starting money
+	new iStartMoney = get_cvar_num("mp_startmoney")
+	for(new i; i < iNum; i++)
+	{
+		iPlayer = iPlayers[i]
+		new TeamName:iTeam = get_member(iPlayer, m_iTeam)
+		if(iTeam == TEAM_UNASSIGNED || iTeam == TEAM_SPECTATOR)
+			continue
+
+		if(is_user_alive(iPlayer))
+		{
+			user_silentkill(iPlayer)
+		}
+		rg_round_respawn(iPlayer)
+		rg_add_account(iPlayer, iStartMoney, AS_SET)
+		rg_remove_all_items(iPlayer, true)
+
+		message_begin(MSG_ALL, get_user_msgid("ScoreInfo"))
+		write_byte(iPlayer)
+		write_short(0)
+		write_short(0)
+		write_short(0)
+		write_short(get_member(iPlayer, m_iTeam))
+		message_end()
+	}
+
+	// Audio, screen effect, and DHUD
+	client_cmd(0, "spk buttons/bell1")
+	fnScreenFade(0, 2, 1, {0, 160, 255}, 65, 0x0000)
+	set_dhudmessage(0, 180, 255, -1.0, 0.28, 2, 0.1, 3.5, 0.1, 0.5)
+	show_dhudmessage(0, "--- TEAMS SWAPPED ---^nScores Kept | K/D Reset")
+
+	client_print_color(0, print_team_default, "^4%s ^1Teams swapped by Admin ^4%s^1. Round scores kept, K/D reset.", g_ePluginSettings[szPrefix], g_szName[id])
+
+	// Restart round and sync members
+	server_cmd("sv_restart 1")
+	set_task(1.2, "task_delayed_members")
+
 	return PLUGIN_HANDLED
 }
 
